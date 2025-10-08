@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const { urlencoded } = require('express');
 const http = require('http');
+const fetch = require('node-fetch');
+const twilio = require('twilio');
 
 // --- Config ---
 const PORT = process.env.PORT || 3000;
@@ -11,8 +13,13 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-12-17';
 const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || 'verse';
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://aivoice-rental.onrender.com';
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 
-// --- μ-law decode ---
+const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+// --- μ-law decode helpers ---
 function mulawDecodeSample(mu) {
   const MULAW_BIAS = 33;
   mu = ~mu & 0xFF;
@@ -44,18 +51,18 @@ function toBase64(buf) {
 const app = express();
 app.use(urlencoded({ extended: false }));
 
-// ✅ Health check route
+// ✅ Health check
 app.get('/', (req, res) => {
   res.send('✅ AI Voice Rental Assistant is live on Render!');
 });
 
-// ✅ Test Twilio voice route
+// ✅ Basic voice test route
 app.get('/twiml/voice', (req, res) => {
   res.type('text/xml');
   res.send(`<Response><Say>Hello! This is a test. Your Twilio connection works.</Say></Response>`);
 });
 
-// 🧠 Real Twilio voice route
+// 🧠 Twilio Voice route
 app.post('/twiml/voice', (req, res) => {
   const wsUrl = `${PUBLIC_BASE_URL.replace(/^http/, 'ws')}/twilio-media`;
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -69,30 +76,80 @@ app.post('/twiml/voice', (req, res) => {
   res.send(twiml);
 });
 
-// 📨 Twilio SMS route
-app.post('/twiml/sms', express.urlencoded({ extended: false }), (req, res) => {
+// 🧩 Conversation memory
+const conversations = {};
+
+// 💬 Twilio SMS AI route (with random human delay)
+app.post('/twiml/sms', express.urlencoded({ extended: false }), async (req, res) => {
   const from = req.body.From;
   const body = req.body.Body?.trim() || '';
-
   console.log(`📩 SMS from ${from}: ${body}`);
 
-  // ✨ Simple human-like auto-reply
-  const reply = `Hey there! Thanks for reaching out about our rentals. When would you like to come for a showing?`;
-
-  const twiml = `
-    <Response>
-      <Message>${reply}</Message>
-    </Response>
-  `;
+  // Respond immediately so Twilio doesn't retry
   res.type('text/xml');
-  res.send(twiml);
+  res.send('<Response></Response>');
+
+  // Random delay between 22–32 seconds
+  const delayMs = 22000 + Math.random() * 10000;
+
+  setTimeout(async () => {
+    try {
+      // Initialize chat if not exists
+      if (!conversations[from]) {
+        conversations[from] = [
+          {
+            role: "system",
+            content:
+              "You are a friendly human-sounding rental assistant. Reply casually, naturally, and warmly. Ask short follow-up questions to schedule showings or collect details."
+          }
+        ];
+      }
+
+      // Add new message
+      conversations[from].push({ role: "user", content: body });
+
+      // Generate reply with OpenAI
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: conversations[from],
+          max_tokens: 100
+        })
+      });
+
+      const data = await response.json();
+      const replyText =
+        data.choices?.[0]?.message?.content?.trim() ||
+        "Thanks for reaching out! When would you like to come for a showing?";
+
+      conversations[from].push({ role: "assistant", content: replyText });
+
+      // Send delayed SMS via Twilio API
+      await twilioClient.messages.create({
+        from: TWILIO_PHONE_NUMBER,
+        to: from,
+        body: replyText
+      });
+
+      console.log(
+        `💬 Sent delayed reply to ${from} after ${Math.round(delayMs / 1000)}s: ${replyText}`
+      );
+    } catch (err) {
+      console.error("❌ Error sending delayed SMS:", err);
+    }
+  }, delayMs);
 });
 
-// --- WebSocket server ---
+// --- WebSocket server (for voice) ---
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/twilio-media' });
 
-// Connect to OpenAI Realtime API
+// Connect to OpenAI Realtime
 function connectOpenAIRealtime(onAudioOut, onReady) {
   const headers = {
     'Authorization': `Bearer ${OPENAI_API_KEY}`,
@@ -141,7 +198,7 @@ function connectOpenAIRealtime(onAudioOut, onReady) {
   };
 }
 
-// --- Twilio WebSocket handling ---
+// Twilio Media Stream handling
 wss.on('connection', (twilioWS) => {
   console.log('🔊 Twilio media stream connected');
   let pcmBufferQueue = [];
@@ -152,11 +209,11 @@ wss.on('connection', (twilioWS) => {
       const muBuf = Buffer.alloc(pcmOut.length / 2);
       for (let i = 0, j = 0; i < pcmOut.length; i += 2, j++) {
         const sample = pcmOut.readInt16LE(i);
-        const MU_MAX = 0x1FFF, BIAS = 33;
+        const BIAS = 33;
         let sign = (sample < 0) ? 0x80 : 0;
         let pcm = Math.abs(sample);
         if (pcm > 32635) pcm = 32635;
-        pcm = pcm + BIAS;
+        pcm += BIAS;
         let exponent = 7;
         for (let expMask = 0x4000; (pcm & expMask) === 0 && exponent > 0; exponent--, expMask >>= 1) {}
         let mantissa = (pcm >> ((exponent === 0) ? 4 : (exponent + 3))) & 0x0F;
@@ -209,6 +266,6 @@ wss.on('connection', (twilioWS) => {
 server.listen(PORT, () => {
   console.log(`✅ Server listening on :${PORT}`);
   console.log(`🌐 TwiML endpoint: POST ${PUBLIC_BASE_URL}/twiml/voice`);
-  console.log(`🔗 WebSocket endpoint: ${PUBLIC_BASE_URL.replace(/^http/, 'ws')}/twilio-media`);
   console.log(`💬 SMS endpoint: POST ${PUBLIC_BASE_URL}/twiml/sms`);
+  console.log(`🔗 WebSocket endpoint: ${PUBLIC_BASE_URL.replace(/^http/, 'ws')}/twilio-media`);
 });
