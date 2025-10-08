@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const { urlencoded } = require('express');
 const http = require('http');
+const fs = require('fs');
 const twilio = require('twilio');
 
 // --- Config ---
@@ -18,7 +19,7 @@ const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// --- μ-law decode helpers ---
+// --- Helpers for μ-law audio ---
 function mulawDecodeSample(mu) {
   const MULAW_BIAS = 33;
   mu = ~mu & 0xFF;
@@ -55,7 +56,7 @@ app.get('/', (req, res) => {
   res.send('✅ AI Voice Rental Assistant is live on Render!');
 });
 
-// ✅ Basic voice test route
+// ✅ Voice test route
 app.get('/twiml/voice', (req, res) => {
   res.type('text/xml');
   res.send(`<Response><Say>Hello! This is a test. Your Twilio connection works.</Say></Response>`);
@@ -75,10 +76,22 @@ app.post('/twiml/voice', (req, res) => {
   res.send(twiml);
 });
 
-// 🧩 Conversation memory
-const conversations = {};
+// --- Chat memory (persistent) ---
+const conversationsFile = './conversations.json';
 
-// 💬 Twilio SMS AI route (with random human delay)
+function loadConversations() {
+  try {
+    return JSON.parse(fs.readFileSync(conversationsFile, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveConversations(data) {
+  fs.writeFileSync(conversationsFile, JSON.stringify(data, null, 2));
+}
+
+// 💬 Twilio SMS route with AI + persistent memory + human delay
 app.post('/twiml/sms', express.urlencoded({ extended: false }), async (req, res) => {
   const from = req.body.From;
   const body = req.body.Body?.trim() || '';
@@ -88,36 +101,36 @@ app.post('/twiml/sms', express.urlencoded({ extended: false }), async (req, res)
   res.type('text/xml');
   res.send('<Response></Response>');
 
-  // Random delay between 22–32 seconds
-  const delayMs = 22000 + Math.random() * 10000;
+  // Random human-like delay (10–20 seconds)
+  const delayMs = 10000 + Math.random() * 10000;
 
   setTimeout(async () => {
     try {
-      // Initialize chat if not exists
+      const conversations = loadConversations();
+
       if (!conversations[from]) {
         conversations[from] = [
           {
-            role: "system",
+            role: 'system',
             content:
-              "You are a friendly human-sounding rental assistant. Reply casually, naturally, and warmly. Ask short follow-up questions to schedule showings or collect details."
+              'You are a warm, friendly, human-sounding rental assistant. Respond casually and naturally. Help people schedule viewings and answer rental questions briefly.'
           }
         ];
       }
 
-      // Add new message
-      conversations[from].push({ role: "user", content: body });
+      conversations[from].push({ role: 'user', content: body });
 
-      // Generate reply with OpenAI
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
+      // Call OpenAI for a contextual response
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
         headers: {
-          "Authorization": `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json"
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: "gpt-4o-mini",
+          model: 'gpt-4o-mini',
           messages: conversations[from],
-          max_tokens: 100
+          max_tokens: 120
         })
       });
 
@@ -126,9 +139,9 @@ app.post('/twiml/sms', express.urlencoded({ extended: false }), async (req, res)
         data.choices?.[0]?.message?.content?.trim() ||
         "Thanks for reaching out! When would you like to come for a showing?";
 
-      conversations[from].push({ role: "assistant", content: replyText });
+      conversations[from].push({ role: 'assistant', content: replyText });
+      saveConversations(conversations); // Persist the chat
 
-      // Send delayed SMS via Twilio API
       await twilioClient.messages.create({
         from: TWILIO_PHONE_NUMBER,
         to: from,
@@ -136,23 +149,23 @@ app.post('/twiml/sms', express.urlencoded({ extended: false }), async (req, res)
       });
 
       console.log(
-        `💬 Sent delayed reply to ${from} after ${Math.round(delayMs / 1000)}s: ${replyText}`
+        `💬 Sent AI reply to ${from} after ${Math.round(delayMs / 1000)}s: ${replyText}`
       );
     } catch (err) {
-      console.error("❌ Error sending delayed SMS:", err);
+      console.error('❌ Error sending delayed SMS:', err);
     }
   }, delayMs);
 });
 
-// --- WebSocket server (for voice) ---
+// --- WebSocket server (for voice calls) ---
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/twilio-media' });
 
 // Connect to OpenAI Realtime
 function connectOpenAIRealtime(onAudioOut, onReady) {
   const headers = {
-    'Authorization': `Bearer ${OPENAI_API_KEY}`,
-    'OpenAI-Beta': 'realtime=v1',
+    Authorization: `Bearer ${OPENAI_API_KEY}`,
+    'OpenAI-Beta': 'realtime=v1'
   };
   const url = `wss://api.openai.com/v1/realtime?model=${OPENAI_REALTIME_MODEL}&voice=${OPENAI_REALTIME_VOICE}`;
   const ws = new (require('ws'))(url, { headers });
@@ -162,9 +175,9 @@ function connectOpenAIRealtime(onAudioOut, onReady) {
       type: 'session.update',
       session: {
         instructions: [
-          "You are a friendly AI leasing assistant for residential rentals.",
-          "Greet politely, ask which property they’re calling about, collect their name and move-in timeframe.",
-          "Speak in short, clear sentences (max two per reply)."
+          'You are a friendly AI leasing assistant for residential rentals.',
+          'Greet politely, ask which property they’re calling about, collect their name and move-in timeframe.',
+          'Speak in short, clear sentences (max two per reply).'
         ].join(' ')
       }
     };
@@ -184,44 +197,54 @@ function connectOpenAIRealtime(onAudioOut, onReady) {
 
   return {
     appendPCM16: (pcm16Buffer) => {
-      ws.send(JSON.stringify({
-        type: 'input_audio_buffer.append',
-        audio: toBase64(pcm16Buffer)
-      }));
+      ws.send(
+        JSON.stringify({
+          type: 'input_audio_buffer.append',
+          audio: toBase64(pcm16Buffer)
+        })
+      );
     },
     commitInput: () => {
       ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
       ws.send(JSON.stringify({ type: 'response.create' }));
     },
-    close: () => { try { ws.close(); } catch {} }
+    close: () => {
+      try {
+        ws.close();
+      } catch {}
+    }
   };
 }
 
-// Twilio Media Stream handling
+// Twilio Media Stream handler
 wss.on('connection', (twilioWS) => {
   console.log('🔊 Twilio media stream connected');
   let pcmBufferQueue = [];
   let lastMediaAt = Date.now();
 
-  const ai = connectOpenAIRealtime(
-    (pcmOut) => {
-      const muBuf = Buffer.alloc(pcmOut.length / 2);
-      for (let i = 0, j = 0; i < pcmOut.length; i += 2, j++) {
-        const sample = pcmOut.readInt16LE(i);
-        const BIAS = 33;
-        let sign = (sample < 0) ? 0x80 : 0;
-        let pcm = Math.abs(sample);
-        if (pcm > 32635) pcm = 32635;
-        pcm += BIAS;
-        let exponent = 7;
-        for (let expMask = 0x4000; (pcm & expMask) === 0 && exponent > 0; exponent--, expMask >>= 1) {}
-        let mantissa = (pcm >> ((exponent === 0) ? 4 : (exponent + 3))) & 0x0F;
-        let mu = ~(sign | (exponent << 4) | mantissa) & 0xFF;
-        muBuf[j] = mu;
-      }
-      twilioWS.send(JSON.stringify({ event: 'media', media: { payload: muBuf.toString('base64') } }));
+  const ai = connectOpenAIRealtime((pcmOut) => {
+    const muBuf = Buffer.alloc(pcmOut.length / 2);
+    for (let i = 0, j = 0; i < pcmOut.length; i += 2, j++) {
+      const sample = pcmOut.readInt16LE(i);
+      const BIAS = 33;
+      let sign = sample < 0 ? 0x80 : 0;
+      let pcm = Math.abs(sample);
+      if (pcm > 32635) pcm = 32635;
+      pcm += BIAS;
+      let exponent = 7;
+      for (
+        let expMask = 0x4000;
+        (pcm & expMask) === 0 && exponent > 0;
+        exponent--, expMask >>= 1
+      ) {}
+      let mantissa = (pcm >> ((exponent === 0 ? 4 : exponent + 3))) & 0x0f;
+      let mu = ~(sign | (exponent << 4) | mantissa) & 0xff;
+      muBuf[j] = mu;
     }
-  );
+    twilioWS.send(
+      JSON.stringify({ event: 'media', media: { payload: muBuf.toString('base64') } })
+    );
+  });
 
   const tick = setInterval(() => {
     const now = Date.now();
