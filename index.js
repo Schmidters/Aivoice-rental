@@ -10,8 +10,6 @@ const PORT = process.env.PORT || 3000;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-12-17';
 const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || 'verse';
-
-// 🟢 Use your Render public URL (no localhost)
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://aivoice-rental.onrender.com';
 
 // --- μ-law decode ---
@@ -46,22 +44,20 @@ function toBase64(buf) {
 const app = express();
 app.use(urlencoded({ extended: false }));
 
-// ✅ Browser test route
+// ✅ Health check route
 app.get('/', (req, res) => {
   res.send('✅ AI Voice Rental Assistant is live on Render!');
 });
 
-// ✅ Basic Twilio test route
+// ✅ Test Twilio voice route
 app.get('/twiml/voice', (req, res) => {
   res.type('text/xml');
   res.send(`<Response><Say>Hello! This is a test. Your Twilio connection works.</Say></Response>`);
 });
 
-// 🧠 Real Twilio Voice route (POST)
+// 🧠 Real Twilio voice route
 app.post('/twiml/voice', (req, res) => {
-  // 🟢 Always use your Render public WebSocket URL
   const wsUrl = `${PUBLIC_BASE_URL.replace(/^http/, 'ws')}/twilio-media`;
-
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Start>
@@ -69,7 +65,25 @@ app.post('/twiml/voice', (req, res) => {
   </Start>
   <Say voice="Polly.Joanna">Hi, connecting you to the rental assistant now.</Say>
 </Response>`;
+  res.type('text/xml');
+  res.send(twiml);
+});
 
+// 📨 Twilio SMS route
+app.post('/twiml/sms', express.urlencoded({ extended: false }), (req, res) => {
+  const from = req.body.From;
+  const body = req.body.Body?.trim() || '';
+
+  console.log(`📩 SMS from ${from}: ${body}`);
+
+  // ✨ Simple human-like auto-reply
+  const reply = `Hey there! Thanks for reaching out about our rentals. When would you like to come for a showing?`;
+
+  const twiml = `
+    <Response>
+      <Message>${reply}</Message>
+    </Response>
+  `;
   res.type('text/xml');
   res.send(twiml);
 });
@@ -196,4 +210,5 @@ server.listen(PORT, () => {
   console.log(`✅ Server listening on :${PORT}`);
   console.log(`🌐 TwiML endpoint: POST ${PUBLIC_BASE_URL}/twiml/voice`);
   console.log(`🔗 WebSocket endpoint: ${PUBLIC_BASE_URL.replace(/^http/, 'ws')}/twilio-media`);
+  console.log(`💬 SMS endpoint: POST ${PUBLIC_BASE_URL}/twiml/sms`);
 });
