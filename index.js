@@ -16,6 +16,11 @@ const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
+app.get("/debug/openai", (req, res) => {
+  const key = process.env.OPENAI_API_KEY || "none";
+  res.send(`Current API key starts with: ${key.slice(0, 10)}...`);
+});
+
 // --- μ-law decode helpers (for voice) ---
 function mulawDecodeSample(mu) {
   const MULAW_BIAS = 33;
