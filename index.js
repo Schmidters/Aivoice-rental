@@ -92,12 +92,15 @@ function saveConversations(data) {
 }
 
 // 💬 Twilio SMS route with AI + persistent memory + human delay
+// 💬 Global in-memory conversation storage
+const conversations = {};
+
 app.post('/twiml/sms', express.urlencoded({ extended: false }), async (req, res) => {
   const from = req.body.From;
   const body = req.body.Body?.trim() || '';
   console.log(`📩 SMS from ${from}: ${body}`);
 
-  // Respond immediately so Twilio doesn't retry
+  // Respond immediately to Twilio (so it doesn’t retry)
   res.type('text/xml');
   res.send('<Response></Response>');
 
@@ -106,21 +109,21 @@ app.post('/twiml/sms', express.urlencoded({ extended: false }), async (req, res)
 
   setTimeout(async () => {
     try {
-      const conversations = loadConversations();
-
+      // Create a conversation if this is a new sender
       if (!conversations[from]) {
         conversations[from] = [
           {
             role: 'system',
             content:
-              'You are a warm, friendly, human-sounding rental assistant. Respond casually and naturally. Help people schedule viewings and answer rental questions briefly.'
+              'You are a friendly, natural-sounding rental assistant. Reply casually and warmly. Ask short follow-up questions to help schedule showings or collect move-in details.'
           }
         ];
       }
 
+      // Add user message
       conversations[from].push({ role: 'user', content: body });
 
-      // Call OpenAI for a contextual response
+      // Generate AI response
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -139,23 +142,23 @@ app.post('/twiml/sms', express.urlencoded({ extended: false }), async (req, res)
         data.choices?.[0]?.message?.content?.trim() ||
         "Thanks for reaching out! When would you like to come for a showing?";
 
+      // Add assistant reply to memory
       conversations[from].push({ role: 'assistant', content: replyText });
-      saveConversations(conversations); // Persist the chat
 
+      // Send reply via Twilio
       await twilioClient.messages.create({
         from: TWILIO_PHONE_NUMBER,
         to: from,
         body: replyText
       });
 
-      console.log(
-        `💬 Sent AI reply to ${from} after ${Math.round(delayMs / 1000)}s: ${replyText}`
-      );
+      console.log(`💬 Replied to ${from} after ${Math.round(delayMs / 1000)}s: ${replyText}`);
     } catch (err) {
-      console.error('❌ Error sending delayed SMS:', err);
+      console.error('❌ Error sending AI SMS:', err);
     }
   }, delayMs);
 });
+
 
 // --- WebSocket server (for voice calls) ---
 const server = http.createServer(app);
