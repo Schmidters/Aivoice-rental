@@ -16,11 +16,6 @@ const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-app.get("/debug/openai", (req, res) => {
-  const key = process.env.OPENAI_API_KEY || "none";
-  res.send(`Current API key starts with: ${key.slice(0, 10)}...`);
-});
-
 // --- μ-law decode helpers (for voice) ---
 function mulawDecodeSample(mu) {
   const MULAW_BIAS = 33;
@@ -53,24 +48,30 @@ function toBase64(buf) {
 const app = express();
 app.use(urlencoded({ extended: false }));
 
-// Health check
+// ✅ Health check
 app.get("/", (req, res) => {
-  res.send("✅ AI Voice Rental Assistant is live on Render (OpenAI test mode)!");
+  res.send("✅ AI Voice Rental Assistant is live on Render!");
 });
 
-// --- Twilio Voice test route ---
+// ✅ Debug endpoint to verify which API key is loaded
+app.get("/debug/openai", (req, res) => {
+  const key = process.env.OPENAI_API_KEY || "none";
+  res.send(`Current API key starts with: ${key.slice(0, 10)}...`);
+});
+
+// ✅ Voice test route
 app.get("/twiml/voice", (req, res) => {
   res.type("text/xml");
   res.send(`<Response><Say>Hello! This is a test. Your Twilio connection works.</Say></Response>`);
 });
 
-// --- Twilio Voice Stream route ---
+// 🧠 Twilio Voice route
 app.post("/twiml/voice", (req, res) => {
   const wsUrl = `${PUBLIC_BASE_URL.replace(/^http/, "ws")}/twilio-media`;
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Start>
-    <Stream url="${wsUrl}" track="inbound_audio outbound_audio" />
+    <Stream url="${wsUrl}" track="inbound_audio outbound_audio"/>
   </Start>
   <Say voice="Polly.Joanna">Hi, connecting you to the rental assistant now.</Say>
 </Response>`;
@@ -78,18 +79,17 @@ app.post("/twiml/voice", (req, res) => {
   res.send(twiml);
 });
 
-// 💬 Twilio SMS route — direct OpenAI debug mode
+// 💬 Twilio SMS route — direct OpenAI test
 app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res) => {
   const from = req.body.From;
   const body = req.body.Body?.trim() || "";
 
   console.log(`📩 SMS from ${from}: ${body}`);
 
-  // Respond immediately so Twilio doesn't retry
+  // Respond immediately to Twilio
   res.type("text/xml");
   res.send("<Response></Response>");
 
-  // Add a human delay (10–20s) so you can see it in action
   const delayMs = 10000 + Math.random() * 10000;
 
   setTimeout(async () => {
