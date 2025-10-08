@@ -4,7 +4,6 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const { urlencoded } = require('express');
 const http = require('http');
-const fetch = require('node-fetch');
 const twilio = require('twilio');
 
 // --- Config ---
