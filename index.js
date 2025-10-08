@@ -11,6 +11,9 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-12-17';
 const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || 'verse';
 
+// 🟢 Use your Render public URL (no localhost)
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://aivoice-rental.onrender.com';
+
 // --- μ-law decode ---
 function mulawDecodeSample(mu) {
   const MULAW_BIAS = 33;
@@ -43,11 +46,12 @@ function toBase64(buf) {
 const app = express();
 app.use(urlencoded({ extended: false }));
 
-// ✅ Browser test routes
+// ✅ Browser test route
 app.get('/', (req, res) => {
-  res.send('✅ AI Voice Rental Assistant is live on Replit!');
+  res.send('✅ AI Voice Rental Assistant is live on Render!');
 });
 
+// ✅ Basic Twilio test route
 app.get('/twiml/voice', (req, res) => {
   res.type('text/xml');
   res.send(`<Response><Say>Hello! This is a test. Your Twilio connection works.</Say></Response>`);
@@ -55,139 +59,9 @@ app.get('/twiml/voice', (req, res) => {
 
 // 🧠 Real Twilio Voice route (POST)
 app.post('/twiml/voice', (req, res) => {
-  const wsUrl = process.env.PUBLIC_WS_URL || `wss://${req.headers.host}/twilio-media`;
+  // 🟢 Always use your Render public WebSocket URL
+  const wsUrl = `${PUBLIC_BASE_URL.replace(/^http/, 'ws')}/twilio-media`;
+
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Start>
-    <Stream url="${wsUrl}" track="inbound_audio outbound_audio"/>
-  </Start>
-  <Say voice="Polly.Joanna">Hi, connecting you to the rental assistant now.</Say>
-</Response>`;
-  res.type('text/xml');
-  res.send(twiml);
-});
-
-// --- WebSocket server ---
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/twilio-media' });
-
-// Connect to OpenAI Realtime API
-function connectOpenAIRealtime(onAudioOut, onReady) {
-  const headers = {
-    'Authorization': `Bearer ${OPENAI_API_KEY}`,
-    'OpenAI-Beta': 'realtime=v1',
-  };
-  const url = `wss://api.openai.com/v1/realtime?model=${OPENAI_REALTIME_MODEL}&voice=${OPENAI_REALTIME_VOICE}`;
-  const ws = new (require('ws'))(url, { headers });
-
-  ws.on('open', () => {
-    const system = {
-      type: 'session.update',
-      session: {
-        instructions: [
-          "You are a friendly AI leasing assistant for residential rentals.",
-          "Greet politely, ask which property they’re calling about, collect their name and move-in timeframe.",
-          "Speak in short, clear sentences (max two per reply)."
-        ].join(' ')
-      }
-    };
-    ws.send(JSON.stringify(system));
-    if (onReady) onReady();
-  });
-
-  ws.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-      if (msg.type === 'output_audio.delta' && msg.audio) {
-        const pcm = Buffer.from(msg.audio, 'base64');
-        onAudioOut && onAudioOut(pcm);
-      }
-    } catch { }
-  });
-
-  return {
-    appendPCM16: (pcm16Buffer) => {
-      ws.send(JSON.stringify({
-        type: 'input_audio_buffer.append',
-        audio: toBase64(pcm16Buffer)
-      }));
-    },
-    commitInput: () => {
-      ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-      ws.send(JSON.stringify({ type: 'response.create' }));
-    },
-    close: () => { try { ws.close(); } catch { } }
-  };
-}
-
-// Twilio WS handling
-wss.on('connection', (twilioWS) => {
-  console.log('🔊 Twilio media stream connected');
-  let pcmBufferQueue = [];
-  let lastMediaAt = Date.now();
-
-  const ai = connectOpenAIRealtime(
-    (pcmOut) => {
-      // Encode PCM back to μ-law (simple version)
-      const muBuf = Buffer.alloc(pcmOut.length / 2);
-      for (let i = 0, j = 0; i < pcmOut.length; i += 2, j++) {
-        const sample = pcmOut.readInt16LE(i);
-        const MU_MAX = 0x1FFF, BIAS = 33;
-        let sign = (sample < 0) ? 0x80 : 0;
-        let pcm = Math.abs(sample);
-        if (pcm > 32635) pcm = 32635;
-        pcm = pcm + BIAS;
-        let exponent = 7;
-        for (let expMask = 0x4000; (pcm & expMask) === 0 && exponent > 0; exponent--, expMask >>= 1) {}
-        let mantissa = (pcm >> ((exponent === 0) ? 4 : (exponent + 3))) & 0x0F;
-        let mu = ~(sign | (exponent << 4) | mantissa) & 0xFF;
-        muBuf[j] = mu;
-      }
-      twilioWS.send(JSON.stringify({ event: 'media', media: { payload: muBuf.toString('base64') } }));
-    }
-  );
-
-  const tick = setInterval(() => {
-    const now = Date.now();
-    if (pcmBufferQueue.length > 0 && now - lastMediaAt > 600) {
-      const merged = Buffer.concat(pcmBufferQueue);
-      pcmBufferQueue = [];
-      ai.appendPCM16(merged);
-      ai.commitInput();
-    }
-  }, 200);
-
-  twilioWS.on('message', (msg) => {
-    const data = JSON.parse(msg.toString());
-    switch (data.event) {
-      case 'media':
-        const pcm16 = mulawToPCM16(data.media.payload);
-        pcmBufferQueue.push(pcm16);
-        lastMediaAt = Date.now();
-        break;
-      case 'stop':
-        if (pcmBufferQueue.length > 0) {
-          const merged = Buffer.concat(pcmBufferQueue);
-          pcmBufferQueue = [];
-          ai.appendPCM16(merged);
-          ai.commitInput();
-        }
-        break;
-      default:
-        break;
-    }
-  });
-
-  twilioWS.on('close', () => {
-    clearInterval(tick);
-    ai.close();
-    console.log('🔚 Twilio media stream closed');
-  });
-
-  twilioWS.on('error', (e) => console.error('Twilio WS error:', e.message));
-});
-
-server.listen(PORT, () => {
-  console.log(`✅ Server listening on :${PORT}`);
-  console.log(`   TwiML endpoint: POST http://localhost:${PORT}/twiml/voice`);
-});
+  <Star
