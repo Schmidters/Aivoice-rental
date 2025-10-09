@@ -37,9 +37,9 @@ app.post("/twiml/voice", (req, res) => {
   const twiml = `
 <?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Start>
-    <Stream url="wss://aivoice-rental.onrender.com/twilio-media" track="inbound_audio outbound_audio"/>
-  </Start>
+  <Connect>
+    <Stream url="wss://aivoice-rental.onrender.com/twilio-media" />
+  </Connect>
   <Say voice="Polly.Joanna">Hi, connecting you to the rental assistant now.</Say>
 </Response>
   `.trim();
@@ -47,6 +47,7 @@ app.post("/twiml/voice", (req, res) => {
   res.set("Content-Type", "text/xml");
   res.send(twiml);
 });
+
 
 // --- SMS route (memory + human delay) ---
 app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res) => {
