@@ -18,6 +18,17 @@ const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const app = express();
 app.use(urlencoded({ extended: false }));
 
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: "/twilio-media" });
+
+wss.on("connection", (ws) => {
+  console.log("🔊 Twilio media stream connected!");
+  ws.on("message", (msg) => console.log("🎧 Incoming WS message:", msg.toString().slice(0, 60)));
+  ws.on("close", () => console.log("❌ Twilio WS closed"));
+  ws.on("error", (err) => console.error("⚠️ WS error:", err.message));
+});
+
+
 // 🧠 Simple in-memory conversation storage (per phone number)
 const conversationMemory = new Map();
 
