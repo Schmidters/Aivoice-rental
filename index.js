@@ -40,11 +40,11 @@ app.get("/twiml/voice", (req, res) => {
 
 // 🧠 Twilio Voice route
 app.post("/twiml/voice", (req, res) => {
-  const wsUrl = `${PUBLIC_BASE_URL.replace(/^http/, "ws")}/twilio-media`;
+  const wsUrl = `wss://aivoice-rental.onrender.com/twilio-media`;
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Start>
-    <Stream url="${wsUrl}" track="inbound_audio outbound_audio"/>
+    <Stream url="${wsUrl}" track="inbound_audio outbound_audio" />
   </Start>
   <Say voice="Polly.Joanna">Hi, connecting you to the rental assistant now.</Say>
 </Response>`;
