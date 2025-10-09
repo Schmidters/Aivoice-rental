@@ -1,61 +1,43 @@
 require("dotenv").config();
 const express = require("express");
+const http = require("http");
 const { WebSocketServer } = require("ws");
 const { urlencoded } = require("express");
-const http = require("http");
 const twilio = require("twilio");
 
-const PORT = process.env.PORT || 3000;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview-2024-12-17";
-const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "verse";
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://aivoice-rental.onrender.com";
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
-
-const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const app = express();
 app.use(urlencoded({ extended: false }));
 
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: "/twilio-media" });
+// --- Config ---
+const PORT = process.env.PORT || 3000;
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://aivoice-rental.onrender.com";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-wss.on("connection", (ws) => {
-  console.log("🔊 Twilio media stream connected!");
-  ws.on("message", (msg) => console.log("🎧 Incoming WS message:", msg.toString().slice(0, 60)));
-  ws.on("close", () => console.log("❌ Twilio WS closed"));
-  ws.on("error", (err) => console.error("⚠️ WS error:", err.message));
+// --- In-memory SMS conversation store ---
+const memory = new Map();
+
+// --- Health Check ---
+app.get("/", (req, res) => {
+  res.send("✅ AI Voice + SMS Rental Assistant is running (voice debug mode)");
 });
 
-
-// 🧠 Simple in-memory conversation storage (per phone number)
-const conversationMemory = new Map();
-
-// ✅ Debug endpoint to confirm API key
+// --- Debug route for OpenAI key ---
 app.get("/debug/openai", (req, res) => {
   const key = process.env.OPENAI_API_KEY || "none";
   res.send(`Current API key starts with: ${key.slice(0, 10)}...`);
 });
 
-// ✅ Health check
-app.get("/", (req, res) => {
-  res.send("✅ AI Voice + SMS Rental Assistant is live with memory!");
-});
-
-// ✅ Voice test route
-app.get("/twiml/voice", (req, res) => {
-  res.type("text/xml");
-  res.send(`<Response><Say>Hello! This is a test. Your Twilio connection works.</Say></Response>`);
-});
-
-// 🧠 Twilio Voice route
+// --- Voice Webhook (TwiML) ---
 app.post("/twiml/voice", (req, res) => {
-  const wsUrl = `wss://aivoice-rental.onrender.com/twilio-media`;
+  const wsUrl = `wss://${req.headers.host}/twilio-media`;
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Start>
-    <Stream url="${wsUrl}" track="inbound_audio outbound_audio" />
+    <Stream url="${wsUrl}" track="inbound_audio outbound_audio"/>
   </Start>
   <Say voice="Polly.Joanna">Hi, connecting you to the rental assistant now.</Say>
 </Response>`;
@@ -63,27 +45,20 @@ app.post("/twiml/voice", (req, res) => {
   res.send(twiml);
 });
 
-// 💬 SMS route — memory-enabled
+// --- SMS Route ---
 app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res) => {
   const from = req.body.From;
   const body = req.body.Body?.trim() || "";
-
-  console.log(`📩 SMS from ${from}: ${body}`);
   res.type("text/xml");
-  res.send("<Response></Response>"); // respond quickly so Twilio doesn’t retry
+  res.send("<Response></Response>");
+  console.log(`📩 SMS from ${from}: ${body}`);
 
-  // Get prior conversation for this user
-  const previousMessages = conversationMemory.get(from) || [];
+  const history = memory.get(from) || [];
+  history.push({ role: "user", content: body });
 
-  // Add the user’s new message
-  previousMessages.push({ role: "user", content: body });
-
-  const delayMs = 10000 + Math.random() * 10000;
-
+  const delay = 10000 + Math.random() * 10000;
   setTimeout(async () => {
     try {
-      console.log("➡️ Sending conversation history to OpenAI:", previousMessages);
-
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -96,54 +71,66 @@ app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res)
             {
               role: "system",
               content:
-                "You are a friendly, natural-sounding rental assistant for a property management company. Keep replies short, warm, and human-like. Remember details shared earlier in the conversation, like the person’s name, desired property, or timing.",
+                "You are a friendly, conversational rental assistant. Keep replies short, warm, and natural.",
             },
-            ...previousMessages,
+            ...history,
           ],
-          max_tokens: 200,
         }),
       });
 
       const data = await response.json();
-      console.log("🧠 Full OpenAI response:", JSON.stringify(data, null, 2));
-
-      const replyText =
+      const reply =
         data.choices?.[0]?.message?.content?.trim() ||
-        "Hmm, I didn’t quite get that. Can you rephrase?";
+        "Hmm, can you say that again?";
 
-      console.log("💬 GPT reply text:", replyText);
+      console.log("💬 GPT Reply:", reply);
+      history.push({ role: "assistant", content: reply });
+      memory.set(from, history.slice(-10));
 
-      // Save AI’s response to memory
-      previousMessages.push({ role: "assistant", content: replyText });
-      conversationMemory.set(from, previousMessages.slice(-10)); // keep last 10 messages max
-
-      // Send SMS reply
       await twilioClient.messages.create({
         from: TWILIO_PHONE_NUMBER,
         to: from,
-        body: replyText,
+        body: reply,
       });
-
-      console.log(`✅ Sent AI reply to ${from}`);
+      console.log(`✅ Sent reply to ${from}`);
     } catch (err) {
-      console.error("❌ Error during OpenAI call:", err);
-      await twilioClient.messages.create({
-        from: TWILIO_PHONE_NUMBER,
-        to: from,
-        body: "Sorry, I'm having trouble connecting right now.",
-      });
+      console.error("❌ SMS Error:", err);
     }
-  }, delayMs);
+  }, delay);
 });
 
-// --- WebSocket server (for voice) ---
+// --- WebSocket Server Setup ---
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/twilio-media" });
 
-// --- Start server ---
+// 🧩 Twilio Voice Stream Debug
+wss.on("connection", (ws, req) => {
+  console.log("🔊 Twilio media stream connected!");
+
+  ws.on("message", (msg) => {
+    try {
+      const data = JSON.parse(msg.toString());
+      if (data.event === "start") {
+        console.log("🎬 Stream started:", data.streamSid);
+      } else if (data.event === "media") {
+        // Each media chunk contains ~20ms μ-law audio
+        console.log("🎧 Received audio chunk:", data.media.payload.length, "bytes");
+      } else if (data.event === "stop") {
+        console.log("🛑 Stream stopped:", data.streamSid);
+      }
+    } catch (err) {
+      console.error("⚠️ WS message error:", err);
+    }
+  });
+
+  ws.on("close", () => console.log("❌ Twilio WS closed"));
+  ws.on("error", (err) => console.error("⚠️ Twilio WS error:", err.message));
+});
+
+// --- Start Server ---
 server.listen(PORT, () => {
-  console.log(`✅ Server listening on :${PORT}`);
-  console.log(`🌐 TwiML endpoint: POST ${PUBLIC_BASE_URL}/twiml/voice`);
+  console.log(`✅ Server listening on port ${PORT}`);
+  console.log(`🌐 Voice endpoint: POST ${PUBLIC_BASE_URL}/twiml/voice`);
   console.log(`💬 SMS endpoint: POST ${PUBLIC_BASE_URL}/twiml/sms`);
-  console.log(`🔗 WebSocket endpoint: ${PUBLIC_BASE_URL.replace(/^http/, "ws")}/twilio-media`);
+  console.log(`🔗 WebSocket endpoint: wss://${new URL(PUBLIC_BASE_URL).host}/twilio-media`);
 });
