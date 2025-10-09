@@ -15,47 +15,52 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// --- In-memory SMS conversation store ---
-const memory = new Map();
+// --- In-memory conversation memory for SMS ---
+const conversationMemory = new Map();
 
-// --- Health Check ---
+// --- Health check ---
 app.get("/", (req, res) => {
-  res.send("✅ AI Voice + SMS Rental Assistant is running (voice debug mode)");
+  res.send("✅ AI Voice + SMS Rental Assistant is running (WebSocket fixed)");
 });
 
-// --- Debug route for OpenAI key ---
+// --- Debug endpoint ---
 app.get("/debug/openai", (req, res) => {
   const key = process.env.OPENAI_API_KEY || "none";
   res.send(`Current API key starts with: ${key.slice(0, 10)}...`);
 });
 
-// --- Voice Webhook (TwiML) ---
+// --- Voice webhook (TwiML) ---
 app.post("/twiml/voice", (req, res) => {
-  res.type("text/xml");
-  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+  const twiml = `
+<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Start>
     <Stream url="wss://aivoice-rental.onrender.com/twilio-media" track="inbound_audio outbound_audio"/>
   </Start>
   <Say voice="Polly.Joanna">Hi, connecting you to the rental assistant now.</Say>
-</Response>`);
+</Response>
+  `.trim();
+
+  res.set("Content-Type", "text/xml");
+  res.send(twiml);
 });
 
-
-// --- SMS Route ---
+// --- SMS route (memory + human delay) ---
 app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res) => {
   const from = req.body.From;
   const body = req.body.Body?.trim() || "";
+  console.log(`📩 SMS from ${from}: ${body}`);
   res.type("text/xml");
   res.send("<Response></Response>");
-  console.log(`📩 SMS from ${from}: ${body}`);
 
-  const history = memory.get(from) || [];
-  history.push({ role: "user", content: body });
+  const prev = conversationMemory.get(from) || [];
+  prev.push({ role: "user", content: body });
 
-  const delay = 10000 + Math.random() * 10000;
+  const delayMs = 10000 + Math.random() * 10000;
+
   setTimeout(async () => {
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -70,10 +75,11 @@ app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res)
             {
               role: "system",
               content:
-                "You are a friendly, conversational rental assistant. Keep replies short, warm, and natural.",
+                "You are a friendly rental assistant. Reply like a human, warm and brief. Remember user details like name, move-in date, and property info.",
             },
-            ...history,
+            ...prev,
           ],
+          max_tokens: 200,
         }),
       });
 
@@ -82,9 +88,9 @@ app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res)
         data.choices?.[0]?.message?.content?.trim() ||
         "Hmm, can you say that again?";
 
-      console.log("💬 GPT Reply:", reply);
-      history.push({ role: "assistant", content: reply });
-      memory.set(from, history.slice(-10));
+      console.log("💬 GPT reply:", reply);
+      prev.push({ role: "assistant", content: reply });
+      conversationMemory.set(from, prev.slice(-10));
 
       await twilioClient.messages.create({
         from: TWILIO_PHONE_NUMBER,
@@ -93,16 +99,29 @@ app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res)
       });
       console.log(`✅ Sent reply to ${from}`);
     } catch (err) {
-      console.error("❌ SMS Error:", err);
+      console.error("❌ SMS error:", err);
     }
-  }, delay);
+  }, delayMs);
 });
 
-// --- WebSocket Server Setup ---
+// --- HTTP server ---
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: "/twilio-media" });
 
-// 🧩 Twilio Voice Stream Debug
+// --- WebSocket Upgrade handler ---
+const wss = new WebSocketServer({ noServer: true });
+
+// Handle WS upgrade manually (Render proxy-safe)
+server.on("upgrade", (req, socket, head) => {
+  if (req.url === "/twilio-media") {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+// --- Twilio media stream handler ---
 wss.on("connection", (ws, req) => {
   console.log("🔊 Twilio media stream connected!");
 
@@ -112,13 +131,12 @@ wss.on("connection", (ws, req) => {
       if (data.event === "start") {
         console.log("🎬 Stream started:", data.streamSid);
       } else if (data.event === "media") {
-        // Each media chunk contains ~20ms μ-law audio
-        console.log("🎧 Received audio chunk:", data.media.payload.length, "bytes");
+        console.log("🎧 Audio chunk:", data.media.payload.length, "bytes");
       } else if (data.event === "stop") {
         console.log("🛑 Stream stopped:", data.streamSid);
       }
     } catch (err) {
-      console.error("⚠️ WS message error:", err);
+      console.error("⚠️ WS message parse error:", err);
     }
   });
 
@@ -126,10 +144,10 @@ wss.on("connection", (ws, req) => {
   ws.on("error", (err) => console.error("⚠️ Twilio WS error:", err.message));
 });
 
-// --- Start Server ---
+// --- Start server ---
 server.listen(PORT, () => {
   console.log(`✅ Server listening on port ${PORT}`);
-  console.log(`🌐 Voice endpoint: POST ${PUBLIC_BASE_URL}/twiml/voice`);
-  console.log(`💬 SMS endpoint: POST ${PUBLIC_BASE_URL}/twiml/sms`);
-  console.log(`🔗 WebSocket endpoint: wss://${new URL(PUBLIC_BASE_URL).host}/twilio-media`);
+  console.log(`🌐 Voice endpoint: POST https://aivoice-rental.onrender.com/twiml/voice`);
+  console.log(`💬 SMS endpoint: POST https://aivoice-rental.onrender.com/twiml/sms`);
+  console.log(`🔗 WS upgrade endpoint: wss://aivoice-rental.onrender.com/twilio-media`);
 });
