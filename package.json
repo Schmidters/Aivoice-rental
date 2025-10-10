@@ -19,6 +19,7 @@
     "node-fetch": "^3.3.2",
     "ioredis": "^5.4.1",
     "luxon": "^3.4.4",
-    "openai": "^4.0.0"
+    "openai": "^4.0.0",
+    "libphonenumber-js": "^1.11.4"
   }
 }
