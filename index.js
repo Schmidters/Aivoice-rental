@@ -25,7 +25,6 @@ const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const REDIS_URL = process.env.REDIS_URL;
 const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
 const BROWSERLESS_KEY = process.env.BROWSERLESS_KEY;
-const BROWSERLESS_REGION = process.env.BROWSERLESS_REGION || "sfo"; // default US West
 
 // --- Clients ---
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -74,10 +73,14 @@ async function aiReadListing(url) {
       return {};
     }
 
-    // Follow redirects & render full page using Browserless (Chromium + stealth)
-    const fetchUrl = `https://production-${BROWSERLESS_REGION}.browserless.io/chromium/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(
+    // Prepare stealth launch config (required for v2 free-tier)
+    const launchConfig = encodeURIComponent(
+      JSON.stringify({ headless: true, stealth: true })
+    );
+
+    const fetchUrl = `https://production-sfo.browserless.io/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(
       url
-    )}&stealth=true`;
+    )}&launch=${launchConfig}`;
 
     const resp = await fetch(fetchUrl);
 
@@ -87,14 +90,14 @@ async function aiReadListing(url) {
     }
 
     const html = await resp.text();
-    const snippet = html.slice(0, 10000); // limit payload for GPT
+    const snippet = html.slice(0, 10000); // limit for GPT input
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: `You are a real-estate assistant. Extract factual data from the HTML snippet:
+          content: `You are a real-estate assistant. Extract factual data from this HTML snippet:
           - Parking situation
           - Pet policy
           - Utilities (included or not)
