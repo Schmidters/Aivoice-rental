@@ -66,12 +66,15 @@ async function getPropertyFacts(phone, propertySlug) {
 async function setPropertyFacts(phone, propertySlug, facts) {
   const key = `facts:${phone}:${propertySlug}`;
   await redis.set(key, JSON.stringify(facts));
+  console.log(`💾 [Redis] Updated facts for ${phone}:${propertySlug}`);
 }
 
 // --- AI page extractor ---
 async function fetchAndExtractFact(url, topic) {
   try {
     if (!url) return null;
+    console.log(`🌐 [AI-Lookup] Checking listing for ${topic.toUpperCase()} → ${url}`);
+
     const prompt = `
 You are an assistant that extracts property facts from a rental listing.
 URL: ${url}
@@ -94,10 +97,13 @@ If it's missing, reply exactly with "not mentioned".
 
     const data = await resp.json();
     const output = data.output_text?.trim() || null;
-    console.log(`🔍 Extracted ${topic} from ${url}: ${output}`);
+
+    if (output) console.log(`✅ [AI-Lookup] ${topic}: ${output}`);
+    else console.log(`⚠️ [AI-Lookup] ${topic}: no output (maybe rate-limited)`);
+
     return output;
   } catch (err) {
-    console.error("⚠️ fetchAndExtractFact error:", err);
+    console.error("❌ [AI-Lookup] Error:", err);
     return null;
   }
 }
@@ -120,6 +126,16 @@ app.get("/debug/memory", async (req, res) => {
   for (const k of keys) data[k] = JSON.parse(await redis.get(k));
   res.json({ keys, data });
 });
+
+app.get("/debug/facts", async (req, res) => {
+  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
+  const { phone, property } = req.query;
+  if (!phone) return res.status(400).send("Missing phone");
+  const slug = property ? slugify(property) : "unknown";
+  const facts = await getPropertyFacts(phone, slug);
+  res.json({ phone, property: slug, facts });
+});
+
 app.get("/debug/clear", async (req, res) => {
   if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
   const { phone, property } = req.query;
@@ -182,7 +198,7 @@ app.post("/twiml/sms", async (req, res) => {
       }
     }
 
-    // Personality tone
+    // Tone + personality
     const tones = ["friendly and upbeat", "casual and chill", "helpful and polite", "enthusiastic and professional"];
     const tone = tones[Math.floor(Math.random() * tones.length)];
 
