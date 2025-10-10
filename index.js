@@ -170,12 +170,13 @@ app.post("/twiml/sms", async (req, res) => {
 
   try {
     // Detect property
-    let propertyInfo = null;
-    const propertyRegex =
-      /(for|about|regarding|at)\s+([0-9A-Za-z\s\-]+(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|SE|SW|NW|NE))/i;
-    const match = body.match(propertyRegex);
-    if (match) propertyInfo = match[2].trim();
-    const propertySlug = slugify(propertyInfo || "unknown");
+let propertyInfo = null;
+const propertyRegex =
+  /(?:for|about|regarding|at)?\s*([0-9]{2,5}\s?[A-Za-z]+\s?(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|SE|SW|NW|NE|Southeast|Southwest|Northeast|Northwest))/i;
+
+const match = body.match(propertyRegex);
+if (match) propertyInfo = match[1].trim();
+const propertySlug = slugify(propertyInfo || "unknown");
 
     // Load memory + facts
     const prev = await getConversation(from, propertySlug);
