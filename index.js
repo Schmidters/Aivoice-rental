@@ -64,7 +64,7 @@ async function setPropertyFacts(phone, property, facts) {
   console.log(`💾 [Redis] Updated facts for ${phone}:${property}`);
 }
 
-// --- AI “read like a human” listing reader (Browserless v2 stealth) ---
+// --- AI “read like a human” listing reader (Browserless /content + fallback) ---
 async function aiReadListing(url) {
   try {
     console.log(`🌐 [AI-Read] Loading via Browserless → ${url}`);
@@ -73,41 +73,65 @@ async function aiReadListing(url) {
       return {};
     }
 
-    // Prepare stealth launch config (required for v2 free-tier)
-    const launchConfig = encodeURIComponent(
-      JSON.stringify({ headless: true, stealth: true })
-    );
+    // Primary endpoint per Browserless v2 REST docs
+    const endpoint = `https://production-sfo.browserless.io/content?token=${BROWSERLESS_KEY}`;
+    const payload = {
+      url,
+      gotoOptions: { waitUntil: "networkidle2" },
+      rejectResourceTypes: ["image", "media", "font", "stylesheet"],
+      bestAttempt: true,
+      waitForTimeout: 1500
+    };
 
-    const fetchUrl = `https://production-sfo.browserless.io/chromium/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(
-  url
-)}&launch=${launchConfig}`;
+    // --- First attempt: /content ---
+    let resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
 
-    const resp = await fetch(fetchUrl);
-
+    // --- Fallback if /content fails ---
     if (!resp.ok) {
-      console.error("❌ [AI-Read] Browserless request failed:", resp.status, await resp.text());
-      return {};
+      const text = await resp.text();
+      console.error("❌ [AI-Read] Browserless /content failed:", resp.status, text);
+      if (resp.status === 404 || resp.status === 410) {
+        console.warn("⚠️ Falling back to /unblock");
+        const unblockEp = `https://production-sfo.browserless.io/unblock?token=${BROWSERLESS_KEY}`;
+        resp = await fetch(unblockEp, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url })
+        });
+      }
+      if (!resp.ok) {
+        console.error("❌ [AI-Read] Browserless request failed again:", resp.status);
+        return {};
+      }
     }
 
     const html = await resp.text();
-    const snippet = html.slice(0, 10000); // limit for GPT input
+    const snippet = html.slice(0, 10000); // trim for GPT token limits
 
+    // --- Ask GPT to extract structured data ---
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
           content: `You are a real-estate assistant. Extract factual data from this HTML snippet:
-          - Parking situation
-          - Pet policy
-          - Utilities (included or not)
-          - Rent details
-          Return JSON only.`,
+- Parking situation
+- Pet policy
+- Utilities (included or not)
+- Rent details
+If unknown, reply "not mentioned". Return JSON only.`
         },
-        { role: "user", content: snippet },
+        { role: "user", content: snippet }
       ],
       response_format: { type: "json_object" },
-      max_tokens: 400,
+      max_tokens: 400
     });
 
     const data = completion.choices[0].message.content;
@@ -143,7 +167,6 @@ app.post("/init/facts", async (req, res) => {
 
     phone = normalizePhone(phone);
     const slug = slugify(property);
-
     const facts = {
       phone,
       property: slug,
@@ -151,13 +174,13 @@ app.post("/init/facts", async (req, res) => {
       rent: rent || null,
       unit: unit || null,
       listingUrl: listingUrl || null,
-      initializedAt: new Date().toISOString(),
+      initializedAt: new Date().toISOString()
     };
 
     await setPropertyFacts(phone, slug, facts);
     console.log(`💾 [Init] Facts initialized for ${phone}:${slug}`, facts);
 
-    // --- Auto-enrich via Browserless ---
+    // Auto-enrich with Browserless
     if (listingUrl) {
       const read = await aiReadListing(listingUrl);
       Object.assign(facts, read);
@@ -169,7 +192,7 @@ app.post("/init/facts", async (req, res) => {
       message: "Initialized and enriched facts successfully",
       data: facts,
       redisKey: `facts:${phone}:${slug}`,
-      browsingVerified: !!listingUrl,
+      browsingVerified: !!listingUrl
     });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
@@ -210,7 +233,7 @@ app.post("/twiml/sms", async (req, res) => {
       role: "system",
       content: `You are Alex, a ${tone} rental assistant. Known property facts: ${JSON.stringify(facts)}.
 If the user asks about parking, pets, or utilities, use these facts directly.
-If missing, say “not mentioned” politely. Keep replies under 3 sentences.`,
+If missing, say “not mentioned” politely. Keep replies under 3 sentences.`
     };
 
     const messages = [systemPrompt, ...prev, { role: "user", content: body }];
@@ -218,7 +241,7 @@ If missing, say “not mentioned” politely. Keep replies under 3 sentences.`,
     const aiResp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages,
-      max_tokens: 200,
+      max_tokens: 200
     });
     const reply = aiResp.choices?.[0]?.message?.content?.trim() || "Hmm, could you repeat that?";
 
