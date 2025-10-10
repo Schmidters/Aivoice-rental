@@ -40,18 +40,22 @@ async function getConversation(phone, propertySlug) {
 }
 async function saveConversation(phone, propertySlug, messages) {
   const key = `conv:${phone}:${propertySlug}`;
+  const metaKey = `meta:${phone}:${propertySlug}`;
   const trimmed = messages.slice(-10);
+
   await redis.set(key, JSON.stringify(trimmed));
-  await redis.hset(`meta:${phone}:${propertySlug}`, "lastInteraction", DateTime.now().toISO());
-}
-async function getPropertyFacts(phone, propertySlug) {
-  const key = `facts:${phone}:${propertySlug}`;
-  const data = await redis.get(key);
-  return data ? JSON.parse(data) : {};
-}
-async function setPropertyFacts(phone, propertySlug, facts) {
-  const key = `facts:${phone}:${propertySlug}`;
-  await redis.set(key, JSON.stringify(facts));
+
+  try {
+    // check if metaKey is valid type
+    const type = await redis.type(metaKey);
+    if (type !== "hash" && type !== "none") {
+      console.warn(`⚠️ Clearing invalid meta key type for ${metaKey} (${type})`);
+      await redis.del(metaKey);
+    }
+    await redis.hset(metaKey, "lastInteraction", DateTime.now().toISO());
+  } catch (err) {
+    console.error("⚠️ Error updating meta:", err);
+  }
 }
 
 // --- AI Context Fetcher ---
