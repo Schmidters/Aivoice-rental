@@ -23,7 +23,19 @@ const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123"; // optional acce
 
 // --- Initialize clients ---
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-const redis = new Redis(REDIS_URL); // Non-TLS version (Starter plan safe)
+const redis = new Redis(REDIS_URL, {
+  tls: false,
+  connectTimeout: 5000,
+  maxRetriesPerRequest: 3,
+  retryStrategy: (times) => {
+    const delay = Math.min(times * 500, 5000);
+    console.log(`♻️ Reconnecting to Redis in ${delay}ms...`);
+    return delay;
+  },
+});
+
+redis.on("connect", () => console.log("✅ Connected to Redis successfully"));
+redis.on("error", (err) => console.error("❌ Redis connection error:", err.message));
 
 // --- Helpers for conversation persistence ---
 async function getConversation(phone) {
