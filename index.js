@@ -10,6 +10,7 @@ const Redis = require("ioredis");
 // --- App setup ---
 const app = express();
 app.use(express.urlencoded({ extended: false }));
+app.use(express.json());
 
 // --- Config ---
 const PORT = process.env.PORT || 3000;
@@ -136,6 +137,16 @@ app.get("/debug/facts", async (req, res) => {
   res.json({ phone, property: slug, facts });
 });
 
+app.get("/debug/facts/all", async (req, res) => {
+  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
+  const { phone } = req.query;
+  if (!phone) return res.status(400).send("Missing phone");
+  const keys = await redis.keys(`facts:${phone}:*`);
+  const data = {};
+  for (const key of keys) data[key] = JSON.parse(await redis.get(key));
+  res.json(data);
+});
+
 app.get("/debug/clear", async (req, res) => {
   if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
   const { phone, property } = req.query;
@@ -147,6 +158,30 @@ app.get("/debug/clear", async (req, res) => {
   const allKeys = await redis.keys("conv:*");
   await redis.del(allKeys);
   res.send(`🧹 Cleared ${allKeys.length} conversations`);
+});
+
+// --- Initialize property facts from Zapier ---
+app.post("/init/facts", async (req, res) => {
+  try {
+    const { phone, property, listingUrl, rent, unit } = req.body;
+    if (!phone || !property)
+      return res.status(400).send("Missing phone or property");
+
+    const propertySlug = slugify(property);
+    const facts = {
+      listingUrl: listingUrl || null,
+      address: property,
+      rent: rent || null,
+      unit: unit || null,
+    };
+
+    await setPropertyFacts(phone, propertySlug, facts);
+    console.log(`💾 [Init] Facts initialized for ${phone}:${propertySlug}`, facts);
+    res.send(`✅ Initialized facts for ${phone}:${propertySlug}`);
+  } catch (err) {
+    console.error("❌ /init/facts error:", err);
+    res.status(500).send(err.message);
+  }
 });
 
 // --- Voice webhook (optional) ---
@@ -169,16 +204,14 @@ app.post("/twiml/sms", async (req, res) => {
   res.type("text/xml").send("<Response></Response>");
 
   try {
-    // Detect property
-let propertyInfo = null;
-const propertyRegex =
-  /(?:for|about|regarding|at)?\s*([0-9]{2,5}\s?[A-Za-z]+\s?(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|SE|SW|NW|NE|Southeast|Southwest|Northeast|Northwest))/i;
+    // Improved property detection
+    let propertyInfo = null;
+    const propertyRegex =
+      /(?:for|about|regarding|at)?\s*([0-9]{2,5}\s?[A-Za-z]+\s?(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|SE|SW|NW|NE|Southeast|Southwest|Northeast|Northwest))/i;
+    const match = body.match(propertyRegex);
+    if (match) propertyInfo = match[1].trim();
+    const propertySlug = slugify(propertyInfo || "unknown");
 
-const match = body.match(propertyRegex);
-if (match) propertyInfo = match[1].trim();
-const propertySlug = slugify(propertyInfo || "unknown");
-
-    // Load memory + facts
     const prev = await getConversation(from, propertySlug);
     const facts = await getPropertyFacts(from, propertySlug);
 
@@ -301,5 +334,7 @@ server.listen(PORT, () => {
   console.log(`✅ Server listening on port ${PORT}`);
   console.log(`💬 SMS endpoint: POST ${PUBLIC_BASE_URL}/twiml/sms`);
   console.log(`🌐 Voice endpoint: POST ${PUBLIC_BASE_URL}/twiml/voice`);
+  console.log(`🧠 Init facts endpoint: POST ${PUBLIC_BASE_URL}/init/facts`);
   console.log(`⏰ Follow-up cron: GET ${PUBLIC_BASE_URL}/cron/followups`);
 });
+
