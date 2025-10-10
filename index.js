@@ -41,6 +41,19 @@ function slugify(str) {
   return str ? str.replace(/\s+/g, "-").replace(/[^\w\-]/g, "").toLowerCase() : "unknown";
 }
 
+// Decode SendGrid redirect URLs to actual listing URLs
+function cleanListingUrl(url) {
+  try {
+    const match = url.match(/upn=([^&]+)/);
+    if (!match) return url;
+    const decoded = decodeURIComponent(match[1]);
+    const subMatch = decoded.match(/https?:\/\/[^\s]+/);
+    return subMatch ? subMatch[0] : url;
+  } catch {
+    return url;
+  }
+}
+
 // --- Redis helpers ---
 async function getConversation(phone, property) {
   const key = `conv:${phone}:${property}`;
@@ -67,33 +80,33 @@ async function setPropertyFacts(phone, property, facts) {
 // --- AI “read like a human” listing reader (Browserless /content + fallback) ---
 async function aiReadListing(url) {
   try {
-    console.log(`🌐 [AI-Read] Loading via Browserless → ${url}`);
+    const cleanUrl = cleanListingUrl(url);
+    console.log(`🌐 [AI-Read] Loading via Browserless → ${cleanUrl}`);
     if (!BROWSERLESS_KEY) {
       console.warn("⚠️ No BROWSERLESS_KEY found — skipping page read");
       return {};
     }
 
-    // Primary endpoint per Browserless v2 REST docs
     const endpoint = `https://production-sfo.browserless.io/content?token=${BROWSERLESS_KEY}`;
     const payload = {
-      url,
+      url: cleanUrl,
       gotoOptions: { waitUntil: "networkidle2" },
       rejectResourceTypes: ["image", "media", "font", "stylesheet"],
       bestAttempt: true,
-      waitForTimeout: 1500
+      waitForTimeout: 5000, // give time for JS-heavy pages
     };
 
-    // --- First attempt: /content ---
+    // --- Try /content ---
     let resp = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Cache-Control": "no-cache",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
 
-    // --- Fallback if /content fails ---
+    // --- Fallback to /unblock if needed ---
     if (!resp.ok) {
       const text = await resp.text();
       console.error("❌ [AI-Read] Browserless /content failed:", resp.status, text);
@@ -103,7 +116,7 @@ async function aiReadListing(url) {
         resp = await fetch(unblockEp, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url })
+          body: JSON.stringify({ url: cleanUrl }),
         });
       }
       if (!resp.ok) {
@@ -113,9 +126,9 @@ async function aiReadListing(url) {
     }
 
     const html = await resp.text();
-    const snippet = html.slice(0, 10000); // trim for GPT token limits
+    const snippet = html.slice(0, 10000); // cap for token safety
 
-    // --- Ask GPT to extract structured data ---
+    // --- AI Extraction ---
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -126,12 +139,12 @@ async function aiReadListing(url) {
 - Pet policy
 - Utilities (included or not)
 - Rent details
-If unknown, reply "not mentioned". Return JSON only.`
+If unknown, reply "not mentioned". Return JSON only.`,
         },
-        { role: "user", content: snippet }
+        { role: "user", content: snippet },
       ],
       response_format: { type: "json_object" },
-      max_tokens: 400
+      max_tokens: 400,
     });
 
     const data = completion.choices[0].message.content;
@@ -174,7 +187,7 @@ app.post("/init/facts", async (req, res) => {
       rent: rent || null,
       unit: unit || null,
       listingUrl: listingUrl || null,
-      initializedAt: new Date().toISOString()
+      initializedAt: new Date().toISOString(),
     };
 
     await setPropertyFacts(phone, slug, facts);
@@ -192,7 +205,7 @@ app.post("/init/facts", async (req, res) => {
       message: "Initialized and enriched facts successfully",
       data: facts,
       redisKey: `facts:${phone}:${slug}`,
-      browsingVerified: !!listingUrl
+      browsingVerified: !!listingUrl,
     });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
@@ -233,7 +246,7 @@ app.post("/twiml/sms", async (req, res) => {
       role: "system",
       content: `You are Alex, a ${tone} rental assistant. Known property facts: ${JSON.stringify(facts)}.
 If the user asks about parking, pets, or utilities, use these facts directly.
-If missing, say “not mentioned” politely. Keep replies under 3 sentences.`
+If missing, say “not mentioned” politely. Keep replies under 3 sentences.`,
     };
 
     const messages = [systemPrompt, ...prev, { role: "user", content: body }];
@@ -241,7 +254,7 @@ If missing, say “not mentioned” politely. Keep replies under 3 sentences.`
     const aiResp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages,
-      max_tokens: 200
+      max_tokens: 200,
     });
     const reply = aiResp.choices?.[0]?.message?.content?.trim() || "Hmm, could you repeat that?";
 
