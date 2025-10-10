@@ -19,30 +19,27 @@ const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const REDIS_URL = process.env.REDIS_URL;
-const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123"; // optional access key
+const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
 
-// --- Initialize clients ---
+// --- Clients ---
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+// Non-TLS Redis (Starter plan safe) + retry logic
 const redis = new Redis(REDIS_URL, {
   tls: false,
   connectTimeout: 5000,
   maxRetriesPerRequest: 3,
-  retryStrategy: (times) => {
-    const delay = Math.min(times * 500, 5000);
-    console.log(`♻️ Reconnecting to Redis in ${delay}ms...`);
-    return delay;
-  },
+  retryStrategy: (times) => Math.min(times * 500, 5000),
 });
 
 redis.on("connect", () => console.log("✅ Connected to Redis successfully"));
 redis.on("error", (err) => console.error("❌ Redis connection error:", err.message));
 
-// --- Helpers for conversation persistence ---
+// --- Helpers ---
 async function getConversation(phone) {
   const data = await redis.get(`conv:${phone}`);
   return data ? JSON.parse(data) : [];
 }
-
 async function saveConversation(phone, messages) {
   const trimmed = messages.slice(-10);
   await redis.set(`conv:${phone}`, JSON.stringify(trimmed));
@@ -53,31 +50,21 @@ app.get("/", (req, res) => {
   res.send("✅ AI Voice + SMS Rental Assistant with Redis memory is running");
 });
 
-// --- Debug endpoint (view stored memory safely) ---
+// --- Debug endpoints ---
 app.get("/debug/memory", async (req, res) => {
-  // security key required: /debug/memory?key=yoursecret
-  if (req.query.key !== DEBUG_SECRET) {
-    return res.status(401).send("Unauthorized");
-  }
-
+  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
   try {
     const keys = await redis.keys("conv:*");
     const data = {};
-    for (const key of keys) {
-      data[key] = JSON.parse(await redis.get(key));
-    }
+    for (const key of keys) data[key] = JSON.parse(await redis.get(key));
     res.json({ keys, data });
   } catch (err) {
     res.status(500).send(`❌ Redis error: ${err.message}`);
   }
 });
 
-// --- Debug clear endpoint (delete one or all conversations) ---
 app.get("/debug/clear", async (req, res) => {
-  if (req.query.key !== DEBUG_SECRET) {
-    return res.status(401).send("Unauthorized");
-  }
-
+  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
   try {
     const target = req.query.phone;
     if (target) {
@@ -105,75 +92,97 @@ app.post("/twiml/voice", (req, res) => {
   <Say voice="Polly.Joanna">Hi, connecting you to the rental assistant now.</Say>
 </Response>
   `.trim();
-
   res.set("Content-Type", "text/xml");
   res.send(twiml);
 });
 
-// --- SMS webhook with Redis memory ---
+// --- SMS webhook ---
 app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res) => {
   const from = req.body.From;
   const body = req.body.Body?.trim() || "";
   console.log(`📩 SMS from ${from}: ${body}`);
   res.type("text/xml");
-  res.send("<Response></Response>"); // acknowledge immediately
+  res.send("<Response></Response>");
 
   try {
-    // Load existing conversation
+    // Retrieve prior memory
     const prev = await getConversation(from);
-    prev.push({ role: "user", content: body });
 
-    // Simulate a human typing delay (2–5 seconds)
-    const delayMs = 2000 + Math.random() * 3000;
-    setTimeout(async () => {
-      try {
-        const response = await fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                 content: `You are an AI rental assistant named Alex. 
-Use natural, conversational language — sound like a friendly person texting, not a corporate bot.
-Be warm, helpful, and use small human touches ("Sure thing!", "Sounds good", "No worries at all"). 
-Keep replies under 3 sentences unless more detail is genuinely helpful. 
-If the renter asks about availability, pricing, or scheduling, answer directly and offer next steps. 
-Vary your tone slightly each time to feel authentic.`
-              },
-              ...prev,
-            ],
-            max_tokens: 200,
-          }),
-        });
+    // Try to extract property address or name from the message if first message
+    let propertyInfo = null;
+    if (prev.length === 0) {
+      const propertyRegex = /(for|about|regarding|at)\s+([0-9A-Za-z\s\-]+(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|SE|SW|NW|NE))/i;
+      const match = body.match(propertyRegex);
+      if (match) propertyInfo = match[2].trim();
+    } else {
+      const sys = prev.find((m) => m.role === "system" && m.content.includes("Property:"));
+      if (sys) propertyInfo = sys.content.split("Property:")[1].trim();
+    }
 
-        const data = await response.json();
-        const reply =
-          data.choices?.[0]?.message?.content?.trim() ||
-          "Hmm, can you say that again?";
+    // Build conversational style prompt
+    const styles = [
+      "friendly and upbeat",
+      "casual and chill",
+      "helpful and polite",
+      "enthusiastic and professional",
+    ];
+    const style = styles[Math.floor(Math.random() * styles.length)];
 
-        console.log("💬 GPT reply:", reply);
+    const propertyLine = propertyInfo
+      ? `You are helping a renter who inquired about the property at ${propertyInfo}.`
+      : `You are helping a renter asking about a property.`;
 
-        prev.push({ role: "assistant", content: reply });
-        await saveConversation(from, prev);
+    const systemPrompt = {
+      role: "system",
+      content: `
+You are an AI rental assistant named Alex. 
+${propertyLine}
+Respond via SMS in a ${style} tone — sound like a friendly person texting.
+Be warm, human, and conversational. Vary your phrasing slightly to feel authentic.
+If it's the first message from this person, greet them and reference the property directly:
+Example: "Hey! I got your message about ${propertyInfo || 'the property'} — would you like to set up a showing or have any questions?"
+Keep replies under 3 sentences unless needed.`,
+    };
 
-        await twilioClient.messages.create({
-          from: TWILIO_PHONE_NUMBER,
-          to: from,
-          body: reply,
-        });
+    // Append system and conversation context
+    const messages = [systemPrompt, ...prev, { role: "user", content: body }];
 
-        console.log(`✅ Sent reply to ${from}`);
-      } catch (err) {
-        console.error("❌ SMS error:", err);
-      }
-    }, delayMs);
+    // Call OpenAI
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages,
+        max_tokens: 200,
+      }),
+    });
+
+    const data = await response.json();
+    const reply = data.choices?.[0]?.message?.content?.trim() || "Hey, could you say that again?";
+
+    console.log("💬 GPT reply:", reply);
+
+    // Save updated conversation
+    const updated = [...prev, { role: "user", content: body }, { role: "assistant", content: reply }];
+    if (propertyInfo && !updated.find((m) => m.role === "system" && m.content.includes("Property:"))) {
+      updated.unshift({ role: "system", content: `Property: ${propertyInfo}` });
+    }
+    await saveConversation(from, updated);
+
+    // Send via Twilio
+    await twilioClient.messages.create({
+      from: TWILIO_PHONE_NUMBER,
+      to: from,
+      body: reply,
+    });
+
+    console.log(`✅ Sent reply to ${from}`);
   } catch (err) {
-    console.error("❌ Conversation handling error:", err);
+    console.error("❌ SMS processing error:", err);
   }
 });
 
@@ -184,9 +193,7 @@ const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", (req, socket, head) => {
   if (req.url === "/twilio-media") {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
-  } else {
-    socket.destroy();
-  }
+  } else socket.destroy();
 });
 
 wss.on("connection", (ws) => {
@@ -194,11 +201,8 @@ wss.on("connection", (ws) => {
   ws.on("message", (msg) => {
     try {
       const data = JSON.parse(msg.toString());
-      if (data.event === "start") {
-        console.log("🎬 Stream started:", data.streamSid);
-      } else if (data.event === "stop") {
-        console.log("🛑 Stream stopped:", data.streamSid);
-      }
+      if (data.event === "start") console.log("🎬 Stream started:", data.streamSid);
+      if (data.event === "stop") console.log("🛑 Stream stopped:", data.streamSid);
     } catch (err) {
       console.error("⚠️ WS message parse error:", err);
     }
@@ -213,3 +217,4 @@ server.listen(PORT, () => {
   console.log(`💬 SMS endpoint: POST ${PUBLIC_BASE_URL}/twiml/sms`);
   console.log(`🌐 Voice endpoint: POST ${PUBLIC_BASE_URL}/twiml/voice`);
 });
+
