@@ -27,8 +27,8 @@ const REDIS_URL = process.env.REDIS_URL;
 
 const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
 const DEBUG_LEVEL = (process.env.DEBUG_LEVEL || "info").toLowerCase(); // "debug" | "info" | "warn" | "error"
-
-const HTML_SNIPPET_LIMIT = parseInt(process.env.HTML_SNIPPET_LIMIT || "20000", 10); // 20k chars cap
+const HTML_SNIPPET_LIMIT = parseInt(process.env.HTML_SNIPPET_LIMIT || "20000", 10); // 20k chars
+const ASK_TTL_SEC = parseInt(process.env.ASK_TTL_SEC || "900", 10); // 15 min
 
 // --- Clients ---
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -57,24 +57,20 @@ function normalizePhone(phone) {
 function slugify(str) {
   return str ? str.replace(/\s+/g, "-").replace(/[^\w\-]/g, "").toLowerCase() : "unknown";
 }
-
-// A tiny guard to avoid persisting obvious trackers (we expect finalUrl already cleaned by Zapier)
 function isTracker(url) {
   try {
     const h = new URL(url).hostname.toLowerCase();
     return [
-      "ct.sendgrid.net",
-      "cloudflare.com",
-      "challenge.cloudflare.com",
-      "bit.ly",
-      "lnkd.in",
-      "l.instagram.com",
-      "linktr.ee",
+      "ct.sendgrid.net","cloudflare.com","challenge.cloudflare.com",
+      "bit.ly","lnkd.in","l.instagram.com","linktr.ee",
     ].some(d => h.endsWith(d));
   } catch { return true; }
 }
+const ADDRESS_REGEX =
+  /([0-9]{2,5}\s?[A-Za-z0-9.'-]+\s?(Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Court|Ct|Trail|Trl|Way|Place|Pl|SE|SW|NW|NE|Southeast|Southwest|Northeast|Northwest))/i;
 
 // --- Redis helpers ---
+// Conversations remain per phone + property
 async function getConversation(phone, property) {
   const key = `conv:${phone}:${property}`;
   const data = await redis.get(key);
@@ -86,15 +82,49 @@ async function saveConversation(phone, property, messages) {
   await redis.set(key, JSON.stringify(messages.slice(-10)));
   await redis.hset(metaKey, "lastInteraction", DateTime.now().toISO());
 }
-async function getPropertyFacts(phone, property) {
-  const key = `facts:${phone}:${property}`;
-  const data = await redis.get(key);
-  return data ? JSON.parse(data) : {};
+
+// Property-centric facts
+async function getPropertyFactsBySlug(propertySlug) {
+  const key = `facts:prop:${propertySlug}`;
+  const raw = await redis.get(key);
+  return raw ? JSON.parse(raw) : null;
 }
-async function setPropertyFacts(phone, property, facts) {
-  const key = `facts:${phone}:${property}`;
+async function setPropertyFactsBySlug(propertySlug, facts) {
+  const key = `facts:prop:${propertySlug}`;
   await redis.set(key, JSON.stringify(facts));
-  log("info", "💾 [Redis] Updated facts", { phone, property });
+  await redis.sadd("props:index", propertySlug);
+  log("info", "💾 [Redis] Updated property facts", { property: propertySlug });
+}
+async function listAllPropertySlugs() {
+  return await redis.smembers("props:index");
+}
+
+// Phone ↔ properties mapping (multi) + sticky “last property”
+async function addPropertyForPhone(phone, propertySlug) {
+  if (!phone || !propertySlug) return;
+  await redis.sadd(`phoneprops:${phone}`, propertySlug);
+}
+async function getPropertiesForPhone(phone) {
+  return (await redis.smembers(`phoneprops:${phone}`)) || [];
+}
+async function setLastPropertyForPhone(phone, propertySlug) {
+  await redis.set(`lastprop:${phone}`, propertySlug);
+}
+async function getLastPropertyForPhone(phone) {
+  return await redis.get(`lastprop:${phone}`);
+}
+
+// Conversational disambiguation memory (no numeric menus)
+async function setAskContext(phone, options) {
+  // options: [{ slug, label, tokens:[] }, ...]
+  await redis.setex(`ask:${phone}`, ASK_TTL_SEC, JSON.stringify(options));
+}
+async function getAskContext(phone) {
+  const raw = await redis.get(`ask:${phone}`);
+  return raw ? JSON.parse(raw) : null;
+}
+async function clearAskContext(phone) {
+  await redis.del(`ask:${phone}`);
 }
 
 // --- Simple page fetcher (no headless browser) ---
@@ -126,7 +156,7 @@ async function aiReasonFromPage({ question, html, facts, url }) {
     const system = `
 You are "Alex", a concise, friendly rental assistant.
 You're given:
-1) Known context (facts) for this lead.
+1) Known context (facts) for this property.
 2) The rental page HTML (truncated).
 3) The user's question.
 
@@ -160,38 +190,60 @@ Keep replies under 3 sentences.`.trim();
 // --- Health check ---
 app.get("/", (req, res) => res.send("✅ AI Rental Assistant is running"));
 
-// --- Debug: get facts ---
+// --- Debug: get facts by property ---
 app.get("/debug/facts", async (req, res) => {
   if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
-  const { phone, property } = req.query;
-  if (!phone) return res.status(400).send("Missing phone");
-  const slug = property ? slugify(property) : "unknown";
-  const facts = await getPropertyFacts(phone, slug);
-  res.json({ phone, property: slug, facts });
+  const { property } = req.query;
+  if (!property) return res.status(400).send("Missing property");
+  const slug = slugify(property);
+  const facts = await getPropertyFactsBySlug(slug);
+  res.json({ property: slug, facts });
 });
 
-// --- Debug: clear lead state ---
+// --- Debug: phone mappings ---
+app.get("/debug/phone", async (req, res) => {
+  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
+  const phone = normalizePhone(req.query.phone);
+  if (!phone) return res.status(400).send("Missing phone");
+  const props = await getPropertiesForPhone(phone);
+  const last = await getLastPropertyForPhone(phone);
+  const ask = await getAskContext(phone);
+  res.json({ phone, properties: props, lastProperty: last, askContext: ask });
+});
+
+// --- Debug: clear state ---
 app.post("/debug/clear", async (req, res) => {
   if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
-  const { phone, property } = req.body || {};
-  if (!phone || !property) return res.status(400).json({ error: "Missing phone or property" });
-  const slug = slugify(property);
-  await redis.del(`conv:${phone}:${slug}`, `facts:${phone}:${slug}`, `meta:${phone}:${slug}`);
+  const { property, phone, clearConversations } = req.body || {};
+  const ops = [];
+  if (property) {
+    const slug = slugify(property);
+    ops.push(redis.del(`facts:prop:${slug}`));
+    if (clearConversations) {
+      const convKeys = await redis.keys(`conv:*:${slug}`);
+      const metaKeys = await redis.keys(`meta:*:${slug}`);
+      if (convKeys.length) ops.push(redis.del(...convKeys));
+      if (metaKeys.length) ops.push(redis.del(...metaKeys));
+    }
+  }
+  if (phone) {
+    const p = normalizePhone(phone);
+    const props = await getPropertiesForPhone(p);
+    if (props.length) await redis.srem(`phoneprops:${p}`, ...props);
+    ops.push(redis.del(`lastprop:${p}`), redis.del(`ask:${p}`));
+  }
+  await Promise.all(ops);
   res.json({ ok: true });
 });
 
 // --- Initialize property facts (from Zapier) ---
-// Expect Zapier to send the *resolved* first-party URL as `finalUrl`.
+// Expect: leadPhone (prospect), property (address string), finalUrl (first-party URL), rent/unit optional
 app.post("/init/facts", async (req, res) => {
   try {
-    let { phone, property, finalUrl, rent, unit } = req.body;
-    if (!phone || !property) {
-      return res.status(400).json({ error: "Missing phone or property" });
-    }
+    let { leadPhone, phone, property, finalUrl, rent, unit } = req.body;
+    if (!property) return res.status(400).json({ error: "Missing property" });
 
-    phone = normalizePhone(phone);
-    const slug = slugify(property);
-
+    const propertySlug = slugify(property);
     if (finalUrl && isTracker(finalUrl)) {
       return res.status(422).json({
         error: "Tracking/interstitial URL provided. Resolve in Zapier first.",
@@ -200,8 +252,6 @@ app.post("/init/facts", async (req, res) => {
     }
 
     const facts = {
-      phone,
-      property: slug,
       address: property,
       rent: rent || null,
       unit: unit || null,
@@ -209,12 +259,18 @@ app.post("/init/facts", async (req, res) => {
       initializedAt: nowIso(),
     };
 
-    await setPropertyFacts(phone, slug, facts);
-    log("info", "💾 [Init] Facts saved", { phone, property: slug, listingUrl: facts.listingUrl });
+    await setPropertyFactsBySlug(propertySlug, facts);
 
-    // Return full JSON so you can test from Zapier
+    const prospect = normalizePhone(leadPhone || phone);
+    if (prospect) {
+      await addPropertyForPhone(prospect, propertySlug);
+      // do NOT auto-set last property here; the last one will be the most recently discussed over SMS
+      log("info", "🔗 Added phone→property link", { phone: prospect, property: propertySlug });
+    }
+
     return res.json({
       success: true,
+      property: propertySlug,
       data: facts,
       smsEndpoint: `${PUBLIC_BASE_URL}/twiml/sms`,
     });
@@ -234,7 +290,117 @@ app.post("/twiml/voice", (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// --- SMS webhook (Tier-1: direct fetch + LLM read) ---
+// --- Conversational property resolver ---
+function buildTokensFromAddress(addr) {
+  if (!addr) return [];
+  const a = addr.toLowerCase();
+  const parts = a.split(/[\s,]+/).filter(Boolean);
+  const number = parts.find(p => /^\d{2,5}$/.test(p));
+  const street = parts.find(p => /[a-z]/.test(p));
+  const tokens = new Set();
+  if (number) tokens.add(number);
+  if (street) tokens.add(street.replace(/[^a-z0-9]/g, ""));
+  // also add first 2 words as phrase token
+  tokens.add(parts.slice(0, 2).join(" "));
+  return Array.from(tokens).filter(Boolean);
+}
+
+async function resolvePropertyForSMS({ from, body }) {
+  const bodyLc = body.toLowerCase();
+
+  // If we asked a natural question last time, try to match their free text to an option
+  const pending = await getAskContext(from);
+  if (pending?.length) {
+    for (const opt of pending) {
+      // match by any token or by substring of label
+      const matchByToken = opt.tokens.some(t => t && bodyLc.includes(String(t).toLowerCase()));
+      const matchByLabel = opt.label && bodyLc.includes(opt.label.toLowerCase());
+      if (matchByToken || matchByLabel) {
+        await clearAskContext(from);
+        await setLastPropertyForPhone(from, opt.slug);
+        return { slug: opt.slug, via: "ask-followup" };
+      }
+    }
+    // Didn't match → gently re-ask once with shorter copy
+    await twilioClient.messages.create({
+      from: TWILIO_PHONE_NUMBER,
+      to: from,
+      body: `Got it — is this about ${pending.map(p => p.label).join(" or ")}?`,
+    });
+    return { slug: null, via: "ask-repeat" };
+  }
+
+  // If message itself includes an address, try to map it
+  const mention = body.match(ADDRESS_REGEX)?.[0];
+  const phoneProps = await getPropertiesForPhone(from);
+
+  if (mention && phoneProps.length) {
+    const mentionSlug = slugify(mention);
+    // exact
+    if (phoneProps.includes(mentionSlug)) {
+      await setLastPropertyForPhone(from, mentionSlug);
+      return { slug: mentionSlug, via: "address-exact" };
+    }
+    // partial: score by overlap with addresses
+    let best = null, bestScore = 0;
+    for (const s of phoneProps) {
+      const facts = await getPropertyFactsBySlug(s);
+      const addrLc = (facts?.address || "").toLowerCase();
+      const score = addrLc.includes(mention.toLowerCase()) ? mention.length : 0;
+      if (score > bestScore) { best = s; bestScore = score; }
+    }
+    if (best) {
+      await setLastPropertyForPhone(from, best);
+      return { slug: best, via: "address-partial" };
+    }
+  }
+
+  // If last property exists, use it (sticky)
+  const last = await getLastPropertyForPhone(from);
+  if (last) return { slug: last, via: "lastprop" };
+
+  // If only one property linked to this phone, use it
+  if (phoneProps.length === 1) {
+    await setLastPropertyForPhone(from, phoneProps[0]);
+    return { slug: phoneProps[0], via: "single-for-phone" };
+  }
+
+  // If multiple: ask a natural question (no menu)
+  if (phoneProps.length > 1) {
+    const options = [];
+    for (const s of phoneProps) {
+      const facts = await getPropertyFactsBySlug(s);
+      const label = facts?.address || s.replaceAll("-", " ");
+      const tokens = buildTokensFromAddress(label);
+      options.push({ slug: s, label, tokens });
+    }
+    await setAskContext(from, options);
+    const readable = options.map(o => o.label).slice(0, 4); // keep it short
+    await twilioClient.messages.create({
+      from: TWILIO_PHONE_NUMBER,
+      to: from,
+      body: `I see you asked about ${readable.slice(0, -1).join(", ")}${readable.length > 1 ? " and " + readable.slice(-1) : ""}. Which one is this about?`,
+    });
+    return { slug: null, via: "ask-sent" };
+  }
+
+  // No mapping yet → if only one property exists globally, use it; else ask for address
+  const allProps = await listAllPropertySlugs();
+  if (allProps.length === 1) {
+    await addPropertyForPhone(from, allProps[0]);
+    await setLastPropertyForPhone(from, allProps[0]);
+    return { slug: allProps[0], via: "single-global" };
+  }
+
+  await twilioClient.messages.create({
+    from: TWILIO_PHONE_NUMBER,
+    to: from,
+    body: "Which property is this about? You can say something like “215 16 Street SE”.",
+  });
+  return { slug: null, via: "ask-address" };
+}
+
+// --- SMS webhook (Tier-1 fetch + conversational disambiguation) ---
 app.post("/twiml/sms", async (req, res) => {
   const from = normalizePhone(req.body.From);
   const body = req.body.Body?.trim() || "";
@@ -242,17 +408,18 @@ app.post("/twiml/sms", async (req, res) => {
   res.type("text/xml").send("<Response></Response>");
 
   try {
-    // Try to guess a property slug from message; fallback to "unknown"
-    const propertyRegex =
-      /([0-9]{2,5}\s?[A-Za-z]+\s?(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|SE|SW|NW|NE|Southeast|Southwest|Northeast|Northwest))/i;
-    const match = body.match(propertyRegex);
-    const propertySlug = slugify(match ? match[0] : "unknown");
+    const { slug: propertySlug, via } = await resolvePropertyForSMS({ from, body });
+    log("debug", "🔎 property resolution", { from, via, propertySlug });
+
+    if (!propertySlug) {
+      // We asked a natural question or address; wait for user reply
+      return;
+    }
 
     const prev = await getConversation(from, propertySlug);
-    const facts = await getPropertyFacts(from, propertySlug);
+    const facts = await getPropertyFactsBySlug(propertySlug);
 
     let reply = "Could you share the property link?";
-
     if (facts?.listingUrl && !isTracker(facts.listingUrl)) {
       const t = timeStart(`[fetch] listing HTML`);
       const html = await fetchListingHTML(facts.listingUrl);
@@ -261,11 +428,11 @@ app.post("/twiml/sms", async (req, res) => {
       if (html) {
         reply = await aiReasonFromPage({ question: body, html, facts, url: facts.listingUrl });
       } else {
-        // fallback to facts-only (still keeps tone)
+        // facts-only fallback
         const sys = {
           role: "system",
           content: `You are Alex, a friendly rental assistant. Known facts: ${JSON.stringify(facts)}.
-If info isn't present, say "not mentioned". Keep replies under 3 sentences.`
+If info isn't present, say "not mentioned". Keep replies under 3 sentences.`,
         };
         const msgs = [sys, ...prev, { role: "user", content: body }];
         const ai = await openai.chat.completions.create({
@@ -274,7 +441,8 @@ If info isn't present, say "not mentioned". Keep replies under 3 sentences.`
           max_tokens: 180,
           temperature: 0.3,
         });
-        reply = ai.choices?.[0]?.message?.content?.trim() || "I couldn't load the listing—could you resend the link?";
+        reply = ai.choices?.[0]?.message?.content?.trim()
+          || "I couldn't load the listing—could you resend the link?";
       }
     }
 
@@ -283,6 +451,8 @@ If info isn't present, say "not mentioned". Keep replies under 3 sentences.`
     await saveConversation(from, propertySlug, updated);
     await twilioClient.messages.create({ from: TWILIO_PHONE_NUMBER, to: from, body: reply });
     log("info", "✅ SMS sent", { to: from });
+    // set this as the last discussed property
+    await setLastPropertyForPhone(from, propertySlug);
   } catch (err) {
     log("error", "❌ SMS error", { error: err.message });
   }
@@ -307,7 +477,7 @@ app.get("/cron/followups", async (req, res) => {
     }
 
     for (const { phone, property } of followups) {
-      const facts = await getPropertyFacts(phone, property);
+      const facts = await getPropertyFactsBySlug(property);
       const text = facts?.address
         ? `Hey, just checking if you’d like to set up a showing for ${facts.address} 😊`
         : `Hey, just checking if you’re still interested in booking a showing 😊`;
@@ -323,7 +493,7 @@ app.get("/cron/followups", async (req, res) => {
   }
 });
 
-// --- WebSocket for voice streaming (unchanged passthrough) ---
+// --- WebSocket for voice streaming (unchanged) ---
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", (req, socket, head) => {
