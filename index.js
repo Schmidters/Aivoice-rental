@@ -44,15 +44,12 @@ const STYLES = [
 ];
 
 function slugifyProperty(s) {
-  return (s || "unknown")
-    .replace(/\s+/g, "-")
-    .replace(/[^\w\-]/g, "")
-    .toLowerCase();
+  return (s || "unknown").replace(/\s+/g, "-").replace(/[^\w\-]/g, "").toLowerCase();
 }
 
 function extractPropertyFromText(text) {
   if (!text) return null;
-  // Simple heuristic for street-ish mentions. Adjust as needed.
+  // Heuristic for addresses / “about 215 16 Street SE”
   const rx = /(for|about|regarding|re|re:|at)\s+([0-9A-Za-z][0-9A-Za-z\s\-]*(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Court|Ct|Place|Pl|SE|SW|NW|NE)?)/i;
   const m = text.match(rx);
   return m ? m[2].trim() : null;
@@ -129,35 +126,137 @@ function messageDefers(text) {
     t.includes("touch base later")
   );
 }
-
-// Schedules: compute the next 9:30 AM in America/Edmonton after a given time
 function nextLocal930(afterMillis) {
   const after = DateTime.fromMillis(afterMillis, { zone: LOCAL_TZ });
   let target = after.set({ hour: 9, minute: 30, second: 0, millisecond: 0 });
-  if (target <= after) target = target.plus({ days: 1 }); // next day 9:30
+  if (target <= after) target = target.plus({ days: 1 });
   return target.toMillis();
+}
+
+// Topic detection for sensitive facts
+function detectTopics(text) {
+  const t = (text || "").toLowerCase();
+  return {
+    parking: /\bparking|garage|stall|park\b/.test(t),
+    pets: /\bpet|pets|cat|dog\b/.test(t),
+    utilities: /\butilit|power|gas|water|heat\b/.test(t),
+    furnished: /\bfurnish\b/.test(t),
+    price: /\bprice|rent|cost\b/.test(t),
+    availability: /\bavailable|move in|move-in|start date|from\b/.test(t),
+    laundry: /\blaundry|washer|dryer\b/.test(t),
+    sqft: /\bsq ?ft|square feet\b/.test(t),
+  };
+}
+
+// Compose a safe, human reply without inventing facts
+function composeSafeReply({ firstTime, property, facts, topics }) {
+  const parts = [];
+  const intro = firstTime
+    ? (property
+        ? `Hey! I got your message about ${property}.`
+        : `Hey! Thanks for reaching out.`)
+    : null;
+  if (intro) parts.push(intro);
+
+  // Parking
+  if (topics.parking) {
+    if (facts.parking || facts.parkingFee) {
+      const fee = facts.parkingFee ? ` (${facts.parkingFee})` : "";
+      parts.push(`Parking: ${facts.parking || "details available"}${fee}.`);
+    } else {
+      parts.push(`Parking details aren’t listed — I can check for you. Do you need a spot?`);
+    }
+  }
+
+  // Pets
+  if (topics.pets) {
+    if (typeof facts.pets === "string") {
+      parts.push(`Pet policy: ${facts.pets}.`);
+    } else {
+      parts.push(`Pet policy isn’t listed — are you hoping to bring a pet (type/size)? I can confirm.`);
+    }
+  }
+
+  // Utilities
+  if (topics.utilities) {
+    if (facts.utilities) {
+      parts.push(`Utilities: ${facts.utilities}.`);
+    } else {
+      parts.push(`Utilities aren’t listed — I can check what’s included.`);
+    }
+  }
+
+  // Furnished
+  if (topics.furnished) {
+    if (facts.furnished != null) {
+      parts.push(facts.furnished ? `It’s furnished.` : `It’s unfurnished.`);
+    } else {
+      parts.push(`Furnishing isn’t listed — I can verify that for you.`);
+    }
+  }
+
+  // Laundry
+  if (topics.laundry) {
+    if (facts.laundry) {
+      parts.push(`Laundry: ${facts.laundry}.`);
+    } else {
+      parts.push(`Laundry details aren’t listed — I can check if it’s in-suite or on-site.`);
+    }
+  }
+
+  // Price
+  if (topics.price) {
+    if (facts.price) {
+      parts.push(`Rent is ${facts.price}.`);
+    } else {
+      parts.push(`Rent isn’t listed here — I can confirm the current price.`);
+    }
+  }
+
+  // Availability
+  if (topics.availability) {
+    if (facts.availability) {
+      parts.push(`Availability: ${facts.availability}.`);
+    } else {
+      parts.push(`Availability isn’t listed — I can check the earliest move-in date.`);
+    }
+  }
+
+  // If nothing specific asked, suggest next step
+  if (parts.length === (intro ? 1 : 0)) {
+    parts.push(`Want to pick a time for a quick showing, or do you have any questions I can check on?`);
+  }
+
+  // Keep under ~3 sentences
+  return parts.join(" ");
 }
 
 // --- Health check ---
 app.get("/", (req, res) => {
-  res.send("✅ AI Rental Assistant is running with multi-property memory, facts, and follow-ups");
+  res.send("✅ AI Rental Assistant is running with multi-property memory, facts, follow-ups, and anti-fabrication");
 });
 
 // --- Lead registration (Zapier → here) ---
-// Send JSON: { phone, name, propertyAddress, unit, price, bedrooms, bathrooms, availability, notes }
+// JSON: { phone, name, propertyAddress, unit, price, bedrooms, bathrooms, availability, notes, parking, parkingFee, pets, utilities, furnished, sqft, laundry }
 app.post("/lead", async (req, res) => {
   try {
-    const { phone, name, propertyAddress, unit, price, bedrooms, bathrooms, availability, notes } = req.body || {};
+    const {
+      phone, name, propertyAddress, unit, price, bedrooms, bathrooms, availability, notes,
+      parking, parkingFee, pets, utilities, furnished, sqft, laundry,
+    } = req.body || {};
     if (!phone || !propertyAddress) return res.status(400).json({ error: "phone and propertyAddress are required" });
 
-    const facts = { name, unit, price, bedrooms, bathrooms, availability, notes, propertyAddress };
+    const facts = {
+      name, unit, price, bedrooms, bathrooms, availability, notes,
+      parking, parkingFee, pets, utilities, furnished, sqft, laundry,
+      propertyAddress,
+    };
     await setPropertyFacts(phone, propertyAddress, facts);
 
-    // Track directory
     const slug = slugifyProperty(propertyAddress);
     await redis.sadd(renterSetKey(phone), slug);
 
-    // Seed a system memory line for smoother first reply
+    // Seed system line
     const key = await getConvKey(phone, propertyAddress);
     const prev = await getConversationByKey(key);
     if (!prev.find(m => m.role === "system" && m.content.includes("Property:"))) {
@@ -230,7 +329,7 @@ app.post("/twiml/voice", (req, res) => {
   res.send(twiml);
 });
 
-// --- SMS webhook (two-way AI + multi-property + follow-up scheduling) ---
+// --- SMS webhook (hybrid: safe composer + LLM fallback, follow-up scheduling) ---
 app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res) => {
   const from = req.body.From;
   const body = (req.body.Body || "").trim();
@@ -239,9 +338,8 @@ app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res)
   res.send("<Response></Response>");
 
   try {
-    // Determine property context
+    // Determine property
     let property = extractPropertyFromText(body);
-    // If not found, try to reuse the most recently used property meta for this renter
     if (!property) {
       const lastMetaKey = (await redis.keys(`meta:${from}:*`)).sort().pop();
       if (lastMetaKey) {
@@ -251,72 +349,85 @@ app.post("/twiml/sms", express.urlencoded({ extended: false }), async (req, res)
       }
     }
 
-    // Build keys and track directory
+    // Keys & facts
     const ckey = await getConvKey(from, property);
-    const mkey = metaKey(from, property);
-    const pkey = propFactsKey(from, property);
-    const propSlug = slugifyProperty(property || "unknown");
-    await redis.sadd(renterSetKey(from), propSlug);
-
-    // Load memory and facts
     const prev = await getConversationByKey(ckey);
     const facts = await getPropertyFacts(from, property);
 
-    // Style + system prompt
-    const style = STYLES[Math.floor(Math.random() * STYLES.length)];
-    const propertyLine = property
-      ? `You are helping a renter who inquired about the property at ${property}.`
-      : `You are helping a renter asking about a property.`;
-    const factLine = facts && (facts.price || facts.bedrooms || facts.bathrooms || facts.unit || facts.availability)
-      ? `Facts: ${[
-          facts.unit ? `${facts.unit}` : null,
-          facts.bedrooms ? `${facts.bedrooms}-bed` : null,
-          facts.bathrooms ? `${facts.bathrooms}-bath` : null,
-          facts.price ? `listed at ${facts.price}` : null,
-          facts.availability ? `availability: ${facts.availability}` : null,
-        ].filter(Boolean).join(", ")}.`
-      : "";
-
+    const topics = detectTopics(body);
     const firstTime = prev.length === 0;
-    const greeting = property
-      ? `Hey! I got your message about ${property} — would you like to set up a showing, or do you have any questions?`
-      : `Hey! I got your message about the place — would you like to set up a showing, or do you have any questions?`;
 
-    const systemPrompt = {
-      role: "system",
-      content: `
+    // Try safe composer first for sensitive topics
+    let reply = composeSafeReply({ firstTime, property, facts, topics });
+
+    // If the user didn’t ask any specific sensitive thing and it’s not first message,
+    // use LLM for natural conversational replies — with strict “don’t invent” rules.
+    const askedSensitive =
+      topics.parking || topics.pets || topics.utilities || topics.furnished || topics.laundry || topics.price || topics.availability;
+
+    if (!firstTime && !askedSensitive) {
+      const style = STYLES[Math.floor(Math.random() * STYLES.length)];
+      const propertyLine = property
+        ? `You are helping a renter who inquired about the property at ${property}.`
+        : `You are helping a renter asking about a property.`;
+      const factLine = facts && (facts.price || facts.bedrooms || facts.bathrooms || facts.unit || facts.availability)
+        ? `Facts you may reference: ${[
+            facts.unit ? `${facts.unit}` : null,
+            facts.bedrooms ? `${facts.bedrooms}-bed` : null,
+            facts.bathrooms ? `${facts.bathrooms}-bath` : null,
+            facts.price ? `listed at ${facts.price}` : null,
+            facts.availability ? `availability: ${facts.availability}` : null,
+            facts.parking ? `parking: ${facts.parking}` : null,
+            facts.pets ? `pets: ${facts.pets}` : null,
+            facts.utilities ? `utilities: ${facts.utilities}` : null,
+            facts.furnished != null ? (facts.furnished ? "furnished" : "unfurnished") : null,
+          ].filter(Boolean).join(", ")}.`
+        : `Only reference facts explicitly listed below.`;
+
+      const systemPrompt = {
+        role: "system",
+        content: `
 You are an AI rental assistant named Alex.
 ${propertyLine}
 ${factLine}
-Respond via SMS in a ${style} tone — warm, natural, brief (max ~3 sentences unless more detail is needed).
-If this is the first message from this number for this property, start with:
-"${greeting}"
-Vary phrasing slightly so it feels human; avoid sounding templated.
-If user signals "not interested" or "found a place", politely close the thread.
-If user defers ("I'll get back later"), acknowledge and keep thread open for follow-up the next day at 9:30am local.`,
-    };
+CRITICAL RULES (do not break):
+- Do NOT invent fees, policies, numbers, or availability.
+- If a detail isn't in the facts or user message, say you’re not sure and offer to confirm.
+- Keep replies under ~3 sentences, SMS-friendly, human and natural in a ${style} tone.
+- If user asks to schedule, offer 2–3 concrete windows; otherwise ask their preferred time.`,
+      };
 
-    const messages = [systemPrompt, ...prev, { role: "user", content: body }];
+      const messages = [systemPrompt, ...prev, { role: "user", content: body }];
 
-    // OpenAI call
-    const aiResp = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages,
-        max_tokens: 220,
-      }),
-    });
-    const aiData = await aiResp.json();
-    const reply = aiData?.choices?.[0]?.message?.content?.trim() || "Got it — could you say that again?";
+      const aiResp = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages,
+          max_tokens: 220,
+        }),
+      });
+      const aiData = await aiResp.json();
+      const aiText = aiData?.choices?.[0]?.message?.content?.trim();
 
-    console.log("💬 GPT reply:", reply);
+      // Very light safety filter: if AI mentioned parking/pets/utils but we have no facts, fall back to safe composer
+      const mentionsParking = /park/i.test(aiText || "");
+      const mentionsPets = /\bpet|cat|dog\b/i.test(aiText || "");
+      const mentionsUtils = /utilit|power|gas|water|heat/i.test(aiText || "");
+      const unsafeParking = mentionsParking && !(facts.parking || facts.parkingFee);
+      const unsafePets = mentionsPets && !facts.pets;
+      const unsafeUtils = mentionsUtils && !facts.utilities;
 
-    // Update memory
+      if (aiText && !(unsafeParking || unsafePets || unsafeUtils)) {
+        reply = aiText;
+      }
+    }
+
+    // Save conversation
     const updated = [
       ...prev,
       { role: "user", content: body },
@@ -327,18 +438,15 @@ If user defers ("I'll get back later"), acknowledge and keep thread open for fol
     }
     await saveConversationByKey(ckey, updated);
 
-    // Determine meta (status + schedule)
+    // Meta & follow-up scheduling
     const now = Date.now();
     const closed = messageClosesThread(body);
     const deferred = messageDefers(body);
     let status = closed ? "closed" : "open";
-    let lastSpeaker = "assistant"; // since we just replied
     let nextFollowupAt = null;
-    let lastUserMsg = now;
 
     if (!closed) {
-      // Schedule next day 9:30am if renter deferred OR if renter stopped replying (we'll evaluate at cron time)
-      // We mark a target for next 9:30 now; cron will send only if no newer user message happened.
+      // schedule next-day 9:30 if the renter deferred or it's the first touch (we'll confirm at cron)
       if (deferred || firstTime) {
         nextFollowupAt = nextLocal930(now);
       }
@@ -348,10 +456,10 @@ If user defers ("I'll get back later"), acknowledge and keep thread open for fol
       phone: from,
       property: property || "unknown",
       lastTs: now,
-      lastSpeaker,
+      lastSpeaker: "assistant",
       status,
-      lastUserMsg,
-      nextFollowupAt, // millis (local 9:30 computed in Edmonton TZ)
+      lastUserMsg: now, // updated on inbound
+      nextFollowupAt,
       lastAssistantMsg: now,
     });
 
@@ -367,11 +475,7 @@ If user defers ("I'll get back later"), acknowledge and keep thread open for fol
   }
 });
 
-// --- CRON: follow-ups (hit this from Render Cron) ---
-// Logic:
-//  - Run every 15 minutes (or hourly) from Render Cron in UTC.
-//  - We only send follow-ups if local time is within 9:30am +/- 10 minutes.
-//  - For each open thread where the last message was from assistant or renter deferred, if no new user message since, send a friendly nudge.
+// --- CRON: follow-ups (call from Render Cron) ---
 app.get("/cron/followups", async (req, res) => {
   try {
     const nowLocal = DateTime.now().setZone(LOCAL_TZ);
@@ -390,30 +494,27 @@ app.get("/cron/followups", async (req, res) => {
       const meta = JSON.parse(m);
       if (meta.status === "closed") continue;
 
-      const { phone, property, lastUserMsg, nextFollowupAt } = meta;
+      const { phone, property, nextFollowupAt } = meta;
       if (!phone) continue;
 
-      // If nextFollowupAt is set and now is past it, and no new user message since scheduling
       const now = DateTime.now().setZone(LOCAL_TZ).toMillis();
       if (nextFollowupAt && now >= nextFollowupAt) {
-        // Ensure we reference the correct conv key
         const ckey = await getConvKey(phone, property);
         const conv = await getConversationByKey(ckey);
 
-        // Gentle nudge text
-        const style = STYLES[Math.floor(Math.random() * STYLES.length)];
-        const facts = await getPropertyFacts(phone, property);
-        const factHint = facts?.unit || facts?.price ? ` (${[facts.unit, facts.price].filter(Boolean).join(", ")})` : "";
-        const nudge = property
-          ? `Hey, just checking in about ${property}${factHint}. Would you like to pick a time for a quick showing?`
-          : `Hey, just checking in about the place. Want to pick a time for a quick showing?`;
-
-        // Send only if last message in conversation was from assistant (renter never replied) OR renter deferred.
+        // Only nudge if last message is from assistant (user ghosted) OR user had deferred earlier
+        const last = conv.slice(-1)[0];
         const lastTwo = conv.slice(-2);
-        const renterNeverReplied = lastTwo.length === 0 || lastTwo[lastTwo.length - 1]?.role === "assistant";
-        const deferLikely = true; // meta was set due to defer or first time
+        const renterNeverReplied = !last || last.role === "assistant";
+        const deferLikely = true; // we set this when scheduling
 
         if (renterNeverReplied || deferLikely) {
+          const facts = await getPropertyFacts(phone, property);
+          const factHint = facts?.unit || facts?.price ? ` (${[facts.unit, facts.price].filter(Boolean).join(", ")})` : "";
+          const nudge = property
+            ? `Hey, just checking in about ${property}${factHint}. Want to pick a time for a quick showing?`
+            : `Hey, just checking in about the place. Want to pick a time for a quick showing?`;
+
           await twilioClient.messages.create({
             from: TWILIO_PHONE_NUMBER,
             to: phone,
@@ -421,7 +522,7 @@ app.get("/cron/followups", async (req, res) => {
           });
           sent++;
 
-          // Clear nextFollowupAt so we don't spam; you can schedule second nudge in 48h if you want
+          // prevent repeat the same day
           await setMeta(phone, property, { nextFollowupAt: null, lastAssistantMsg: Date.now() });
         }
       }
