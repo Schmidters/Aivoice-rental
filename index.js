@@ -64,7 +64,7 @@ function slugify(str) {
   return str ? str.replace(/\s+/g, "-").replace(/[^\w\-]/g, "").toLowerCase() : "unknown";
 }
 
-// --- SendGrid cleaner & redirect extractors ---
+// --- SendGrid cleaner & redirect helpers ---
 function cleanListingUrl(url) {
   try {
     const m = url.match(/upn=([^&]+)/);
@@ -81,30 +81,90 @@ function cleanListingUrl(url) {
   }
 }
 
-// Try to extract a real destination from interstitial HTML (SendGrid/tracking pages).
+// Basic HTML-entity decode for hrefs like ?a=b&amp;c=d
+function decodeHtmlEntities(str) {
+  if (!str) return str;
+  return str
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+// Block/allow domain helpers
+const BAD_REDIRECT_HOSTS = [
+  "cloudflare.com",
+  "challenge.cloudflare.com",
+  "ct.sendgrid.net",
+  "bit.ly",
+  "lnkd.in",
+  "linktr.ee",
+  "l.instagram.com",
+];
+const GOOD_HINTS = [
+  "rentals.ca",
+  "zumper.com",
+  "realtor.ca",
+  "rentfaster.ca",
+  "apartments.com",
+  "condos.ca",
+];
+
+function hostnameOf(url) {
+  try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
+}
+function isBadRedirect(url) {
+  const h = hostnameOf(url);
+  return BAD_REDIRECT_HOSTS.some(bad => h.endsWith(bad));
+}
+function looksLikeListing(url) {
+  const u = url.toLowerCase();
+  return GOOD_HINTS.some(hint => u.includes(hint));
+}
+
+// Extract destination from an interstitial/tracker HTML (score candidates)
 function extractRedirectFromHtml(html) {
   if (!html) return null;
 
-  // 1) <meta http-equiv="refresh" content="0; url=https://...">
+  // Collect candidates
+  const candidates = new Set();
+
+  // meta refresh
   const meta = html.match(/http-equiv=["']?refresh["']?[^>]*content=["'][^"']*url=([^"'>\s]+)/i);
-  if (meta && meta[1]) return meta[1];
+  if (meta?.[1]) candidates.add(decodeHtmlEntities(meta[1]));
 
-  // 2) any anchor href
-  const anyLink = html.match(/<a[^>]+href=["'](https?:\/\/[^"']+)["'][^>]*>.*?<\/a>/i);
-  if (anyLink && anyLink[1]) return anyLink[1];
+  // ANY anchor hrefs
+  const anchorRe = /<a[^>]+href=["'](https?:\/\/[^"']+)["'][^>]*>.*?<\/a>/ig;
+  let m;
+  while ((m = anchorRe.exec(html)) !== null) {
+    candidates.add(decodeHtmlEntities(m[1]));
+    if (candidates.size > 50) break; // safety
+  }
 
-  // 3) window.location / location.replace
+  // JS redirects
   const js1 = html.match(/location\.replace\(['"]([^'"]+)['"]\)/i);
-  if (js1 && js1[1]) return js1[1];
-
+  if (js1?.[1]) candidates.add(decodeHtmlEntities(js1[1]));
   const js2 = html.match(/window\.location\s*=\s*['"]([^'"]+)['"]/i);
-  if (js2 && js2[1]) return js2[1];
+  if (js2?.[1]) candidates.add(decodeHtmlEntities(js2[1]));
 
-  // 4) canonical link (some interstitials set rel=canonical to the destination)
+  // canonical
   const canon = html.match(/<link[^>]+rel=["']?canonical["']?[^>]+href=["'](https?:\/\/[^"']+)["']/i);
-  if (canon && canon[1]) return canon[1];
+  if (canon?.[1]) candidates.add(decodeHtmlEntities(canon[1]));
 
-  return null;
+  if (candidates.size === 0) return null;
+
+  // Score: prefer non-bad domains and “listing-looking” hosts
+  const scored = [...candidates].map((u) => {
+    const bad = isBadRedirect(u) ? 1 : 0;
+    const good = looksLikeListing(u) ? 1 : 0;
+    // Lower score is better; heavily penalize bad domains
+    // Prefer good listing hints; break ties by longer URL (more specific)
+    return { u, score: bad ? 1000 : (good ? -10 : 0), len: u.length };
+  });
+
+  scored.sort((a, b) => (a.score - b.score) || (b.len - a.len));
+  return scored[0].u;
 }
 
 // --- Redis helpers ---
@@ -149,7 +209,25 @@ async function setCachedHTML(finalUrl, html) {
   log("info", "🗃️ [Cache] Stored HTML", { finalUrl, length: html.length });
 }
 
-// --- Browserless fetchers ---
+// --- Browserless fetchers (stealth-first) ---
+async function fetchWithBrowserlessStealthContent(url, reqId) {
+  const endpoint = `https://production-sfo.browserless.io/stealth/content?token=${BROWSERLESS_KEY}`;
+  const payload = {
+    url,
+    gotoOptions: { waitUntil: "networkidle2" },
+    rejectResourceTypes: ["image", "media", "font", "stylesheet"],
+    bestAttempt: true,
+    waitForTimeout: 7000, // CF is a bit slower
+  };
+  const t = timeStart(`[${reqId}] POST /stealth/content`);
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Cache-Control": "no-cache", "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  timeEnd(t, { status: resp.status });
+  return resp;
+}
 async function fetchWithBrowserlessContent(url, reqId) {
   const endpoint = `https://production-sfo.browserless.io/content?token=${BROWSERLESS_KEY}`;
   const payload = {
@@ -157,18 +235,17 @@ async function fetchWithBrowserlessContent(url, reqId) {
     gotoOptions: { waitUntil: "networkidle2" },
     rejectResourceTypes: ["image", "media", "font", "stylesheet"],
     bestAttempt: true,
-    waitForTimeout: 6000
+    waitForTimeout: 6000,
   };
   const t = timeStart(`[${reqId}] POST /content`);
   const resp = await fetch(endpoint, {
     method: "POST",
     headers: { "Cache-Control": "no-cache", "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
   timeEnd(t, { status: resp.status });
   return resp;
 }
-
 async function fetchWithBrowserlessUnblock(url, reqId) {
   const endpoint = `https://production-sfo.browserless.io/unblock?token=${BROWSERLESS_KEY}`;
   const payload = { url };
@@ -176,7 +253,7 @@ async function fetchWithBrowserlessUnblock(url, reqId) {
   const resp = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
   timeEnd(t, { status: resp.status });
   return resp;
@@ -189,68 +266,64 @@ async function getOrFetchListingHTML(listingUrl, { reqId = "no-reqid" } = {}) {
     return { html: "", finalUrl: listingUrl, source: "none" };
   }
 
-  // Step A: decode SendGrid parameter if present
+  // Decode any SendGrid wrapping
   let cleanUrl = cleanListingUrl(listingUrl);
 
-  // If we previously resolved this original URL, reuse the known final
+  // If we previously resolved this original URL, reuse the known final (unless it's bad)
   const resolvedKey = `resolved:${listingUrl}`;
   const knownFinal = await redis.get(resolvedKey);
-  if (knownFinal) {
+  if (knownFinal && !isBadRedirect(knownFinal)) {
     cleanUrl = knownFinal;
     log("info", "🔁 [Resolved] Using previously resolved final URL", { finalUrl: cleanUrl });
   }
 
-  // Step B: cache lookup for cleanUrl
+  // --- Try cache for cleanUrl
   const cached1 = await getCachedHTML(cleanUrl);
   if (cached1?.html && cached1?.fetchedAt) {
     const ageMin = (Date.now() - new Date(cached1.fetchedAt).getTime()) / 60000;
-    if (ageMin <= HTML_MAX_AGE_MIN) {
-      log("info", "🗃️ [Cache] Using cached HTML", { url: cleanUrl, ageMin: Math.round(ageMin) });
+    const looksInterstitial =
+      /sendgrid\.net|utm_source=|redirect/i.test(cleanUrl) ||
+      /http-equiv=["']?refresh|location\.replace|window\.location/i.test(cached1.html);
 
-      // NEW: if this cached page looks like interstitial (sendgrid or meta/JS redirect),
-      // try to resolve and refetch final page ONCE even on cache hit:
-      const looksInterstitial =
-        /sendgrid\.net|utm_source=|redirect/i.test(cleanUrl) ||
-        /http-equiv=["']?refresh|location\.replace|window\.location/i.test(cached1.html);
+    log("info", "🗃️ [Cache] Using cached HTML", { url: cleanUrl, ageMin: Math.round(ageMin) });
 
-      if (looksInterstitial) {
-        const to = extractRedirectFromHtml(cached1.html);
-        if (to && to !== cleanUrl) {
-          log("info", "🔁 [Cache-Follow] Interstitial cache detected; following", { from: cleanUrl, to });
-          // Try cached final
-          const cachedFinal = await getCachedHTML(to);
+    // On cache hit, still try to follow if it looks like interstitial
+    if (looksInterstitial) {
+      const to = extractRedirectFromHtml(cached1.html);
+      if (to && to !== cleanUrl) {
+        const cand = decodeHtmlEntities(to);
+        if (isBadRedirect(cand)) {
+          log("warn", "🧱 [Cache-Follow] Ignoring bad redirect domain", { cand });
+        } else {
+          // Use final cache if present
+          const cachedFinal = await getCachedHTML(cand);
           if (cachedFinal?.html && cachedFinal?.fetchedAt) {
             const ageMin2 = (Date.now() - new Date(cachedFinal.fetchedAt).getTime()) / 60000;
-            if (ageMin2 <= HTML_MAX_AGE_MIN) {
-              log("info", "🗃️ [Cache] Using cached HTML (final URL)", { url: to, ageMin: Math.round(ageMin2) });
-              // Remember resolution for the original listing
-              await redis.set(resolvedKey, to);
-              return { html: cachedFinal.html, finalUrl: to, source: "cache-follow", resolvedFrom: cleanUrl };
+            log("info", "🗃️ [Cache] Using cached HTML (final URL)", { url: cand, ageMin: Math.round(ageMin2) });
+            await redis.set(resolvedKey, cand);
+            return { html: cachedFinal.html, finalUrl: cand, source: "cache-follow", resolvedFrom: cleanUrl };
+          }
+          // Fetch final directly (stealth → content → unblock)
+          for (const fetchFn of [fetchWithBrowserlessStealthContent, fetchWithBrowserlessContent, fetchWithBrowserlessUnblock]) {
+            const resp = await fetchFn(cand, reqId);
+            if (resp.ok) {
+              const html2 = await resp.text();
+              if (html2) {
+                await setCachedHTML(cand, html2);
+                await redis.set(resolvedKey, cand);
+                return { html: html2, finalUrl: cand, source: "fetch-follow", resolvedFrom: cleanUrl };
+              }
+            } else {
+              const sample = await resp.text().catch(() => "");
+              log("warn", "❌ Final fetch step failed", { step: fetchFn.name, status: resp.status, sample: sample?.slice(0, 300) });
             }
           }
-          // Refetch final
-          let resp2 = await fetchWithBrowserlessContent(to, reqId);
-          if (!resp2.ok) {
-            const txt3 = await resp2.text();
-            log("warn", "❌ [/content] final URL failed", { status: resp2.status, sample: txt3?.slice(0, 300) });
-            resp2 = await fetchWithBrowserlessUnblock(to, reqId);
-            if (!resp2.ok) {
-              const txt4 = await resp2.text();
-              log("error", "❌ [/unblock] final URL failed", { status: resp2.status, sample: txt4?.slice(0, 300) });
-              // Keep using interstitial as last resort
-              return { html: cached1.html, finalUrl: cleanUrl, source: "cache-interstitial" };
-            }
-          }
-          const html2 = await resp2.text();
-          if (html2) {
-            await setCachedHTML(to, html2);
-            await redis.set(resolvedKey, to);
-            return { html: html2, finalUrl: to, source: "fetch-follow", resolvedFrom: cleanUrl };
-          }
-          return { html: cached1.html, finalUrl: cleanUrl, source: "cache-interstitial" };
         }
       }
+    }
 
+    // If we got here, return the cached interstitial (last resort) or fresh-enough page
+    if (ageMin <= HTML_MAX_AGE_MIN) {
       return { html: cached1.html, finalUrl: cleanUrl, source: "cache" };
     }
     log("info", "♻️ [Cache] Cached HTML stale, refreshing", { url: cleanUrl, ageMin: Math.round(ageMin) });
@@ -258,23 +331,21 @@ async function getOrFetchListingHTML(listingUrl, { reqId = "no-reqid" } = {}) {
     log("info", "🔍 [Cache] No cached HTML, fetching", { url: cleanUrl });
   }
 
-  // Step C: fetch cleanUrl
-  let resp = await fetchWithBrowserlessContent(cleanUrl, reqId);
-  if (!resp.ok) {
-    const txt = await resp.text();
-    log("warn", "❌ [/content] failed", { status: resp.status, sample: txt?.slice(0, 300) });
-    // fallback: unblock
-    resp = await fetchWithBrowserlessUnblock(cleanUrl, reqId);
-    if (!resp.ok) {
-      const txt2 = await resp.text();
-      log("error", "❌ [/unblock] failed", { status: resp.status, sample: txt2?.slice(0, 300) });
-      return { html: "", finalUrl: cleanUrl, source: "error" };
+  // --- Fetch pipeline: stealth → content → unblock
+  let html = "";
+  for (const fetchFn of [fetchWithBrowserlessStealthContent, fetchWithBrowserlessContent, fetchWithBrowserlessUnblock]) {
+    const resp = await fetchFn(cleanUrl, reqId);
+    if (resp.ok) {
+      html = await resp.text();
+      if (html) break;
+    } else {
+      const sample = await resp.text().catch(() => "");
+      log("warn", "❌ Fetch step failed", { step: fetchFn.name, status: resp.status, sample: sample?.slice(0, 300) });
     }
   }
-  let html = await resp.text();
-  if (!html) return { html: "", finalUrl: cleanUrl, source: "empty" };
+  if (!html) return { html: "", finalUrl: cleanUrl, source: "error" };
 
-  // Step D: follow interstitial to final URL if detected
+  // --- Interstitial follow (from fresh fetch)
   const looksInterstitial =
     /sendgrid\.net|utm_source=|redirect/i.test(cleanUrl) ||
     /http-equiv=["']?refresh|location\.replace|window\.location/i.test(html);
@@ -282,37 +353,42 @@ async function getOrFetchListingHTML(listingUrl, { reqId = "no-reqid" } = {}) {
   if (looksInterstitial) {
     const to = extractRedirectFromHtml(html);
     if (to && to !== cleanUrl) {
-      log("info", "🔁 [Redirect] Interstitial detected, following", { from: cleanUrl, to });
+      const cand = decodeHtmlEntities(to);
+      if (isBadRedirect(cand)) {
+        log("warn", "🧱 [Redirect] Ignoring bad redirect domain", { cand });
+        // Cache current html under cleanUrl (for debugging)
+        await setCachedHTML(cleanUrl, html);
+        return { html, finalUrl: cleanUrl, source: "fetch-interstitial" };
+      }
+
       // Try cache on final
-      const cached2 = await getCachedHTML(to);
+      const cached2 = await getCachedHTML(cand);
       if (cached2?.html && cached2?.fetchedAt) {
-        const ageMin2 = (Date.now() - new Date(cached2.fetchedAt).getTime()) / 60000;
-        if (ageMin2 <= HTML_MAX_AGE_MIN) {
-          log("info", "🗃️ [Cache] Using cached HTML (final URL)", { url: to, ageMin: Math.round(ageMin2) });
-          await redis.set(resolvedKey, to);
-          return { html: cached2.html, finalUrl: to, source: "cache-follow", resolvedFrom: cleanUrl };
+        await redis.set(resolvedKey, cand);
+        return { html: cached2.html, finalUrl: cand, source: "cache-follow", resolvedFrom: cleanUrl };
+      }
+
+      // Fetch final (stealth → content → unblock)
+      let html2 = "";
+      for (const fetchFn of [fetchWithBrowserlessStealthContent, fetchWithBrowserlessContent, fetchWithBrowserlessUnblock]) {
+        const resp2 = await fetchFn(cand, reqId);
+        if (resp2.ok) {
+          html2 = await resp2.text();
+          if (html2) break;
+        } else {
+          const sample = await resp2.text().catch(() => "");
+          log("warn", "❌ Final fetch step failed", { step: fetchFn.name, status: resp2.status, sample: sample?.slice(0, 300) });
         }
       }
-      // Refetch final
-      let resp2 = await fetchWithBrowserlessContent(to, reqId);
-      if (!resp2.ok) {
-        const txt3 = await resp2.text();
-        log("warn", "❌ [/content] final URL failed", { status: resp2.status, sample: txt3?.slice(0, 300) });
-        resp2 = await fetchWithBrowserlessUnblock(to, reqId);
-        if (!resp2.ok) {
-          const txt4 = await resp2.text();
-          log("error", "❌ [/unblock] final URL failed", { status: resp2.status, sample: txt4?.slice(0, 300) });
-          // last resort: cache interstitial so we can debug
-          await setCachedHTML(cleanUrl, html);
-          return { html, finalUrl: cleanUrl, source: "fetch-interstitial" };
-        }
+      if (html2) {
+        await setCachedHTML(cand, html2);
+        await redis.set(resolvedKey, cand);
+        return { html: html2, finalUrl: cand, source: "fetch-follow", resolvedFrom: cleanUrl };
       }
-      html = await resp2.text();
-      if (html) {
-        await setCachedHTML(to, html);
-        await redis.set(resolvedKey, to);
-        return { html, finalUrl: to, source: "fetch-follow", resolvedFrom: cleanUrl };
-      }
+
+      // Couldn’t fetch the candidate; cache current html and return
+      await setCachedHTML(cleanUrl, html);
+      return { html, finalUrl: cleanUrl, source: "fetch-interstitial" };
     }
   }
 
@@ -396,7 +472,7 @@ app.get("/debug/html", async (req, res) => {
   });
 });
 
-// NEW: Resolve endpoint to examine interstitial & derived final URL from cached HTML
+// Resolve endpoint to examine interstitial & derived final URL from cached HTML
 app.get("/debug/resolve", async (req, res) => {
   if (!ensureAuth(req, res)) return;
   const { url } = req.query;
@@ -405,7 +481,7 @@ app.get("/debug/resolve", async (req, res) => {
   const cached = await getCachedHTML(clean);
   if (!cached?.html) {
     return res.json({ url: clean, cached: false, message: "no cached html" });
-  }
+    }
   const redirectTo = extractRedirectFromHtml(cached.html);
   res.json({
     url: clean,
@@ -448,7 +524,7 @@ app.post("/debug/clear", async (req, res) => {
 });
 
 // --- Initialize property facts (from Zapier) ---
-// Warms the HTML cache so first SMS is fast & persists final URL when resolved.
+// Warms the HTML cache & persists final URL only if it's not a bad domain.
 app.post("/init/facts", async (req, res) => {
   const reqId = `init_${uid()}`;
   try {
@@ -480,12 +556,14 @@ app.post("/init/facts", async (req, res) => {
       timeEnd(t, { finalUrl, source, len: html?.length || 0 });
       htmlInfo = { finalUrl, source, length: html?.length || 0 };
 
-      // If we resolved to a different final URL, persist it to facts for future SMS flows
-      if (finalUrl && finalUrl !== listingUrl) {
+      // Only persist if it's not a bad/blocked redirect
+      if (finalUrl && finalUrl !== listingUrl && !isBadRedirect(finalUrl)) {
         facts.listingUrl = finalUrl;
         await setPropertyFacts(phone, slug, facts);
         await redis.set(`resolved:${listingUrl}`, finalUrl);
         log("info", "🔁 [Init] Persisted resolved final URL to facts", { phone, property: slug, finalUrl });
+      } else if (finalUrl && isBadRedirect(finalUrl)) {
+        log("warn", "🚫 [Init] Not persisting bad final URL", { finalUrl });
       }
     }
 
@@ -535,12 +613,14 @@ app.post("/twiml/sms", async (req, res) => {
       const { html, finalUrl, source } = await getOrFetchListingHTML(facts.listingUrl, { reqId });
       log("info", "📄 [Reasoning] HTML ready", { finalUrl, source, length: html?.length || 0, reqId });
 
-      // If we discovered a new final URL during SMS flow, persist it immediately
-      if (finalUrl && finalUrl !== facts.listingUrl) {
+      // If we discovered a new final URL during SMS flow, persist it (if it's not bad)
+      if (finalUrl && finalUrl !== facts.listingUrl && !isBadRedirect(finalUrl)) {
         facts.listingUrl = finalUrl;
         await setPropertyFacts(from, propertySlug, facts);
         await redis.set(`resolved:${facts.listingUrl}`, finalUrl);
         log("info", "🔁 [SMS] Persisted resolved final URL to facts", { phone: from, property: propertySlug, finalUrl });
+      } else if (finalUrl && isBadRedirect(finalUrl)) {
+        log("warn", "🚫 [SMS] Not persisting bad final URL", { finalUrl });
       }
 
       if (html) {
