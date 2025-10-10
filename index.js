@@ -1,13 +1,13 @@
 // --- Imports & setup ---
-require("dotenv").config();
-const express = require("express");
-const http = require("http");
-const { WebSocketServer } = require("ws");
-const { DateTime } = require("luxon");
-const twilio = require("twilio");
-const Redis = require("ioredis");
-const OpenAI = require("openai");
-const { parsePhoneNumberFromString } = require("libphonenumber-js");
+import "dotenv/config.js";
+import express from "express";
+import http from "http";
+import { WebSocketServer } from "ws";
+import { DateTime } from "luxon";
+import twilio from "twilio";
+import Redis from "ioredis";
+import OpenAI from "openai";
+import { parsePhoneNumberFromString } from "libphonenumber-js";
 
 // --- App setup ---
 const app = express();
@@ -63,34 +63,48 @@ async function setPropertyFacts(phone, property, facts) {
   console.log(`💾 [Redis] Updated facts for ${phone}:${property}`);
 }
 
-// --- AI “read like a human” listing reader ---
+// --- GPT-4.1 with browsing ---
 async function aiReadListing(url) {
+  console.log(`🌐 [AI-Read] Browsing page → ${url}`);
+
   try {
-    console.log(`🌐 [AI-Read] Reading listing page → ${url}`);
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a helpful real-estate assistant that reads rental listings and extracts factual data. 
-You will be given a URL. Read the listing like a human (no scraping) and summarize key details:
-- Parking situation
-- Pet policy
-- Utilities (included or not)
-- Rent details
-If unsure, say “not mentioned”. Return JSON only.`,
-        },
-        { role: "user", content: `Listing URL: ${url}` },
-      ],
-      response_format: { type: "json_object" },
-      max_tokens: 400,
+    const assistant = await openai.beta.assistants.create({
+      name: "Rental Listing Reader",
+      instructions: `You are a real-estate assistant that uses the browser tool to open
+      rental listings and extract factual details:
+      - Parking situation
+      - Pet policy
+      - Utilities (included or not)
+      - Rent details
+      Return a JSON object only.`,
+      model: "gpt-4.1",
+      tools: [{ type: "browser" }],
     });
-    const data = completion.choices[0].message.content;
-    const parsed = JSON.parse(data);
+
+    const thread = await openai.beta.threads.create({
+      messages: [{ role: "user", content: `Read ${url} and extract the required facts.` }],
+    });
+
+    const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
+      assistant_id: assistant.id,
+    });
+
+    const messages = await openai.beta.threads.messages.list(thread.id);
+    const result = messages.data.find((m) => m.role === "assistant");
+
+    let parsed = {};
+    if (result?.content?.[0]?.text?.value) {
+      try {
+        parsed = JSON.parse(result.content[0].text.value);
+      } catch {
+        parsed = { raw: result.content[0].text.value };
+      }
+    }
+
     console.log("✅ [AI-Read] Extraction complete:", parsed);
     return parsed;
   } catch (err) {
-    console.error("❌ [AI-Read] Error reading page:", err.message);
+    console.error("❌ [AI-Read] Error:", err.message);
     return {};
   }
 }
@@ -106,22 +120,6 @@ app.get("/debug/facts", async (req, res) => {
   const slug = property ? slugify(property) : "unknown";
   const facts = await getPropertyFacts(phone, slug);
   res.json({ phone, property: slug, facts });
-});
-
-app.get("/debug/memory", async (req, res) => {
-  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
-  const keys = await redis.keys("conv:*");
-  const data = {};
-  for (const k of keys) data[k] = JSON.parse(await redis.get(k));
-  res.json({ keys, data });
-});
-
-app.get("/debug/clear", async (req, res) => {
-  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
-  const { phone, property } = req.query;
-  const slug = property ? slugify(property) : "unknown";
-  await redis.del(`conv:${phone}:${slug}`, `facts:${phone}:${slug}`, `meta:${phone}:${slug}`);
-  res.send(`🧹 Cleared data for ${phone}:${slug}`);
 });
 
 // --- Initialize property facts (from Zapier) ---
@@ -148,9 +146,16 @@ app.post("/init/facts", async (req, res) => {
     await setPropertyFacts(phone, slug, facts);
     console.log(`💾 [Init] Facts initialized for ${phone}:${slug}`, facts);
 
+    // --- Auto-enrich via GPT-4.1 browser ---
+    if (listingUrl) {
+      const read = await aiReadListing(listingUrl);
+      Object.assign(facts, read);
+      await setPropertyFacts(phone, slug, facts);
+    }
+
     res.status(200).json({
       success: true,
-      message: "Initialized facts successfully",
+      message: "Initialized and enriched facts successfully",
       data: facts,
       redisKey: `facts:${phone}:${slug}`,
     });
@@ -178,7 +183,6 @@ app.post("/twiml/sms", async (req, res) => {
   res.type("text/xml").send("<Response></Response>");
 
   try {
-    // Detect property name or address
     const propertyRegex =
       /([0-9]{2,5}\s?[A-Za-z]+\s?(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|SE|SW|NW|NE|Southeast|Southwest|Northeast|Northwest))/i;
     const match = body.match(propertyRegex);
@@ -187,25 +191,15 @@ app.post("/twiml/sms", async (req, res) => {
     const prev = await getConversation(from, propertySlug);
     const facts = await getPropertyFacts(from, propertySlug);
 
-    // If we have a URL but no facts, trigger AI read
-    if (facts.listingUrl && (!facts.parking || !facts.pets || !facts.utilities)) {
-      const read = await aiReadListing(facts.listingUrl);
-      Object.assign(facts, read);
-      await setPropertyFacts(from, propertySlug, facts);
-    }
-
-    // Detect topic
     const topics = {
       parking: /\bparking\b/i.test(body),
       pets: /\b(pet|dog|cat)\b/i.test(body),
       utilities: /\b(utilit|electric|gas|heat|water)\b/i.test(body),
     };
 
-    // Tone
     const tones = ["friendly", "casual", "warm", "helpful"];
     const tone = tones[Math.floor(Math.random() * tones.length)];
 
-    // AI prompt
     const systemPrompt = {
       role: "system",
       content: `You are Alex, a ${tone} rental assistant. Known property facts: ${JSON.stringify(facts)}.
@@ -230,41 +224,6 @@ If missing, say “not mentioned” politely. Keep replies under 3 sentences.`,
     console.log(`✅ Sent reply to ${from}`);
   } catch (err) {
     console.error("❌ SMS error:", err);
-  }
-});
-
-// --- Follow-up checker ---
-app.get("/cron/followups", async (req, res) => {
-  try {
-    const keys = await redis.keys("meta:*");
-    const now = DateTime.now().setZone("America/Edmonton");
-    const followups = [];
-
-    for (const key of keys) {
-      const meta = await redis.hgetall(key);
-      const last = meta.lastInteraction ? DateTime.fromISO(meta.lastInteraction) : null;
-      if (!last) continue;
-      const hoursSince = now.diff(last, "hours").hours;
-      if (hoursSince > 24 && now.hour >= 9 && now.hour < 10) {
-        const [, phone, property] = key.split(":");
-        followups.push({ phone, property });
-      }
-    }
-
-    for (const { phone, property } of followups) {
-      const facts = await getPropertyFacts(phone, property);
-      const text = facts?.address
-        ? `Hey, just checking if you’d like to set up a showing for ${facts.address} 😊`
-        : `Hey, just checking if you’re still interested in booking a showing 😊`;
-
-      await twilioClient.messages.create({ from: TWILIO_PHONE_NUMBER, to: phone, body: text });
-      console.log(`📆 Follow-up sent to ${phone}`);
-    }
-
-    res.send(`✅ Follow-ups sent: ${followups.length}`);
-  } catch (err) {
-    console.error("❌ Follow-up error:", err);
-    res.status(500).send(err.message);
   }
 });
 
@@ -294,5 +253,4 @@ server.listen(PORT, () => {
   console.log(`💬 SMS endpoint: POST ${PUBLIC_BASE_URL}/twiml/sms`);
   console.log(`🌐 Voice endpoint: POST ${PUBLIC_BASE_URL}/twiml/voice`);
   console.log(`🧠 Init facts endpoint: POST ${PUBLIC_BASE_URL}/init/facts`);
-  console.log(`⏰ Follow-up cron: GET ${PUBLIC_BASE_URL}/cron/followups`);
 });
