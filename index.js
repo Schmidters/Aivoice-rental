@@ -18,43 +18,37 @@ app.use(express.json());
 // --- Config ---
 const PORT = process.env.PORT || 3000;
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://aivoice-rental.onrender.com";
+
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const REDIS_URL = process.env.REDIS_URL;
-const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
-const BROWSERLESS_KEY = process.env.BROWSERLESS_KEY;
 
+const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
 const DEBUG_LEVEL = (process.env.DEBUG_LEVEL || "info").toLowerCase(); // "debug" | "info" | "warn" | "error"
-const HTML_MAX_AGE_MIN = parseInt(process.env.HTML_MAX_AGE_MIN || "1440", 10); // 24h default
-const HTML_SNIPPET_LIMIT = parseInt(process.env.HTML_SNIPPET_LIMIT || "20000", 10);
+
+const HTML_SNIPPET_LIMIT = parseInt(process.env.HTML_SNIPPET_LIMIT || "20000", 10); // 20k chars cap
 
 // --- Clients ---
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const redis = new Redis(REDIS_URL, { tls: false });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// --- Small utils ---
+// --- Logging helpers ---
 const nowIso = () => new Date().toISOString();
-const uid = () => Math.random().toString(36).slice(2, 8);
-const hr = () => "—".repeat(56);
-
 function log(level, msg, meta = {}) {
   const levels = { debug: 10, info: 20, warn: 30, error: 40 };
   if (levels[level] < levels[DEBUG_LEVEL]) return;
-  const payload = { ts: nowIso(), level, msg, ...meta };
-  console.log(JSON.stringify(payload));
+  console.log(JSON.stringify({ ts: nowIso(), level, msg, ...meta }));
 }
-function timeStart(label) {
-  return { label, t0: Date.now() };
-}
+function timeStart(label) { return { label, t0: Date.now() }; }
 function timeEnd(t, extra = {}) {
   const ms = Date.now() - t.t0;
   log("debug", `⏱️ ${t.label}`, { ms, ...extra });
 }
 
-// --- Phone + slug helpers ---
+// --- Utilities ---
 function normalizePhone(phone) {
   if (!phone) return null;
   const parsed = parsePhoneNumberFromString(phone, "CA");
@@ -64,107 +58,20 @@ function slugify(str) {
   return str ? str.replace(/\s+/g, "-").replace(/[^\w\-]/g, "").toLowerCase() : "unknown";
 }
 
-// --- SendGrid cleaner & redirect helpers ---
-function cleanListingUrl(url) {
+// A tiny guard to avoid persisting obvious trackers (we expect finalUrl already cleaned by Zapier)
+function isTracker(url) {
   try {
-    const m = url.match(/upn=([^&]+)/);
-    if (!m) return url;
-    let decoded = decodeURIComponent(m[1]);
-    try { decoded = decodeURIComponent(decoded); } catch (_) {}
-    const real = decoded.match(/https?:\/\/[^\s"'<>()]+/);
-    const clean = real ? real[0] : url;
-    log("info", "🔗 [URL-Clean]", { original: url, clean });
-    return clean;
-  } catch (err) {
-    log("warn", "⚠️ [URL-Clean] Failed to decode", { error: err.message });
-    return url;
-  }
-}
-
-// Basic HTML-entity decode for hrefs like ?a=b&amp;c=d
-function decodeHtmlEntities(str) {
-  if (!str) return str;
-  return str
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'");
-}
-
-// Block/allow domain helpers
-const BAD_REDIRECT_HOSTS = [
-  "cloudflare.com",
-  "challenge.cloudflare.com",
-  "ct.sendgrid.net",
-  "bit.ly",
-  "lnkd.in",
-  "linktr.ee",
-  "l.instagram.com",
-];
-const GOOD_HINTS = [
-  "rentals.ca",
-  "zumper.com",
-  "realtor.ca",
-  "rentfaster.ca",
-  "apartments.com",
-  "condos.ca",
-];
-
-function hostnameOf(url) {
-  try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
-}
-function isBadRedirect(url) {
-  const h = hostnameOf(url);
-  return BAD_REDIRECT_HOSTS.some(bad => h.endsWith(bad));
-}
-function looksLikeListing(url) {
-  const u = url.toLowerCase();
-  return GOOD_HINTS.some(hint => u.includes(hint));
-}
-
-// Extract destination from an interstitial/tracker HTML (score candidates)
-function extractRedirectFromHtml(html) {
-  if (!html) return null;
-
-  // Collect candidates
-  const candidates = new Set();
-
-  // meta refresh
-  const meta = html.match(/http-equiv=["']?refresh["']?[^>]*content=["'][^"']*url=([^"'>\s]+)/i);
-  if (meta?.[1]) candidates.add(decodeHtmlEntities(meta[1]));
-
-  // ANY anchor hrefs
-  const anchorRe = /<a[^>]+href=["'](https?:\/\/[^"']+)["'][^>]*>.*?<\/a>/ig;
-  let m;
-  while ((m = anchorRe.exec(html)) !== null) {
-    candidates.add(decodeHtmlEntities(m[1]));
-    if (candidates.size > 50) break; // safety
-  }
-
-  // JS redirects
-  const js1 = html.match(/location\.replace\(['"]([^'"]+)['"]\)/i);
-  if (js1?.[1]) candidates.add(decodeHtmlEntities(js1[1]));
-  const js2 = html.match(/window\.location\s*=\s*['"]([^'"]+)['"]/i);
-  if (js2?.[1]) candidates.add(decodeHtmlEntities(js2[1]));
-
-  // canonical
-  const canon = html.match(/<link[^>]+rel=["']?canonical["']?[^>]+href=["'](https?:\/\/[^"']+)["']/i);
-  if (canon?.[1]) candidates.add(decodeHtmlEntities(canon[1]));
-
-  if (candidates.size === 0) return null;
-
-  // Score: prefer non-bad domains and “listing-looking” hosts
-  const scored = [...candidates].map((u) => {
-    const bad = isBadRedirect(u) ? 1 : 0;
-    const good = looksLikeListing(u) ? 1 : 0;
-    // Lower score is better; heavily penalize bad domains
-    // Prefer good listing hints; break ties by longer URL (more specific)
-    return { u, score: bad ? 1000 : (good ? -10 : 0), len: u.length };
-  });
-
-  scored.sort((a, b) => (a.score - b.score) || (b.len - a.len));
-  return scored[0].u;
+    const h = new URL(url).hostname.toLowerCase();
+    return [
+      "ct.sendgrid.net",
+      "cloudflare.com",
+      "challenge.cloudflare.com",
+      "bit.ly",
+      "lnkd.in",
+      "l.instagram.com",
+      "linktr.ee",
+    ].some(d => h.endsWith(d));
+  } catch { return true; }
 }
 
 // --- Redis helpers ---
@@ -190,246 +97,62 @@ async function setPropertyFacts(phone, property, facts) {
   log("info", "💾 [Redis] Updated facts", { phone, property });
 }
 
-// HTML cache
-async function getCachedHTML(finalUrl) {
-  const key = `html:${finalUrl}`;
-  const raw = await redis.get(key);
-  if (!raw) return null;
+// --- Simple page fetcher (no headless browser) ---
+const SIMPLE_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
+};
+async function fetchListingHTML(url) {
   try {
-    const parsed = JSON.parse(raw);
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-async function setCachedHTML(finalUrl, html) {
-  const key = `html:${finalUrl}`;
-  const payload = { html, fetchedAt: nowIso() };
-  await redis.set(key, JSON.stringify(payload));
-  log("info", "🗃️ [Cache] Stored HTML", { finalUrl, length: html.length });
-}
-
-// --- Browserless fetchers (stealth-first) ---
-async function fetchWithBrowserlessStealthContent(url, reqId) {
-  const endpoint = `https://production-sfo.browserless.io/stealth/content?token=${BROWSERLESS_KEY}`;
-  const payload = {
-    url,
-    gotoOptions: { waitUntil: "networkidle2" },
-    rejectResourceTypes: ["image", "media", "font", "stylesheet"],
-    bestAttempt: true,
-    waitForTimeout: 7000, // CF is a bit slower
-  };
-  const t = timeStart(`[${reqId}] POST /stealth/content`);
-  const resp = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Cache-Control": "no-cache", "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  timeEnd(t, { status: resp.status });
-  return resp;
-}
-async function fetchWithBrowserlessContent(url, reqId) {
-  const endpoint = `https://production-sfo.browserless.io/content?token=${BROWSERLESS_KEY}`;
-  const payload = {
-    url,
-    gotoOptions: { waitUntil: "networkidle2" },
-    rejectResourceTypes: ["image", "media", "font", "stylesheet"],
-    bestAttempt: true,
-    waitForTimeout: 6000,
-  };
-  const t = timeStart(`[${reqId}] POST /content`);
-  const resp = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Cache-Control": "no-cache", "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  timeEnd(t, { status: resp.status });
-  return resp;
-}
-async function fetchWithBrowserlessUnblock(url, reqId) {
-  const endpoint = `https://production-sfo.browserless.io/unblock?token=${BROWSERLESS_KEY}`;
-  const payload = { url };
-  const t = timeStart(`[${reqId}] POST /unblock`);
-  const resp = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  timeEnd(t, { status: resp.status });
-  return resp;
-}
-
-// getOrFetchListingHTML: returns { html, finalUrl, source, resolvedFrom? }
-async function getOrFetchListingHTML(listingUrl, { reqId = "no-reqid" } = {}) {
-  if (!BROWSERLESS_KEY) {
-    log("warn", "⚠️ No BROWSERLESS_KEY — cannot fetch listing HTML");
-    return { html: "", finalUrl: listingUrl, source: "none" };
-  }
-
-  // Decode any SendGrid wrapping
-  let cleanUrl = cleanListingUrl(listingUrl);
-
-  // If we previously resolved this original URL, reuse the known final (unless it's bad)
-  const resolvedKey = `resolved:${listingUrl}`;
-  const knownFinal = await redis.get(resolvedKey);
-  if (knownFinal && !isBadRedirect(knownFinal)) {
-    cleanUrl = knownFinal;
-    log("info", "🔁 [Resolved] Using previously resolved final URL", { finalUrl: cleanUrl });
-  }
-
-  // --- Try cache for cleanUrl
-  const cached1 = await getCachedHTML(cleanUrl);
-  if (cached1?.html && cached1?.fetchedAt) {
-    const ageMin = (Date.now() - new Date(cached1.fetchedAt).getTime()) / 60000;
-    const looksInterstitial =
-      /sendgrid\.net|utm_source=|redirect/i.test(cleanUrl) ||
-      /http-equiv=["']?refresh|location\.replace|window\.location/i.test(cached1.html);
-
-    log("info", "🗃️ [Cache] Using cached HTML", { url: cleanUrl, ageMin: Math.round(ageMin) });
-
-    // On cache hit, still try to follow if it looks like interstitial
-    if (looksInterstitial) {
-      const to = extractRedirectFromHtml(cached1.html);
-      if (to && to !== cleanUrl) {
-        const cand = decodeHtmlEntities(to);
-        if (isBadRedirect(cand)) {
-          log("warn", "🧱 [Cache-Follow] Ignoring bad redirect domain", { cand });
-        } else {
-          // Use final cache if present
-          const cachedFinal = await getCachedHTML(cand);
-          if (cachedFinal?.html && cachedFinal?.fetchedAt) {
-            const ageMin2 = (Date.now() - new Date(cachedFinal.fetchedAt).getTime()) / 60000;
-            log("info", "🗃️ [Cache] Using cached HTML (final URL)", { url: cand, ageMin: Math.round(ageMin2) });
-            await redis.set(resolvedKey, cand);
-            return { html: cachedFinal.html, finalUrl: cand, source: "cache-follow", resolvedFrom: cleanUrl };
-          }
-          // Fetch final directly (stealth → content → unblock)
-          for (const fetchFn of [fetchWithBrowserlessStealthContent, fetchWithBrowserlessContent, fetchWithBrowserlessUnblock]) {
-            const resp = await fetchFn(cand, reqId);
-            if (resp.ok) {
-              const html2 = await resp.text();
-              if (html2) {
-                await setCachedHTML(cand, html2);
-                await redis.set(resolvedKey, cand);
-                return { html: html2, finalUrl: cand, source: "fetch-follow", resolvedFrom: cleanUrl };
-              }
-            } else {
-              const sample = await resp.text().catch(() => "");
-              log("warn", "❌ Final fetch step failed", { step: fetchFn.name, status: resp.status, sample: sample?.slice(0, 300) });
-            }
-          }
-        }
-      }
+    const resp = await fetch(url, { headers: SIMPLE_HEADERS, redirect: "follow" });
+    if (!resp.ok) {
+      log("warn", "⚠️ fetchListingHTML non-OK", { status: resp.status, url });
+      return "";
     }
-
-    // If we got here, return the cached interstitial (last resort) or fresh-enough page
-    if (ageMin <= HTML_MAX_AGE_MIN) {
-      return { html: cached1.html, finalUrl: cleanUrl, source: "cache" };
-    }
-    log("info", "♻️ [Cache] Cached HTML stale, refreshing", { url: cleanUrl, ageMin: Math.round(ageMin) });
-  } else {
-    log("info", "🔍 [Cache] No cached HTML, fetching", { url: cleanUrl });
+    const html = await resp.text();
+    return html || "";
+  } catch (err) {
+    log("warn", "⚠️ fetchListingHTML error", { error: err.message, url });
+    return "";
   }
-
-  // --- Fetch pipeline: stealth → content → unblock
-  let html = "";
-  for (const fetchFn of [fetchWithBrowserlessStealthContent, fetchWithBrowserlessContent, fetchWithBrowserlessUnblock]) {
-    const resp = await fetchFn(cleanUrl, reqId);
-    if (resp.ok) {
-      html = await resp.text();
-      if (html) break;
-    } else {
-      const sample = await resp.text().catch(() => "");
-      log("warn", "❌ Fetch step failed", { step: fetchFn.name, status: resp.status, sample: sample?.slice(0, 300) });
-    }
-  }
-  if (!html) return { html: "", finalUrl: cleanUrl, source: "error" };
-
-  // --- Interstitial follow (from fresh fetch)
-  const looksInterstitial =
-    /sendgrid\.net|utm_source=|redirect/i.test(cleanUrl) ||
-    /http-equiv=["']?refresh|location\.replace|window\.location/i.test(html);
-
-  if (looksInterstitial) {
-    const to = extractRedirectFromHtml(html);
-    if (to && to !== cleanUrl) {
-      const cand = decodeHtmlEntities(to);
-      if (isBadRedirect(cand)) {
-        log("warn", "🧱 [Redirect] Ignoring bad redirect domain", { cand });
-        // Cache current html under cleanUrl (for debugging)
-        await setCachedHTML(cleanUrl, html);
-        return { html, finalUrl: cleanUrl, source: "fetch-interstitial" };
-      }
-
-      // Try cache on final
-      const cached2 = await getCachedHTML(cand);
-      if (cached2?.html && cached2?.fetchedAt) {
-        await redis.set(resolvedKey, cand);
-        return { html: cached2.html, finalUrl: cand, source: "cache-follow", resolvedFrom: cleanUrl };
-      }
-
-      // Fetch final (stealth → content → unblock)
-      let html2 = "";
-      for (const fetchFn of [fetchWithBrowserlessStealthContent, fetchWithBrowserlessContent, fetchWithBrowserlessUnblock]) {
-        const resp2 = await fetchFn(cand, reqId);
-        if (resp2.ok) {
-          html2 = await resp2.text();
-          if (html2) break;
-        } else {
-          const sample = await resp2.text().catch(() => "");
-          log("warn", "❌ Final fetch step failed", { step: fetchFn.name, status: resp2.status, sample: sample?.slice(0, 300) });
-        }
-      }
-      if (html2) {
-        await setCachedHTML(cand, html2);
-        await redis.set(resolvedKey, cand);
-        return { html: html2, finalUrl: cand, source: "fetch-follow", resolvedFrom: cleanUrl };
-      }
-
-      // Couldn’t fetch the candidate; cache current html and return
-      await setCachedHTML(cleanUrl, html);
-      return { html, finalUrl: cleanUrl, source: "fetch-interstitial" };
-    }
-  }
-
-  await setCachedHTML(cleanUrl, html);
-  return { html, finalUrl: cleanUrl, source: "fetch" };
 }
 
-// --- Reasoning helper: answer user question from HTML + facts ---
-async function aiReasonFromPage({ question, html, facts, finalUrl, reqId }) {
+// --- Reason from page HTML + known facts ---
+async function aiReasonFromPage({ question, html, facts, url }) {
   try {
     const snippet = (html || "").slice(0, HTML_SNIPPET_LIMIT);
-    const sys = `
+    const system = `
 You are "Alex", a concise, friendly rental assistant.
-You are given:
-1) FULL rental page HTML (truncated)
-2) Known context for this lead (facts)
+You're given:
+1) Known context (facts) for this lead.
+2) The rental page HTML (truncated).
 3) The user's question.
 
-Answer using evidence from the HTML when possible. If not explicit, say "not mentioned" or explain uncertainty.
+Use evidence from the HTML when possible. If something isn't explicitly stated, say "not mentioned" and/or explain uncertainty.
 Keep replies under 3 sentences.`.trim();
 
     const messages = [
-      { role: "system", content: sys },
-      { role: "user", content: `FACTS JSON:\n${JSON.stringify(facts)}` },
-      { role: "user", content: `RENTAL PAGE URL:\n${finalUrl || "unknown"}` },
+      { role: "system", content: system },
+      { role: "user", content: `FACTS:\n${JSON.stringify(facts)}` },
+      { role: "user", content: `RENTAL PAGE URL:\n${url || "unknown"}` },
       { role: "user", content: `RENTAL PAGE HTML (truncated):\n${snippet}` },
-      { role: "user", content: `QUESTION:\n${question}` }
+      { role: "user", content: `QUESTION:\n${question}` },
     ];
 
-    const t = timeStart(`[${reqId}] openai.chat.completions`);
+    const t = timeStart(`[ai] chat.completions`);
     const ai = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages,
       max_tokens: 250,
-      temperature: 0.3
+      temperature: 0.3,
     });
     timeEnd(t);
     const reply = ai.choices?.[0]?.message?.content?.trim();
     return reply || "Sorry—I couldn’t find that on the listing.";
   } catch (err) {
-    log("error", "❌ [aiReasonFromPage] Error", { error: err.message, reqId });
+    log("error", "❌ aiReasonFromPage error", { error: err.message });
     return "Sorry—something went wrong reading the listing.";
   }
 }
@@ -437,17 +160,9 @@ Keep replies under 3 sentences.`.trim();
 // --- Health check ---
 app.get("/", (req, res) => res.send("✅ AI Rental Assistant is running"));
 
-// --- Debug routes ---
-function ensureAuth(req, res) {
-  if (req.query.key !== DEBUG_SECRET) {
-    res.status(401).send("Unauthorized");
-    return false;
-  }
-  return true;
-}
-
+// --- Debug: get facts ---
 app.get("/debug/facts", async (req, res) => {
-  if (!ensureAuth(req, res)) return;
+  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
   const { phone, property } = req.query;
   if (!phone) return res.status(400).send("Missing phone");
   const slug = property ? slugify(property) : "unknown";
@@ -455,80 +170,21 @@ app.get("/debug/facts", async (req, res) => {
   res.json({ phone, property: slug, facts });
 });
 
-// Inspect cached HTML
-app.get("/debug/html", async (req, res) => {
-  if (!ensureAuth(req, res)) return;
-  const { url } = req.query;
-  if (!url) return res.status(400).send("Missing url");
-  const clean = cleanListingUrl(url);
-  const cached = await getCachedHTML(clean);
-  if (!cached) return res.json({ url: clean, cached: false });
-  res.json({
-    url: clean,
-    cached: true,
-    fetchedAt: cached.fetchedAt,
-    length: cached.html?.length || 0,
-    preview: cached.html?.slice(0, 400) || ""
-  });
-});
-
-// Resolve endpoint to examine interstitial & derived final URL from cached HTML
-app.get("/debug/resolve", async (req, res) => {
-  if (!ensureAuth(req, res)) return;
-  const { url } = req.query;
-  if (!url) return res.status(400).send("Missing url");
-  const clean = cleanListingUrl(url);
-  const cached = await getCachedHTML(clean);
-  if (!cached?.html) {
-    return res.json({ url: clean, cached: false, message: "no cached html" });
-    }
-  const redirectTo = extractRedirectFromHtml(cached.html);
-  res.json({
-    url: clean,
-    cached: true,
-    redirectTo: redirectTo || null,
-    preview: cached.html.slice(0, 400)
-  });
-});
-
-// Force refresh HTML cache
-app.post("/debug/html/refresh", async (req, res) => {
-  if (!ensureAuth(req, res)) return;
-  const { url } = req.body || {};
-  if (!url) return res.status(400).json({ error: "Missing url" });
-  const reqId = `refresh_${uid()}`;
-  const { html, finalUrl, source } = await getOrFetchListingHTML(url, { reqId });
-  res.json({
-    ok: !!html,
-    finalUrl,
-    source,
-    length: html?.length || 0
-  });
-});
-
-// Clear a specific cache entry (facts + html)
+// --- Debug: clear lead state ---
 app.post("/debug/clear", async (req, res) => {
-  if (!ensureAuth(req, res)) return;
-  const { phone, property, url } = req.body || {};
-  const ops = [];
-  if (phone && property) {
-    const slug = slugify(property);
-    ops.push(redis.del(`conv:${phone}:${slug}`, `facts:${phone}:${slug}`, `meta:${phone}:${slug}`));
-  }
-  if (url) {
-    const clean = cleanListingUrl(url);
-    ops.push(redis.del(`html:${clean}`));
-  }
-  await Promise.all(ops);
+  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
+  const { phone, property } = req.body || {};
+  if (!phone || !property) return res.status(400).json({ error: "Missing phone or property" });
+  const slug = slugify(property);
+  await redis.del(`conv:${phone}:${slug}`, `facts:${phone}:${slug}`, `meta:${phone}:${slug}`);
   res.json({ ok: true });
 });
 
 // --- Initialize property facts (from Zapier) ---
-// Warms the HTML cache & persists final URL only if it's not a bad domain.
+// Expect Zapier to send the *resolved* first-party URL as `finalUrl`.
 app.post("/init/facts", async (req, res) => {
-  const reqId = `init_${uid()}`;
   try {
-    let { phone, property, listingUrl, rent, unit } = req.body;
+    let { phone, property, finalUrl, rent, unit } = req.body;
     if (!phone || !property) {
       return res.status(400).json({ error: "Missing phone or property" });
     }
@@ -536,51 +192,39 @@ app.post("/init/facts", async (req, res) => {
     phone = normalizePhone(phone);
     const slug = slugify(property);
 
+    if (finalUrl && isTracker(finalUrl)) {
+      return res.status(422).json({
+        error: "Tracking/interstitial URL provided. Resolve in Zapier first.",
+        got: finalUrl,
+      });
+    }
+
     const facts = {
       phone,
       property: slug,
       address: property,
       rent: rent || null,
       unit: unit || null,
-      listingUrl: listingUrl || null,
-      initializedAt: nowIso()
+      listingUrl: finalUrl || null,
+      initializedAt: nowIso(),
     };
 
     await setPropertyFacts(phone, slug, facts);
-    log("info", "💾 [Init] Facts initialized", { phone, property: slug, facts });
+    log("info", "💾 [Init] Facts saved", { phone, property: slug, listingUrl: facts.listingUrl });
 
-    let htmlInfo = null;
-    if (listingUrl) {
-      const t = timeStart(`[${reqId}] warm-html`);
-      const { html, finalUrl, source } = await getOrFetchListingHTML(listingUrl, { reqId });
-      timeEnd(t, { finalUrl, source, len: html?.length || 0 });
-      htmlInfo = { finalUrl, source, length: html?.length || 0 };
-
-      // Only persist if it's not a bad/blocked redirect
-      if (finalUrl && finalUrl !== listingUrl && !isBadRedirect(finalUrl)) {
-        facts.listingUrl = finalUrl;
-        await setPropertyFacts(phone, slug, facts);
-        await redis.set(`resolved:${listingUrl}`, finalUrl);
-        log("info", "🔁 [Init] Persisted resolved final URL to facts", { phone, property: slug, finalUrl });
-      } else if (finalUrl && isBadRedirect(finalUrl)) {
-        log("warn", "🚫 [Init] Not persisting bad final URL", { finalUrl });
-      }
-    }
-
-    res.status(200).json({
+    // Return full JSON so you can test from Zapier
+    return res.json({
       success: true,
-      message: "Initialized; HTML cache warmed if URL present.",
       data: facts,
-      redisKey: `facts:${phone}:${slug}`,
-      htmlInfo
+      smsEndpoint: `${PUBLIC_BASE_URL}/twiml/sms`,
     });
   } catch (err) {
-    log("error", "❌ /init/facts error", { error: err.message, reqId });
-    res.status(500).json({ error: err.message });
+    log("error", "❌ /init/facts error", { error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
-// --- Voice webhook ---
+// --- Voice webhook (unchanged passthrough) ---
 app.post("/twiml/voice", (req, res) => {
   const twiml = `
 <Response>
@@ -590,16 +234,15 @@ app.post("/twiml/voice", (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// --- SMS webhook (dynamic reasoning from page) ---
+// --- SMS webhook (Tier-1: direct fetch + LLM read) ---
 app.post("/twiml/sms", async (req, res) => {
-  const reqId = `sms_${uid()}`;
   const from = normalizePhone(req.body.From);
   const body = req.body.Body?.trim() || "";
-  log("info", "📩 SMS received", { from, body, reqId });
+  log("info", "📩 SMS received", { from, body });
   res.type("text/xml").send("<Response></Response>");
 
   try {
-    // Heuristic: try to infer property slug from message; default to "unknown".
+    // Try to guess a property slug from message; fallback to "unknown"
     const propertyRegex =
       /([0-9]{2,5}\s?[A-Za-z]+\s?(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|SE|SW|NW|NE|Southeast|Southwest|Northeast|Northwest))/i;
     const match = body.match(propertyRegex);
@@ -608,61 +251,79 @@ app.post("/twiml/sms", async (req, res) => {
     const prev = await getConversation(from, propertySlug);
     const facts = await getPropertyFacts(from, propertySlug);
 
-    let reply = "";
-    if (facts?.listingUrl) {
-      const { html, finalUrl, source } = await getOrFetchListingHTML(facts.listingUrl, { reqId });
-      log("info", "📄 [Reasoning] HTML ready", { finalUrl, source, length: html?.length || 0, reqId });
+    let reply = "Could you share the property link?";
 
-      // If we discovered a new final URL during SMS flow, persist it (if it's not bad)
-      if (finalUrl && finalUrl !== facts.listingUrl && !isBadRedirect(finalUrl)) {
-        facts.listingUrl = finalUrl;
-        await setPropertyFacts(from, propertySlug, facts);
-        await redis.set(`resolved:${facts.listingUrl}`, finalUrl);
-        log("info", "🔁 [SMS] Persisted resolved final URL to facts", { phone: from, property: propertySlug, finalUrl });
-      } else if (finalUrl && isBadRedirect(finalUrl)) {
-        log("warn", "🚫 [SMS] Not persisting bad final URL", { finalUrl });
-      }
+    if (facts?.listingUrl && !isTracker(facts.listingUrl)) {
+      const t = timeStart(`[fetch] listing HTML`);
+      const html = await fetchListingHTML(facts.listingUrl);
+      timeEnd(t, { ok: !!html, len: html?.length || 0 });
 
       if (html) {
-        reply = await aiReasonFromPage({ question: body, html, facts, finalUrl, reqId });
+        reply = await aiReasonFromPage({ question: body, html, facts, url: facts.listingUrl });
       } else {
-        // Fallback: known facts only
+        // fallback to facts-only (still keeps tone)
         const sys = {
           role: "system",
           content: `You are Alex, a friendly rental assistant. Known facts: ${JSON.stringify(facts)}.
 If info isn't present, say "not mentioned". Keep replies under 3 sentences.`
         };
         const msgs = [sys, ...prev, { role: "user", content: body }];
-        const t = timeStart(`[${reqId}] openai.chat.fallback`);
-        const ai = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: msgs, max_tokens: 180 });
-        timeEnd(t);
-        reply = ai.choices?.[0]?.message?.content?.trim() || "Sorry—I couldn't load the listing just now.";
+        const ai = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: msgs,
+          max_tokens: 180,
+          temperature: 0.3,
+        });
+        reply = ai.choices?.[0]?.message?.content?.trim() || "I couldn't load the listing—could you resend the link?";
       }
-    } else {
-      // No URL yet; answer from facts only
-      const sys = {
-        role: "system",
-        content: `You are Alex, a friendly rental assistant. Known facts: ${JSON.stringify(facts)}.
-If info isn't present, say "not mentioned". Keep replies under 3 sentences.`
-      };
-      const msgs = [sys, ...prev, { role: "user", content: body }];
-      const t = timeStart(`[${reqId}] openai.chat.no-url`);
-      const ai = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: msgs, max_tokens: 180 });
-      timeEnd(t);
-      reply = ai.choices?.[0]?.message?.content?.trim() || "Could you share the property address or link?";
     }
 
-    log("info", "💬 GPT reply", { reply, reqId });
+    log("info", "💬 GPT reply", { reply });
     const updated = [...prev, { role: "user", content: body }, { role: "assistant", content: reply }];
     await saveConversation(from, propertySlug, updated);
     await twilioClient.messages.create({ from: TWILIO_PHONE_NUMBER, to: from, body: reply });
-    log("info", "✅ SMS sent", { to: from, reqId });
+    log("info", "✅ SMS sent", { to: from });
   } catch (err) {
-    log("error", "❌ SMS error", { error: err.message, reqId });
+    log("error", "❌ SMS error", { error: err.message });
   }
 });
 
-// --- WebSocket for voice streaming ---
+// --- Follow-up checker (unchanged) ---
+app.get("/cron/followups", async (req, res) => {
+  try {
+    const keys = await redis.keys("meta:*");
+    const now = DateTime.now().setZone("America/Edmonton");
+    const followups = [];
+
+    for (const key of keys) {
+      const meta = await redis.hgetall(key);
+      const last = meta.lastInteraction ? DateTime.fromISO(meta.lastInteraction) : null;
+      if (!last) continue;
+      const hoursSince = now.diff(last, "hours").hours;
+      if (hoursSince > 24 && now.hour >= 9 && now.hour < 10) {
+        const [, phone, property] = key.split(":");
+        followups.push({ phone, property });
+      }
+    }
+
+    for (const { phone, property } of followups) {
+      const facts = await getPropertyFacts(phone, property);
+      const text = facts?.address
+        ? `Hey, just checking if you’d like to set up a showing for ${facts.address} 😊`
+        : `Hey, just checking if you’re still interested in booking a showing 😊`;
+
+      await twilioClient.messages.create({ from: TWILIO_PHONE_NUMBER, to: phone, body: text });
+      log("info", "📆 Follow-up sent", { to: phone });
+    }
+
+    res.send(`✅ Follow-ups sent: ${followups.length}`);
+  } catch (err) {
+    log("error", "❌ Follow-up error", { error: err.message });
+    res.status(500).send(err.message);
+  }
+});
+
+// --- WebSocket for voice streaming (unchanged passthrough) ---
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", (req, socket, head) => {
@@ -688,5 +349,4 @@ server.listen(PORT, () => {
   log("info", "💬 SMS endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/sms` });
   log("info", "🌐 Voice endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/voice` });
   log("info", "🧠 Init facts endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/init/facts` });
-  log("info", hr());
 });
