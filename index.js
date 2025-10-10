@@ -78,9 +78,9 @@ async function aiReadListing(url) {
       JSON.stringify({ headless: true, stealth: true })
     );
 
-    const fetchUrl = `https://production-sfo.browserless.io/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(
-      url
-    )}&launch=${launchConfig}`;
+    const fetchUrl = `https://production-sfo.browserless.io/chromium/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(
+  url
+)}&launch=${launchConfig}`;
 
     const resp = await fetch(fetchUrl);
 
