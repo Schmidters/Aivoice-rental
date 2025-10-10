@@ -15,11 +15,11 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "ws": "^8.18.3",
-    "twilio": "^4.22.0",
+    "twilio": "^4.23.0",
     "node-fetch": "^3.3.2",
     "ioredis": "^5.4.1",
     "luxon": "^3.4.4",
-    "openai": "^4.0.0",
+    "openai": "^4.28.0",
     "libphonenumber-js": "^1.11.4"
   }
 }
