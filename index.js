@@ -72,6 +72,28 @@ app.get("/debug/memory", async (req, res) => {
   }
 });
 
+// --- Debug clear endpoint (delete one or all conversations) ---
+app.get("/debug/clear", async (req, res) => {
+  if (req.query.key !== DEBUG_SECRET) {
+    return res.status(401).send("Unauthorized");
+  }
+
+  try {
+    const target = req.query.phone;
+    if (target) {
+      const deleted = await redis.del(`conv:${target}`);
+      return res.send(deleted ? `🗑️ Cleared memory for ${target}` : `❌ No memory found for ${target}`);
+    } else {
+      const keys = await redis.keys("conv:*");
+      if (keys.length === 0) return res.send("✅ No conversations to clear");
+      await redis.del(keys);
+      res.send(`🧹 Cleared ${keys.length} conversations`);
+    }
+  } catch (err) {
+    res.status(500).send(`❌ Redis error: ${err.message}`);
+  }
+});
+
 // --- Voice webhook (for completeness) ---
 app.post("/twiml/voice", (req, res) => {
   const twiml = `
