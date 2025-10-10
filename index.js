@@ -75,9 +75,9 @@ async function aiReadListing(url) {
     }
 
     // Follow redirects & render full page using Browserless
-    const resp = await fetch(
-      `https://chrome.browserless.io/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(url)}`
-    );
+   const resp = await fetch(
+  `https://production-sfo.browserless.io/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(url)}`
+);
 
     if (!resp.ok) {
       console.error("❌ [AI-Read] Browserless request failed:", resp.status, await resp.text());
