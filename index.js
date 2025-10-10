@@ -85,20 +85,24 @@ function cleanListingUrl(url) {
 function extractRedirectFromHtml(html) {
   if (!html) return null;
 
-  // 1) <meta http-equiv="refresh" content="0; URL=https://...">
+  // 1) <meta http-equiv="refresh" content="0; url=https://...">
   const meta = html.match(/http-equiv=["']?refresh["']?[^>]*content=["'][^"']*url=([^"'>\s]+)/i);
   if (meta && meta[1]) return meta[1];
 
-  // 2) Anchor "click here"/"redirect" links
-  const link = html.match(/<a[^>]+href=["'](https?:\/\/[^"']+)["'][^>]*>(?:[^<]*redirect[^<]*|[^<]*click[^<]*here[^<]*)<\/a>/i);
-  if (link && link[1]) return link[1];
+  // 2) any anchor href
+  const anyLink = html.match(/<a[^>]+href=["'](https?:\/\/[^"']+)["'][^>]*>.*?<\/a>/i);
+  if (anyLink && anyLink[1]) return anyLink[1];
 
-  // 3) window.location assignments
+  // 3) window.location / location.replace
   const js1 = html.match(/location\.replace\(['"]([^'"]+)['"]\)/i);
   if (js1 && js1[1]) return js1[1];
 
   const js2 = html.match(/window\.location\s*=\s*['"]([^'"]+)['"]/i);
   if (js2 && js2[1]) return js2[1];
+
+  // 4) canonical link (some interstitials set rel=canonical to the destination)
+  const canon = html.match(/<link[^>]+rel=["']?canonical["']?[^>]+href=["'](https?:\/\/[^"']+)["']/i);
+  if (canon && canon[1]) return canon[1];
 
   return null;
 }
@@ -178,21 +182,75 @@ async function fetchWithBrowserlessUnblock(url, reqId) {
   return resp;
 }
 
-// getOrFetchListingHTML: returns { html, finalUrl, source }
+// getOrFetchListingHTML: returns { html, finalUrl, source, resolvedFrom? }
 async function getOrFetchListingHTML(listingUrl, { reqId = "no-reqid" } = {}) {
   if (!BROWSERLESS_KEY) {
     log("warn", "⚠️ No BROWSERLESS_KEY — cannot fetch listing HTML");
     return { html: "", finalUrl: listingUrl, source: "none" };
   }
 
+  // Step A: decode SendGrid parameter if present
   let cleanUrl = cleanListingUrl(listingUrl);
 
-  // Check cache for cleaned URL
+  // If we previously resolved this original URL, reuse the known final
+  const resolvedKey = `resolved:${listingUrl}`;
+  const knownFinal = await redis.get(resolvedKey);
+  if (knownFinal) {
+    cleanUrl = knownFinal;
+    log("info", "🔁 [Resolved] Using previously resolved final URL", { finalUrl: cleanUrl });
+  }
+
+  // Step B: cache lookup for cleanUrl
   const cached1 = await getCachedHTML(cleanUrl);
   if (cached1?.html && cached1?.fetchedAt) {
     const ageMin = (Date.now() - new Date(cached1.fetchedAt).getTime()) / 60000;
     if (ageMin <= HTML_MAX_AGE_MIN) {
       log("info", "🗃️ [Cache] Using cached HTML", { url: cleanUrl, ageMin: Math.round(ageMin) });
+
+      // NEW: if this cached page looks like interstitial (sendgrid or meta/JS redirect),
+      // try to resolve and refetch final page ONCE even on cache hit:
+      const looksInterstitial =
+        /sendgrid\.net|utm_source=|redirect/i.test(cleanUrl) ||
+        /http-equiv=["']?refresh|location\.replace|window\.location/i.test(cached1.html);
+
+      if (looksInterstitial) {
+        const to = extractRedirectFromHtml(cached1.html);
+        if (to && to !== cleanUrl) {
+          log("info", "🔁 [Cache-Follow] Interstitial cache detected; following", { from: cleanUrl, to });
+          // Try cached final
+          const cachedFinal = await getCachedHTML(to);
+          if (cachedFinal?.html && cachedFinal?.fetchedAt) {
+            const ageMin2 = (Date.now() - new Date(cachedFinal.fetchedAt).getTime()) / 60000;
+            if (ageMin2 <= HTML_MAX_AGE_MIN) {
+              log("info", "🗃️ [Cache] Using cached HTML (final URL)", { url: to, ageMin: Math.round(ageMin2) });
+              // Remember resolution for the original listing
+              await redis.set(resolvedKey, to);
+              return { html: cachedFinal.html, finalUrl: to, source: "cache-follow", resolvedFrom: cleanUrl };
+            }
+          }
+          // Refetch final
+          let resp2 = await fetchWithBrowserlessContent(to, reqId);
+          if (!resp2.ok) {
+            const txt3 = await resp2.text();
+            log("warn", "❌ [/content] final URL failed", { status: resp2.status, sample: txt3?.slice(0, 300) });
+            resp2 = await fetchWithBrowserlessUnblock(to, reqId);
+            if (!resp2.ok) {
+              const txt4 = await resp2.text();
+              log("error", "❌ [/unblock] final URL failed", { status: resp2.status, sample: txt4?.slice(0, 300) });
+              // Keep using interstitial as last resort
+              return { html: cached1.html, finalUrl: cleanUrl, source: "cache-interstitial" };
+            }
+          }
+          const html2 = await resp2.text();
+          if (html2) {
+            await setCachedHTML(to, html2);
+            await redis.set(resolvedKey, to);
+            return { html: html2, finalUrl: to, source: "fetch-follow", resolvedFrom: cleanUrl };
+          }
+          return { html: cached1.html, finalUrl: cleanUrl, source: "cache-interstitial" };
+        }
+      }
+
       return { html: cached1.html, finalUrl: cleanUrl, source: "cache" };
     }
     log("info", "♻️ [Cache] Cached HTML stale, refreshing", { url: cleanUrl, ageMin: Math.round(ageMin) });
@@ -200,7 +258,7 @@ async function getOrFetchListingHTML(listingUrl, { reqId = "no-reqid" } = {}) {
     log("info", "🔍 [Cache] No cached HTML, fetching", { url: cleanUrl });
   }
 
-  // 1st request (content)
+  // Step C: fetch cleanUrl
   let resp = await fetchWithBrowserlessContent(cleanUrl, reqId);
   if (!resp.ok) {
     const txt = await resp.text();
@@ -213,11 +271,10 @@ async function getOrFetchListingHTML(listingUrl, { reqId = "no-reqid" } = {}) {
       return { html: "", finalUrl: cleanUrl, source: "error" };
     }
   }
-
   let html = await resp.text();
   if (!html) return { html: "", finalUrl: cleanUrl, source: "empty" };
 
-  // Detect interstitial / follow redirect
+  // Step D: follow interstitial to final URL if detected
   const looksInterstitial =
     /sendgrid\.net|utm_source=|redirect/i.test(cleanUrl) ||
     /http-equiv=["']?refresh|location\.replace|window\.location/i.test(html);
@@ -226,38 +283,36 @@ async function getOrFetchListingHTML(listingUrl, { reqId = "no-reqid" } = {}) {
     const to = extractRedirectFromHtml(html);
     if (to && to !== cleanUrl) {
       log("info", "🔁 [Redirect] Interstitial detected, following", { from: cleanUrl, to });
-      cleanUrl = to;
-
-      // Cache check on final URL
-      const cached2 = await getCachedHTML(cleanUrl);
+      // Try cache on final
+      const cached2 = await getCachedHTML(to);
       if (cached2?.html && cached2?.fetchedAt) {
         const ageMin2 = (Date.now() - new Date(cached2.fetchedAt).getTime()) / 60000;
         if (ageMin2 <= HTML_MAX_AGE_MIN) {
-          log("info", "🗃️ [Cache] Using cached HTML (final URL)", {
-            url: cleanUrl,
-            ageMin: Math.round(ageMin2)
-          });
-          return { html: cached2.html, finalUrl: cleanUrl, source: "cache" };
+          log("info", "🗃️ [Cache] Using cached HTML (final URL)", { url: to, ageMin: Math.round(ageMin2) });
+          await redis.set(resolvedKey, to);
+          return { html: cached2.html, finalUrl: to, source: "cache-follow", resolvedFrom: cleanUrl };
         }
-        log("info", "♻️ [Cache] Final URL cache stale, refreshing", { url: cleanUrl });
       }
-
-      // Refetch final URL
-      let resp2 = await fetchWithBrowserlessContent(cleanUrl, reqId);
+      // Refetch final
+      let resp2 = await fetchWithBrowserlessContent(to, reqId);
       if (!resp2.ok) {
         const txt3 = await resp2.text();
         log("warn", "❌ [/content] final URL failed", { status: resp2.status, sample: txt3?.slice(0, 300) });
-        resp2 = await fetchWithBrowserlessUnblock(cleanUrl, reqId);
+        resp2 = await fetchWithBrowserlessUnblock(to, reqId);
         if (!resp2.ok) {
           const txt4 = await resp2.text();
           log("error", "❌ [/unblock] final URL failed", { status: resp2.status, sample: txt4?.slice(0, 300) });
-          // last resort: return interstitial HTML
-          log("warn", "⚠️ Using interstitial HTML as last resort");
-          await setCachedHTML(cleanUrl, html); // still cache it so we see it later in debug
+          // last resort: cache interstitial so we can debug
+          await setCachedHTML(cleanUrl, html);
           return { html, finalUrl: cleanUrl, source: "fetch-interstitial" };
         }
       }
       html = await resp2.text();
+      if (html) {
+        await setCachedHTML(to, html);
+        await redis.set(resolvedKey, to);
+        return { html, finalUrl: to, source: "fetch-follow", resolvedFrom: cleanUrl };
+      }
     }
   }
 
@@ -341,6 +396,25 @@ app.get("/debug/html", async (req, res) => {
   });
 });
 
+// NEW: Resolve endpoint to examine interstitial & derived final URL from cached HTML
+app.get("/debug/resolve", async (req, res) => {
+  if (!ensureAuth(req, res)) return;
+  const { url } = req.query;
+  if (!url) return res.status(400).send("Missing url");
+  const clean = cleanListingUrl(url);
+  const cached = await getCachedHTML(clean);
+  if (!cached?.html) {
+    return res.json({ url: clean, cached: false, message: "no cached html" });
+  }
+  const redirectTo = extractRedirectFromHtml(cached.html);
+  res.json({
+    url: clean,
+    cached: true,
+    redirectTo: redirectTo || null,
+    preview: cached.html.slice(0, 400)
+  });
+});
+
 // Force refresh HTML cache
 app.post("/debug/html/refresh", async (req, res) => {
   if (!ensureAuth(req, res)) return;
@@ -374,7 +448,7 @@ app.post("/debug/clear", async (req, res) => {
 });
 
 // --- Initialize property facts (from Zapier) ---
-// Warms the HTML cache so first SMS is fast.
+// Warms the HTML cache so first SMS is fast & persists final URL when resolved.
 app.post("/init/facts", async (req, res) => {
   const reqId = `init_${uid()}`;
   try {
@@ -405,6 +479,14 @@ app.post("/init/facts", async (req, res) => {
       const { html, finalUrl, source } = await getOrFetchListingHTML(listingUrl, { reqId });
       timeEnd(t, { finalUrl, source, len: html?.length || 0 });
       htmlInfo = { finalUrl, source, length: html?.length || 0 };
+
+      // If we resolved to a different final URL, persist it to facts for future SMS flows
+      if (finalUrl && finalUrl !== listingUrl) {
+        facts.listingUrl = finalUrl;
+        await setPropertyFacts(phone, slug, facts);
+        await redis.set(`resolved:${listingUrl}`, finalUrl);
+        log("info", "🔁 [Init] Persisted resolved final URL to facts", { phone, property: slug, finalUrl });
+      }
     }
 
     res.status(200).json({
@@ -452,6 +534,15 @@ app.post("/twiml/sms", async (req, res) => {
     if (facts?.listingUrl) {
       const { html, finalUrl, source } = await getOrFetchListingHTML(facts.listingUrl, { reqId });
       log("info", "📄 [Reasoning] HTML ready", { finalUrl, source, length: html?.length || 0, reqId });
+
+      // If we discovered a new final URL during SMS flow, persist it immediately
+      if (finalUrl && finalUrl !== facts.listingUrl) {
+        facts.listingUrl = finalUrl;
+        await setPropertyFacts(from, propertySlug, facts);
+        await redis.set(`resolved:${facts.listingUrl}`, finalUrl);
+        log("info", "🔁 [SMS] Persisted resolved final URL to facts", { phone: from, property: propertySlug, finalUrl });
+      }
+
       if (html) {
         reply = await aiReasonFromPage({ question: body, html, facts, finalUrl, reqId });
       } else {
