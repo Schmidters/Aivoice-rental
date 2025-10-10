@@ -8,6 +8,7 @@ import twilio from "twilio";
 import Redis from "ioredis";
 import OpenAI from "openai";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
+import fetch from "node-fetch";
 
 // --- App setup ---
 const app = express();
@@ -23,6 +24,7 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const REDIS_URL = process.env.REDIS_URL;
 const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
+const BROWSERLESS_KEY = process.env.BROWSERLESS_KEY; // 👈 Add this to Render env vars
 
 // --- Clients ---
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -63,44 +65,48 @@ async function setPropertyFacts(phone, property, facts) {
   console.log(`💾 [Redis] Updated facts for ${phone}:${property}`);
 }
 
-// --- GPT-4.1 with browsing ---
+// --- AI “read like a human” listing reader (Browserless) ---
 async function aiReadListing(url) {
-  console.log(`🌐 [AI-Read] Browsing page → ${url}`);
-
   try {
-    const assistant = await openai.beta.assistants.create({
-      name: "Rental Listing Reader",
-      instructions: `You are a real-estate assistant that uses the browser tool to open
-      rental listings and extract factual details:
-      - Parking situation
-      - Pet policy
-      - Utilities (included or not)
-      - Rent details
-      Return a JSON object only.`,
-      model: "gpt-4.1",
-      tools: [{ type: "browser" }],
-    });
-
-    const thread = await openai.beta.threads.create({
-      messages: [{ role: "user", content: `Read ${url} and extract the required facts.` }],
-    });
-
-    const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
-      assistant_id: assistant.id,
-    });
-
-    const messages = await openai.beta.threads.messages.list(thread.id);
-    const result = messages.data.find((m) => m.role === "assistant");
-
-    let parsed = {};
-    if (result?.content?.[0]?.text?.value) {
-      try {
-        parsed = JSON.parse(result.content[0].text.value);
-      } catch {
-        parsed = { raw: result.content[0].text.value };
-      }
+    console.log(`🌐 [AI-Read] Loading via Browserless → ${url}`);
+    if (!BROWSERLESS_KEY) {
+      console.warn("⚠️ No BROWSERLESS_KEY found — skipping page read");
+      return {};
     }
 
+    // Follow redirects & render full page using Browserless
+    const resp = await fetch(
+      `https://chrome.browserless.io/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(url)}`
+    );
+
+    if (!resp.ok) {
+      console.error("❌ [AI-Read] Browserless request failed:", resp.status, await resp.text());
+      return {};
+    }
+
+    const html = await resp.text();
+    const snippet = html.slice(0, 10000); // limit size for GPT
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are a real-estate assistant. Extract factual data from the HTML snippet:
+          - Parking situation
+          - Pet policy
+          - Utilities (included or not)
+          - Rent details
+          Return JSON only.`,
+        },
+        { role: "user", content: snippet },
+      ],
+      response_format: { type: "json_object" },
+      max_tokens: 400,
+    });
+
+    const data = completion.choices[0].message.content;
+    const parsed = JSON.parse(data);
     console.log("✅ [AI-Read] Extraction complete:", parsed);
     return parsed;
   } catch (err) {
@@ -146,7 +152,7 @@ app.post("/init/facts", async (req, res) => {
     await setPropertyFacts(phone, slug, facts);
     console.log(`💾 [Init] Facts initialized for ${phone}:${slug}`, facts);
 
-    // --- Auto-enrich via GPT-4.1 browser ---
+    // --- Auto-enrich via Browserless ---
     if (listingUrl) {
       const read = await aiReadListing(listingUrl);
       Object.assign(facts, read);
@@ -158,6 +164,7 @@ app.post("/init/facts", async (req, res) => {
       message: "Initialized and enriched facts successfully",
       data: facts,
       redisKey: `facts:${phone}:${slug}`,
+      browsingVerified: !!listingUrl,
     });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
@@ -190,12 +197,6 @@ app.post("/twiml/sms", async (req, res) => {
 
     const prev = await getConversation(from, propertySlug);
     const facts = await getPropertyFacts(from, propertySlug);
-
-    const topics = {
-      parking: /\bparking\b/i.test(body),
-      pets: /\b(pet|dog|cat)\b/i.test(body),
-      utilities: /\b(utilit|electric|gas|heat|water)\b/i.test(body),
-    };
 
     const tones = ["friendly", "casual", "warm", "helpful"];
     const tone = tones[Math.floor(Math.random() * tones.length)];
