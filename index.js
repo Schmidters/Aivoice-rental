@@ -75,9 +75,15 @@ async function aiReadListing(url) {
     }
 
     // Follow redirects & render full page using Browserless
-   const resp = await fetch(
-  `https://production-sfo.browserless.io/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(url)}`
+let resp = await fetch(
+  `https://production-sfo.browserless.io/web/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(url)}`
 );
+if (resp.status === 404) {
+  console.warn("⚠️ /web/content not found, falling back to /content");
+  resp = await fetch(
+    `https://production-sfo.browserless.io/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(url)}`
+  );
+}
 
     if (!resp.ok) {
       console.error("❌ [AI-Read] Browserless request failed:", resp.status, await resp.text());
