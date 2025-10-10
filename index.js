@@ -7,6 +7,7 @@ const { DateTime } = require("luxon");
 const twilio = require("twilio");
 const Redis = require("ioredis");
 const OpenAI = require("openai");
+const { parsePhoneNumberFromString } = require("libphonenumber-js");
 
 // --- App setup ---
 const app = express();
@@ -27,6 +28,17 @@ const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const redis = new Redis(REDIS_URL, { tls: false });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+// --- Helpers ---
+function normalizePhone(phone) {
+  if (!phone) return null;
+  const parsed = parsePhoneNumberFromString(phone, "CA");
+  return parsed && parsed.isValid() ? parsed.number : phone;
+}
+
+function slugify(str) {
+  return str ? str.replace(/\s+/g, "-").replace(/[^\w\-]/g, "").toLowerCase() : "unknown";
+}
 
 // --- Redis helpers ---
 async function getConversation(phone, property) {
@@ -49,11 +61,6 @@ async function setPropertyFacts(phone, property, facts) {
   const key = `facts:${phone}:${property}`;
   await redis.set(key, JSON.stringify(facts));
   console.log(`💾 [Redis] Updated facts for ${phone}:${property}`);
-}
-
-// --- Utility ---
-function slugify(str) {
-  return str ? str.replace(/\s+/g, "-").replace(/[^\w\-]/g, "").toLowerCase() : "unknown";
 }
 
 // --- AI “read like a human” listing reader ---
@@ -120,16 +127,36 @@ app.get("/debug/clear", async (req, res) => {
 // --- Initialize property facts (from Zapier) ---
 app.post("/init/facts", async (req, res) => {
   try {
-    const { phone, property, listingUrl, rent, unit } = req.body;
-    if (!phone || !property) return res.status(400).send("Missing phone or property");
+    let { phone, property, listingUrl, rent, unit } = req.body;
+    if (!phone || !property) {
+      return res.status(400).json({ error: "Missing phone or property" });
+    }
+
+    phone = normalizePhone(phone);
     const slug = slugify(property);
-    const base = { address: property, rent: rent || null, unit: unit || null, listingUrl: listingUrl || null };
-    await setPropertyFacts(phone, slug, base);
-    console.log(`💾 [Init] Facts initialized for ${phone}:${slug}`, base);
-    res.send(`✅ Initialized facts for ${phone}:${slug}`);
+
+    const facts = {
+      phone,
+      property: slug,
+      address: property,
+      rent: rent || null,
+      unit: unit || null,
+      listingUrl: listingUrl || null,
+      initializedAt: new Date().toISOString(),
+    };
+
+    await setPropertyFacts(phone, slug, facts);
+    console.log(`💾 [Init] Facts initialized for ${phone}:${slug}`, facts);
+
+    res.status(200).json({
+      success: true,
+      message: "Initialized facts successfully",
+      data: facts,
+      redisKey: `facts:${phone}:${slug}`,
+    });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
-    res.status(500).send(err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -145,7 +172,7 @@ app.post("/twiml/voice", (req, res) => {
 
 // --- SMS webhook ---
 app.post("/twiml/sms", async (req, res) => {
-  const from = req.body.From;
+  const from = normalizePhone(req.body.From);
   const body = req.body.Body?.trim() || "";
   console.log(`📩 SMS from ${from}: ${body}`);
   res.type("text/xml").send("<Response></Response>");
