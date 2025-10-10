@@ -24,7 +24,8 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const REDIS_URL = process.env.REDIS_URL;
 const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
-const BROWSERLESS_KEY = process.env.BROWSERLESS_KEY; // 👈 Add this to Render env vars
+const BROWSERLESS_KEY = process.env.BROWSERLESS_KEY;
+const BROWSERLESS_REGION = process.env.BROWSERLESS_REGION || "sfo"; // default US West
 
 // --- Clients ---
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -37,7 +38,6 @@ function normalizePhone(phone) {
   const parsed = parsePhoneNumberFromString(phone, "CA");
   return parsed && parsed.isValid() ? parsed.number : phone;
 }
-
 function slugify(str) {
   return str ? str.replace(/\s+/g, "-").replace(/[^\w\-]/g, "").toLowerCase() : "unknown";
 }
@@ -65,7 +65,7 @@ async function setPropertyFacts(phone, property, facts) {
   console.log(`💾 [Redis] Updated facts for ${phone}:${property}`);
 }
 
-// --- AI “read like a human” listing reader (Browserless) ---
+// --- AI “read like a human” listing reader (Browserless v2 stealth) ---
 async function aiReadListing(url) {
   try {
     console.log(`🌐 [AI-Read] Loading via Browserless → ${url}`);
@@ -74,16 +74,12 @@ async function aiReadListing(url) {
       return {};
     }
 
-    // Follow redirects & render full page using Browserless
-let resp = await fetch(
-  `https://production-sfo.browserless.io/web/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(url)}`
-);
-if (resp.status === 404) {
-  console.warn("⚠️ /web/content not found, falling back to /content");
-  resp = await fetch(
-    `https://production-sfo.browserless.io/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(url)}`
-  );
-}
+    // Follow redirects & render full page using Browserless (Chromium + stealth)
+    const fetchUrl = `https://production-${BROWSERLESS_REGION}.browserless.io/chromium/content?token=${BROWSERLESS_KEY}&url=${encodeURIComponent(
+      url
+    )}&stealth=true`;
+
+    const resp = await fetch(fetchUrl);
 
     if (!resp.ok) {
       console.error("❌ [AI-Read] Browserless request failed:", resp.status, await resp.text());
@@ -91,7 +87,7 @@ if (resp.status === 404) {
     }
 
     const html = await resp.text();
-    const snippet = html.slice(0, 10000); // limit size for GPT
+    const snippet = html.slice(0, 10000); // limit payload for GPT
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
