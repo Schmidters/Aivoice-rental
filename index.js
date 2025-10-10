@@ -32,12 +32,13 @@ const redis = new Redis(REDIS_URL, {
 redis.on("connect", () => console.log("✅ Connected to Redis successfully"));
 redis.on("error", (err) => console.error("❌ Redis error:", err.message));
 
-// --- Redis helpers ---
+// --- Helpers for Redis data ---
 async function getConversation(phone, propertySlug) {
   const key = `conv:${phone}:${propertySlug}`;
   const data = await redis.get(key);
   return data ? JSON.parse(data) : [];
 }
+
 async function saveConversation(phone, propertySlug, messages) {
   const key = `conv:${phone}:${propertySlug}`;
   const metaKey = `meta:${phone}:${propertySlug}`;
@@ -46,7 +47,6 @@ async function saveConversation(phone, propertySlug, messages) {
   await redis.set(key, JSON.stringify(trimmed));
 
   try {
-    // check if metaKey is valid type
     const type = await redis.type(metaKey);
     if (type !== "hash" && type !== "none") {
       console.warn(`⚠️ Clearing invalid meta key type for ${metaKey} (${type})`);
@@ -56,6 +56,17 @@ async function saveConversation(phone, propertySlug, messages) {
   } catch (err) {
     console.error("⚠️ Error updating meta:", err);
   }
+}
+
+// --- Property facts helpers ---
+async function getPropertyFacts(phone, propertySlug) {
+  const key = `facts:${phone}:${propertySlug}`;
+  const data = await redis.get(key);
+  return data ? JSON.parse(data) : {};
+}
+async function setPropertyFacts(phone, propertySlug, facts) {
+  const key = `facts:${phone}:${propertySlug}`;
+  await redis.set(key, JSON.stringify(facts));
 }
 
 // --- AI Context Fetcher ---
@@ -119,10 +130,12 @@ app.get("/debug/memory", async (req, res) => {
   for (const key of keys) data[key] = JSON.parse(await redis.get(key));
   res.json({ keys, data });
 });
+
 app.get("/debug/clear", async (req, res) => {
   if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
   const { phone, property } = req.query;
   const slug = property ? slugify(property) : null;
+
   if (phone && slug) {
     await redis.del(`conv:${phone}:${slug}`, `facts:${phone}:${slug}`);
     return res.send(`🧹 Cleared conversation and facts for ${phone} (${slug})`);
@@ -166,14 +179,13 @@ app.post("/twiml/sms", async (req, res) => {
     const propertyRegex = /(for|about|regarding|at)\s+([0-9A-Za-z\s\-]+(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|SE|SW|NW|NE))/i;
     const match = body.match(propertyRegex);
     if (match) propertyInfo = match[2].trim();
-
     const propertySlug = slugify(propertyInfo || "unknown");
 
-    // Load existing data
+    // Load memory and facts
     const prev = await getConversation(from, propertySlug);
     const facts = await getPropertyFacts(from, propertySlug);
 
-    // Check for enrichable topics
+    // Detect topic keywords
     const topics = {
       parking: /\bparking\b/i.test(body),
       pets: /\b(pet|dog|cat)\b/i.test(body),
@@ -192,7 +204,7 @@ app.post("/twiml/sms", async (req, res) => {
       }
     }
 
-    // --- Compose human message ---
+    // Compose personality
     const styles = ["friendly and upbeat", "casual and chill", "helpful and polite", "enthusiastic and professional"];
     const style = styles[Math.floor(Math.random() * styles.length)];
     const propertyLine = propertyInfo
@@ -213,7 +225,7 @@ Keep replies under 3 sentences.`,
 
     const messages = [systemPrompt, ...prev, { role: "user", content: body }];
 
-    // OpenAI call
+    // Call OpenAI
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -229,10 +241,9 @@ Keep replies under 3 sentences.`,
 
     const data = await response.json();
     const reply = data.choices?.[0]?.message?.content?.trim() || "Hey, could you say that again?";
-
     console.log("💬 GPT reply:", reply);
 
-    // Save and send
+    // Save + send
     const updated = [...prev, { role: "user", content: body }, { role: "assistant", content: reply }];
     await saveConversation(from, propertySlug, updated);
 
@@ -259,8 +270,8 @@ app.get("/cron/followups", async (req, res) => {
       const meta = await redis.hgetall(key);
       const last = meta.lastInteraction ? DateTime.fromISO(meta.lastInteraction) : null;
       if (!last) continue;
-
       const hoursSince = now.diff(last, "hours").hours;
+
       if (hoursSince > 24 && now.hour >= 9 && now.hour < 10) {
         const [, phone, propertySlug] = key.split(":");
         followups.push({ phone, propertySlug });
