@@ -10,6 +10,14 @@ import OpenAI from "openai";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
 import fetch from "node-fetch";
 
+// Cookie jar to persist Cloudflare challenge tokens, etc.
+import Tough from "tough-cookie";
+import fetchCookie from "fetch-cookie";
+
+// Wrap node-fetch with cookie support (single shared jar is fine for server-side)
+const cookieJar = new Tough.CookieJar();
+const cookieFetch = fetchCookie(fetch, cookieJar);
+
 // --- App setup ---
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -27,8 +35,13 @@ const REDIS_URL = process.env.REDIS_URL;
 
 const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
 const DEBUG_LEVEL = (process.env.DEBUG_LEVEL || "info").toLowerCase(); // "debug" | "info" | "warn" | "error"
-const HTML_SNIPPET_LIMIT = parseInt(process.env.HTML_SNIPPET_LIMIT || "20000", 10); // 20k chars
-const ASK_TTL_SEC = parseInt(process.env.ASK_TTL_SEC || "900", 10); // 15 min
+
+const HTML_SNIPPET_LIMIT = parseInt(process.env.HTML_SNIPPET_LIMIT || "20000", 10); // 20k chars to LLM
+const HTML_CACHE_TTL_SEC = parseInt(process.env.HTML_CACHE_TTL_SEC || "900", 10); // 15 min cache
+
+const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN || "";
+const BROWSERLESS_REGION = process.env.BROWSERLESS_REGION || "production-sfo"; // production-sfo/lon/ams
+const SCRAPINGBEE_API_KEY = process.env.SCRAPINGBEE_API_KEY || "";
 
 // --- Clients ---
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -114,10 +127,10 @@ async function getLastPropertyForPhone(phone) {
   return await redis.get(`lastprop:${phone}`);
 }
 
-// Conversational disambiguation memory (no numeric menus)
+// Conversational disambiguation (natural language, not menus)
 async function setAskContext(phone, options) {
   // options: [{ slug, label, tokens:[] }, ...]
-  await redis.setex(`ask:${phone}`, ASK_TTL_SEC, JSON.stringify(options));
+  await redis.setex(`ask:${phone}`, 900, JSON.stringify(options));
 }
 async function getAskContext(phone) {
   const raw = await redis.get(`ask:${phone}`);
@@ -127,26 +140,150 @@ async function clearAskContext(phone) {
   await redis.del(`ask:${phone}`);
 }
 
-// --- Simple page fetcher (no headless browser) ---
+// HTML cache helpers (store per property)
+async function cacheHtmlForProperty(propertySlug, html) {
+  if (!html) return;
+  await redis.setex(`html:${propertySlug}`, HTML_CACHE_TTL_SEC, html);
+}
+async function getCachedHtmlForProperty(propertySlug) {
+  return await redis.get(`html:${propertySlug}`);
+}
+
+// --- Simple/Smart page fetcher with cookie jar + headless fallbacks ---
 const SIMPLE_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
 };
-async function fetchListingHTML(url) {
+
+// direct fetch with cookie persistence
+async function fetchDirectHTML(url) {
+  const t = timeStart(`[fetch] direct`);
   try {
-    const resp = await fetch(url, { headers: SIMPLE_HEADERS, redirect: "follow" });
+    const resp = await cookieFetch(url, { headers: SIMPLE_HEADERS, redirect: "follow" });
+    const status = resp.status;
     if (!resp.ok) {
-      log("warn", "⚠️ fetchListingHTML non-OK", { status: resp.status, url });
-      return "";
+      // Log a small subset of headers to verify Cloudflare
+      const server = resp.headers.get("server");
+      const cfRay = resp.headers.get("cf-ray");
+      const vary = resp.headers.get("vary");
+      log("warn", "⚠️ direct non-OK", { status, url, server, cfRay, vary });
+      timeEnd(t, { ok: false, status });
+      return { html: "", status };
     }
     const html = await resp.text();
-    return html || "";
+    const len = html?.length || 0;
+    timeEnd(t, { ok: true, len, status });
+    return { html, status };
   } catch (err) {
-    log("warn", "⚠️ fetchListingHTML error", { error: err.message, url });
-    return "";
+    timeEnd(t, { ok: false, error: err.message });
+    return { html: "", status: 0 };
   }
+}
+
+// Browserless /content POST (v2 REST)
+async function fetchWithBrowserless(url) {
+  if (!BROWSERLESS_TOKEN) return { html: "", used: false };
+  const endpoint = `https://${BROWSERLESS_REGION}.browserless.io/content?token=${encodeURIComponent(BROWSERLESS_TOKEN)}`;
+  const payload = {
+    url,
+    waitFor: "networkidle0",
+    headers: SIMPLE_HEADERS,
+    actions: [
+      { type: "wait", value: 1200 },
+      { type: "scroll", x: 0, y: 1800 },
+      { type: "wait", value: 800 },
+    ],
+  };
+  const t = timeStart(`[fetch] browserless`);
+  try {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => "");
+      log("warn", "⚠️ browserless non-OK", { status: resp.status, textLen: txt.length });
+      timeEnd(t, { ok: false, status: resp.status });
+      return { html: "", used: true };
+    }
+    const html = await resp.text();
+    timeEnd(t, { ok: true, len: html.length });
+    return { html, used: true };
+  } catch (err) {
+    timeEnd(t, { ok: false, error: err.message });
+    return { html: "", used: true };
+  }
+}
+
+// ScrapingBee (render_js=true)
+async function fetchWithScrapingBee(url) {
+  if (!SCRAPINGBEE_API_KEY) return { html: "", used: false };
+  const params = new URLSearchParams({
+    api_key: SCRAPINGBEE_API_KEY,
+    url,
+    render_js: "true",
+    wait: "networkidle0",
+    premium_proxy: "true",
+    country_code: "CA",
+  });
+  const beeUrl = `https://app.scrapingbee.com/api/v1/?${params.toString()}`;
+  const t = timeStart(`[fetch] scrapingbee`);
+  try {
+    const resp = await fetch(beeUrl, { headers: SIMPLE_HEADERS });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => "");
+      log("warn", "⚠️ scrapingbee non-OK", { status: resp.status, textLen: txt.length });
+      timeEnd(t, { ok: false, status: resp.status });
+      return { html: "", used: true };
+    }
+    const html = await resp.text();
+    timeEnd(t, { ok: true, len: html.length });
+    return { html, used: true };
+  } catch (err) {
+    timeEnd(t, { ok: false, error: err.message });
+    return { html: "", used: true };
+  }
+}
+
+// Main smart fetcher with cache
+async function fetchListingHTML(url, propertySlug) {
+  // 0) cache first
+  const cached = await getCachedHtmlForProperty(propertySlug);
+  if (cached && cached.length >= 1200) {
+    log("debug", "🗃️ [HTML cache] hit", { property: propertySlug, len: cached.length });
+    return cached;
+  }
+
+  // 1) direct + cookies
+  const direct = await fetchDirectHTML(url);
+  const hardBlocked = [401, 403, 503].includes(direct.status);
+  const tooSmall = (direct.html || "").length < 1200;
+  if (!hardBlocked && !tooSmall) {
+    await cacheHtmlForProperty(propertySlug, direct.html);
+    return direct.html;
+  }
+
+  // 2) headless via Browserless
+  const bl = await fetchWithBrowserless(url);
+  if (bl.used && bl.html && bl.html.length >= 1200) {
+    await cacheHtmlForProperty(propertySlug, bl.html);
+    return bl.html;
+  }
+
+  // 3) ScrapingBee
+  const bee = await fetchWithScrapingBee(url);
+  if (bee.used && bee.html && bee.html.length >= 1200) {
+    await cacheHtmlForProperty(propertySlug, bee.html);
+    return bee.html;
+  }
+
+  // Give up
+  log("warn", "⚠️ all fetchers failed or tiny HTML", {
+    directStatus: direct.status, blTried: bl.used, beeTried: bee.used
+  });
+  return "";
 }
 
 // --- Reason from page HTML + known facts ---
@@ -200,7 +337,7 @@ app.get("/debug/facts", async (req, res) => {
   res.json({ property: slug, facts });
 });
 
-// --- Debug: phone mappings ---
+// --- Debug: phone mappings & ask-context ---
 app.get("/debug/phone", async (req, res) => {
   if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
   const phone = normalizePhone(req.query.phone);
@@ -211,6 +348,17 @@ app.get("/debug/phone", async (req, res) => {
   res.json({ phone, properties: props, lastProperty: last, askContext: ask });
 });
 
+// --- Debug: HTML snippet for a property ---
+app.get("/debug/html", async (req, res) => {
+  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
+  const slug = slugify(req.query.property || "");
+  if (!slug) return res.status(400).json({ error: "Missing property" });
+  const cached = await getCachedHtmlForProperty(slug);
+  if (!cached) return res.status(404).json({ error: "No cached HTML" });
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.send(cached.slice(0, 4000)); // first 4k chars
+});
+
 // --- Debug: clear state ---
 app.post("/debug/clear", async (req, res) => {
   if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
@@ -218,7 +366,7 @@ app.post("/debug/clear", async (req, res) => {
   const ops = [];
   if (property) {
     const slug = slugify(property);
-    ops.push(redis.del(`facts:prop:${slug}`));
+    ops.push(redis.del(`facts:prop:${slug}`), redis.del(`html:${slug}`));
     if (clearConversations) {
       const convKeys = await redis.keys(`conv:*:${slug}`);
       const metaKeys = await redis.keys(`meta:*:${slug}`);
@@ -237,13 +385,14 @@ app.post("/debug/clear", async (req, res) => {
 });
 
 // --- Initialize property facts (from Zapier) ---
-// Expect: leadPhone (prospect), property (address string), finalUrl (first-party URL), rent/unit optional
+// Accepts: leadPhone (prospect), property (address), finalUrl (first-party), rent/unit optional, html optional (snapshot)
 app.post("/init/facts", async (req, res) => {
   try {
-    let { leadPhone, phone, property, finalUrl, rent, unit } = req.body;
+    let { leadPhone, phone, property, finalUrl, rent, unit, html } = req.body;
     if (!property) return res.status(400).json({ error: "Missing property" });
 
     const propertySlug = slugify(property);
+
     if (finalUrl && isTracker(finalUrl)) {
       return res.status(422).json({
         error: "Tracking/interstitial URL provided. Resolve in Zapier first.",
@@ -261,10 +410,15 @@ app.post("/init/facts", async (req, res) => {
 
     await setPropertyFactsBySlug(propertySlug, facts);
 
+    // Save HTML snapshot (if Zapier sent it) into cache
+    if (html && typeof html === "string" && html.length > 200) {
+      await cacheHtmlForProperty(propertySlug, html);
+      log("info", "🗃️ [HTML cache] snapshot stored from Zap", { property: propertySlug, len: html.length });
+    }
+
     const prospect = normalizePhone(leadPhone || phone);
     if (prospect) {
       await addPropertyForPhone(prospect, propertySlug);
-      // do NOT auto-set last property here; the last one will be the most recently discussed over SMS
       log("info", "🔗 Added phone→property link", { phone: prospect, property: propertySlug });
     }
 
@@ -290,7 +444,7 @@ app.post("/twiml/voice", (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// --- Conversational property resolver ---
+// --- Conversational property resolver (natural follow-ups) ---
 function buildTokensFromAddress(addr) {
   if (!addr) return [];
   const a = addr.toLowerCase();
@@ -300,7 +454,6 @@ function buildTokensFromAddress(addr) {
   const tokens = new Set();
   if (number) tokens.add(number);
   if (street) tokens.add(street.replace(/[^a-z0-9]/g, ""));
-  // also add first 2 words as phrase token
   tokens.add(parts.slice(0, 2).join(" "));
   return Array.from(tokens).filter(Boolean);
 }
@@ -312,7 +465,6 @@ async function resolvePropertyForSMS({ from, body }) {
   const pending = await getAskContext(from);
   if (pending?.length) {
     for (const opt of pending) {
-      // match by any token or by substring of label
       const matchByToken = opt.tokens.some(t => t && bodyLc.includes(String(t).toLowerCase()));
       const matchByLabel = opt.label && bodyLc.includes(opt.label.toLowerCase());
       if (matchByToken || matchByLabel) {
@@ -321,7 +473,7 @@ async function resolvePropertyForSMS({ from, body }) {
         return { slug: opt.slug, via: "ask-followup" };
       }
     }
-    // Didn't match → gently re-ask once with shorter copy
+    // Re-ask once with shorter copy
     await twilioClient.messages.create({
       from: TWILIO_PHONE_NUMBER,
       to: from,
@@ -330,18 +482,17 @@ async function resolvePropertyForSMS({ from, body }) {
     return { slug: null, via: "ask-repeat" };
   }
 
-  // If message itself includes an address, try to map it
+  // If message includes an address, try to map it to one of phone's properties
   const mention = body.match(ADDRESS_REGEX)?.[0];
   const phoneProps = await getPropertiesForPhone(from);
 
   if (mention && phoneProps.length) {
     const mentionSlug = slugify(mention);
-    // exact
     if (phoneProps.includes(mentionSlug)) {
       await setLastPropertyForPhone(from, mentionSlug);
       return { slug: mentionSlug, via: "address-exact" };
     }
-    // partial: score by overlap with addresses
+    // partial match by address overlap
     let best = null, bestScore = 0;
     for (const s of phoneProps) {
       const facts = await getPropertyFactsBySlug(s);
@@ -355,17 +506,17 @@ async function resolvePropertyForSMS({ from, body }) {
     }
   }
 
-  // If last property exists, use it (sticky)
+  // Sticky last property
   const last = await getLastPropertyForPhone(from);
   if (last) return { slug: last, via: "lastprop" };
 
-  // If only one property linked to this phone, use it
+  // Single known property for this phone
   if (phoneProps.length === 1) {
     await setLastPropertyForPhone(from, phoneProps[0]);
     return { slug: phoneProps[0], via: "single-for-phone" };
   }
 
-  // If multiple: ask a natural question (no menu)
+  // Multiple properties: ask natural follow-up (no numbers)
   if (phoneProps.length > 1) {
     const options = [];
     for (const s of phoneProps) {
@@ -375,7 +526,7 @@ async function resolvePropertyForSMS({ from, body }) {
       options.push({ slug: s, label, tokens });
     }
     await setAskContext(from, options);
-    const readable = options.map(o => o.label).slice(0, 4); // keep it short
+    const readable = options.map(o => o.label).slice(0, 4);
     await twilioClient.messages.create({
       from: TWILIO_PHONE_NUMBER,
       to: from,
@@ -384,7 +535,7 @@ async function resolvePropertyForSMS({ from, body }) {
     return { slug: null, via: "ask-sent" };
   }
 
-  // No mapping yet → if only one property exists globally, use it; else ask for address
+  // No mapping yet → if only one property globally, use it; else ask for address
   const allProps = await listAllPropertySlugs();
   if (allProps.length === 1) {
     await addPropertyForPhone(from, allProps[0]);
@@ -400,7 +551,7 @@ async function resolvePropertyForSMS({ from, body }) {
   return { slug: null, via: "ask-address" };
 }
 
-// --- SMS webhook (Tier-1 fetch + conversational disambiguation) ---
+// --- SMS webhook (Tier-1 smart fetch + conversational disambiguation + cache) ---
 app.post("/twiml/sms", async (req, res) => {
   const from = normalizePhone(req.body.From);
   const body = req.body.Body?.trim() || "";
@@ -412,7 +563,7 @@ app.post("/twiml/sms", async (req, res) => {
     log("debug", "🔎 property resolution", { from, via, propertySlug });
 
     if (!propertySlug) {
-      // We asked a natural question or address; wait for user reply
+      // We asked a natural question or asked for address; wait for user reply
       return;
     }
 
@@ -422,7 +573,7 @@ app.post("/twiml/sms", async (req, res) => {
     let reply = "Could you share the property link?";
     if (facts?.listingUrl && !isTracker(facts.listingUrl)) {
       const t = timeStart(`[fetch] listing HTML`);
-      const html = await fetchListingHTML(facts.listingUrl);
+      const html = await fetchListingHTML(facts.listingUrl, propertySlug);
       timeEnd(t, { ok: !!html, len: html?.length || 0 });
 
       if (html) {
@@ -449,10 +600,9 @@ If info isn't present, say "not mentioned". Keep replies under 3 sentences.`,
     log("info", "💬 GPT reply", { reply });
     const updated = [...prev, { role: "user", content: body }, { role: "assistant", content: reply }];
     await saveConversation(from, propertySlug, updated);
+    await setLastPropertyForPhone(from, propertySlug);
     await twilioClient.messages.create({ from: TWILIO_PHONE_NUMBER, to: from, body: reply });
     log("info", "✅ SMS sent", { to: from });
-    // set this as the last discussed property
-    await setLastPropertyForPhone(from, propertySlug);
   } catch (err) {
     log("error", "❌ SMS error", { error: err.message });
   }
