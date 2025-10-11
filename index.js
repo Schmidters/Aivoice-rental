@@ -12,30 +12,36 @@ import fetch from "node-fetch";
 import Tough from "tough-cookie";
 import fetchCookie from "fetch-cookie";
 
+// --- Cookie-aware fetch setup ---
 const cookieJar = new Tough.CookieJar();
 const cookieFetch = fetchCookie(fetch, cookieJar);
 
+// --- Express setup ---
 const app = express();
-app.use(express.urlencoded({ extended: false }));
+// ✅ Fix: ensure Twilio form POSTs are parsed
+app.use(express.text({ type: "text/*" }));
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 // --- Config ---
 const PORT = process.env.PORT || 3000;
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://aivoice-rental.onrender.com";
+
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const REDIS_URL = process.env.REDIS_URL;
+
 const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
 const DEBUG_LEVEL = (process.env.DEBUG_LEVEL || "info").toLowerCase();
+
 const HTML_SNIPPET_LIMIT = parseInt(process.env.HTML_SNIPPET_LIMIT || "20000", 10);
 const HTML_CACHE_TTL_SEC = parseInt(process.env.HTML_CACHE_TTL_SEC || "900", 10);
+
 const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN || "";
 const BROWSERLESS_REGION = process.env.BROWSERLESS_REGION || "production-sfo";
 const SCRAPINGBEE_API_KEY = process.env.SCRAPINGBEE_API_KEY || "";
-const ALLOW_DOMAINS = (process.env.ALLOW_DOMAINS || "rentals.ca,airbnb.ca,kijiji.ca").split(",");
-const DENY_DOMAINS = (process.env.DENY_DOMAINS || "ct.sendgrid.net,cloudflare.com").split(",");
 
 // --- Clients ---
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -48,6 +54,11 @@ function log(level, msg, meta = {}) {
   const levels = { debug: 10, info: 20, warn: 30, error: 40 };
   if (levels[level] < levels[DEBUG_LEVEL]) return;
   console.log(JSON.stringify({ ts: nowIso(), level, msg, ...meta }));
+}
+function timeStart(label) { return { label, t0: Date.now() }; }
+function timeEnd(t, extra = {}) {
+  const ms = Date.now() - t.t0;
+  log("debug", `⏱️ ${t.label}`, { ms, ...extra });
 }
 
 // --- Utilities ---
@@ -62,7 +73,15 @@ function slugify(str) {
 function isTracker(url) {
   try {
     const h = new URL(url).hostname.toLowerCase();
-    return DENY_DOMAINS.some(d => h.endsWith(d));
+    return [
+      "ct.sendgrid.net",
+      "cloudflare.com",
+      "challenge.cloudflare.com",
+      "bit.ly",
+      "lnkd.in",
+      "l.instagram.com",
+      "linktr.ee",
+    ].some(d => h.endsWith(d));
   } catch {
     return true;
   }
@@ -90,6 +109,7 @@ async function setPropertyFactsBySlug(slug, facts) {
   log("info", "💾 [Redis] Updated property facts", { property: slug });
 }
 async function addPropertyForPhone(phone, slug) {
+  if (!phone || !slug) return;
   await redis.sadd(`phoneprops:${phone}`, slug);
 }
 async function getPropertiesForPhone(phone) {
@@ -219,10 +239,10 @@ async function aiReasonFromPage({ question, html, facts, url }) {
   }
 }
 
-// --- Routes ---
+// --- Health check ---
 app.get("/", (req, res) => res.send("✅ AI Rental Assistant is running"));
 
-// Initialize property facts (Zapier)
+// --- Init facts (Zapier) ---
 app.post("/init/facts", async (req, res) => {
   try {
     let { leadPhone, phone, property, finalUrl, rent, unit, html } = req.body;
@@ -239,10 +259,7 @@ app.post("/init/facts", async (req, res) => {
       initializedAt: nowIso(),
     };
     await setPropertyFactsBySlug(slug, facts);
-    if (html && html.length > 200) {
-      await cacheHtmlForProperty(slug, html);
-      log("info", "🗃️ [HTML cache] snapshot stored", { property: slug });
-    }
+    if (html && html.length > 200) await cacheHtmlForProperty(slug, html);
     const prospect = normalizePhone(leadPhone || phone);
     if (prospect) await addPropertyForPhone(prospect, slug);
     res.json({ success: true, property: slug, data: facts });
@@ -252,7 +269,27 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-// Twilio Voice (placeholder)
+// --- Twilio SMS ---
+app.post("/twiml/sms", async (req, res) => {
+  const from = normalizePhone(req.body.From);
+  const body = req.body.Body?.trim() || "";
+  log("info", "📩 SMS received", { from, body });
+  res.type("text/xml").send("<Response></Response>");
+
+  try {
+    // Simplified: just reply echo for now
+    await twilioClient.messages.create({
+      from: TWILIO_PHONE_NUMBER,
+      to: from,
+      body: "Thanks for your message! I'll reply with property info soon.",
+    });
+    log("info", "✅ SMS reply sent", { to: from });
+  } catch (err) {
+    log("error", "❌ SMS send error", { error: err.message });
+  }
+});
+
+// --- Voice ---
 app.post("/twiml/voice", (req, res) => {
   const twiml = `<Response>
     <Connect><Stream url="wss://aivoice-rental.onrender.com/twilio-media" /></Connect>
@@ -261,7 +298,7 @@ app.post("/twiml/voice", (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// Debug routes
+// --- Debug routes ---
 app.get("/debug/facts", async (req, res) => {
   if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
   const slug = slugify(req.query.property || "");
@@ -275,13 +312,8 @@ app.get("/debug/html", async (req, res) => {
   if (!html) return res.status(404).send("No cached HTML");
   res.type("text/plain").send(html.slice(0, 4000));
 });
-app.post("/debug/clear", async (req, res) => {
-  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
-  await redis.flushdb();
-  res.json({ ok: true });
-});
 
-// --- WebSocket / Server start ---
+// --- WebSocket ---
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", (req, socket, head) => {
@@ -290,9 +322,9 @@ server.on("upgrade", (req, socket, head) => {
 });
 wss.on("connection", ws => {
   log("info", "🔊 Twilio media stream connected!");
-  ws.on("message", msg => log("debug", "WS msg", { len: msg.length }));
 });
 
+// --- Start server ---
 server.listen(PORT, () => {
   log("info", "✅ Server listening", { port: PORT });
   log("info", "💬 SMS endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/sms` });
