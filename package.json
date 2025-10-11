@@ -21,6 +21,8 @@
     "ioredis": "^5.4.1",
     "luxon": "^3.4.4",
     "openai": "^4.28.0",
-    "libphonenumber-js": "^1.11.4"
+    "libphonenumber-js": "^1.11.4",
+     "tough-cookie": "^4.1.3",
+    "fetch-cookie": "^3.0.1"
   }
 }
