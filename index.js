@@ -194,9 +194,11 @@ async function fetchWithScrapingBee(url) {
     url,
     render_js: "true",
     premium_proxy: "true",
-    wait: "6000",           // wait 6s for JS content
     block_ads: "true",
-    country_code: "CA"
+    country_code: "CA",
+    wait_browser: "domcontentloaded",
+    wait: "8000",
+    stealth_proxy: "true"
   });
   const beeUrl = `https://app.scrapingbee.com/api/v1/?${params}`;
   try {
@@ -213,6 +215,7 @@ async function fetchWithScrapingBee(url) {
     return { html: "", used: true };
   }
 }
+
 
 
 async function fetchListingHTML(url, slug) {
