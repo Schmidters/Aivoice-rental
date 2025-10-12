@@ -301,9 +301,12 @@ app.post("/browseai/test", async (req, res) => {
 // --- Browse AI webhook (stable slug + merge existing facts) ---
 app.post("/browseai/webhook", async (req, res) => {
   try {
+    // Optional: Verify webhook secret
     if (BROWSEAI_WEBHOOK_SECRET) {
       const sig = req.headers["x-browseai-secret"];
-      if (sig !== BROWSEAI_WEBHOOK_SECRET) return res.status(401).send("unauthorized");
+      if (sig !== BROWSEAI_WEBHOOK_SECRET) {
+        return res.status(401).send("unauthorized");
+      }
     }
 
     const payload = req.body || {};
@@ -317,17 +320,17 @@ app.post("/browseai/webhook", async (req, res) => {
       payload?.input?.startUrls?.[0] ||
       null;
 
-    // Try to map existing slug from URL (if we’ve seen it before)
+    // Try to map an existing slug from URL (if seen before)
     let slug = originUrl ? await getSlugByUrl(originUrl) : null;
 
-    // 🧩 NEW: Always normalize to canonical property slug from the URL tail
+    // 🧩 Always normalize to canonical property slug from the URL tail
     if (!slug && originUrl) {
       try {
         const u = new URL(originUrl);
         const pathname = u.pathname; // e.g. /calgary/215-16-street-southeast
         slug = slugify(pathname.split("/").pop());
       } catch {
-        // ignore bad URL
+        // ignore bad URL format
       }
     }
 
@@ -342,7 +345,7 @@ app.post("/browseai/webhook", async (req, res) => {
       slug = slugify(String(nameGuess));
     }
 
-    // Load any existing facts to merge with the new scrape
+    // Load existing facts to merge with new scrape
     const existingFacts = (await getPropertyFactsBySlug(slug)) || {};
 
     const newFacts = {
@@ -352,13 +355,15 @@ app.post("/browseai/webhook", async (req, res) => {
       source: "browseai",
     };
 
-    // Merge intelligently: new facts overwrite existing ones
+    // Merge intelligently — new data overwrites old keys
     const mergedFacts = { ...existingFacts, ...newFacts };
 
-    // Save to Redis (and mirror for /debug/facts)
+    // Save to Redis (primary + mirror for debug)
     await setPropertyFactsBySlug(slug, mergedFacts);
-    await redis.set(`facts:${slug}`, JSON.stringify(mergedFacts)); // mirror for debug + legacy reads
-    if (mergedFacts.listingUrl) await mapUrlToSlug(mergedFacts.listingUrl, slug);
+    await redis.set(`facts:${slug}`, JSON.stringify(mergedFacts)); // mirror for /debug/facts
+    if (mergedFacts.listingUrl) {
+      await mapUrlToSlug(mergedFacts.listingUrl, slug);
+    }
 
     log("info", "💾 [Redis] Updated property facts", { property: slug });
     res.json({ ok: true, slug, saved: Object.keys(mergedFacts).length });
@@ -367,7 +372,6 @@ app.post("/browseai/webhook", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 
     const payload = req.body || {};
