@@ -162,30 +162,47 @@ async function fetchDirectHTML(url) {
 }
 
 async function fetchWithBrowserless(url) {
-  if (!BROWSERLESS_TOKEN) {
-    log("warn", "⚠️ Browserless disabled (no token)");
-    return { html: "", used: false };
-  }
-const endpoint = `https://production-sfo.browserless.io/content?token=${encodeURIComponent(BROWSERLESS_TOKEN)}`;
+  if (!BROWSERLESS_TOKEN) return { html: "", used: false };
+
+  const endpoint = `https://production-sfo.browserless.io/scrape?token=${encodeURIComponent(BROWSERLESS_TOKEN)}`;
+
   try {
     const resp = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, waitFor: "networkidle0", headers: SIMPLE_HEADERS }),
+      body: JSON.stringify({
+        url,
+        options: {
+          waitUntil: "networkidle0",
+          timeout: 45000,
+        },
+        // The "elements" key tells Browserless what to capture
+        elements: ["html"],
+        gotoOptions: { waitUntil: "networkidle0" },
+        viewport: { width: 1280, height: 800 },
+        // This ensures JS runs like a normal Chrome browser
+        launchOptions: {
+          args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        },
+      }),
     });
+
     if (!resp.ok) {
-      const errTxt = await resp.text().catch(() => "");
-      log("warn", "⚠️ Browserless non-OK", { status: resp.status, url, err: errTxt.slice(0, 300) });
+      const err = await resp.text();
+      log("warn", "⚠️ Browserless non-OK", { status: resp.status, url, err });
       return { html: "", used: true };
     }
+
     const html = await resp.text();
     log("info", "🌐 [Fetch] Browserless OK", { url, len: html.length });
     return { html, used: true };
+
   } catch (e) {
-    log("warn", "⚠️ Browserless fetch error", { url, error: e.message });
+    log("error", "⚠️ Browserless fetch error", { url, error: e.message });
     return { html: "", used: true };
   }
 }
+
 
 async function fetchWithScrapingBee(url) {
   if (!SCRAPINGBEE_API_KEY) return { html: "", used: false };
