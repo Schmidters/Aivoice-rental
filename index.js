@@ -298,12 +298,76 @@ app.post("/browseai/test", async (req, res) => {
  *  A) { task: { capturedTexts, inputParameters: { originUrl } } }
  *  B) { results: { ...fields }, inputParameters: { "Origin URL" } }
  */
+// --- Browse AI webhook (stable slug + merge existing facts) ---
 app.post("/browseai/webhook", async (req, res) => {
   try {
     if (BROWSEAI_WEBHOOK_SECRET) {
       const sig = req.headers["x-browseai-secret"];
       if (sig !== BROWSEAI_WEBHOOK_SECRET) return res.status(401).send("unauthorized");
     }
+
+    const payload = req.body || {};
+    log("info", "📦 [Webhook] BrowseAI data received");
+
+    // Try to find canonical origin URL
+    const originUrl =
+      payload?.inputParameters?.["Origin URL"] ||
+      payload?.task?.inputParameters?.originUrl ||
+      payload?.results?.["Origin URL"] ||
+      payload?.input?.startUrls?.[0] ||
+      null;
+
+    // Try to map existing slug from URL (if we’ve seen it before)
+    let slug = originUrl ? await getSlugByUrl(originUrl) : null;
+
+    // 🧩 NEW: Always normalize to canonical property slug from the URL tail
+    if (!slug && originUrl) {
+      try {
+        const u = new URL(originUrl);
+        const pathname = u.pathname; // e.g. /calgary/215-16-street-southeast
+        slug = slugify(pathname.split("/").pop());
+      } catch {
+        // ignore bad URL
+      }
+    }
+
+    // Fallback: derive from scraped text if URL missing
+    if (!slug) {
+      const nameGuess =
+        payload?.results?.address ||
+        payload?.results?.Summary ||
+        payload?.results?.["Title Summary"] ||
+        payload?.results?.Title ||
+        "unknown-property";
+      slug = slugify(String(nameGuess));
+    }
+
+    // Load any existing facts to merge with the new scrape
+    const existingFacts = (await getPropertyFactsBySlug(slug)) || {};
+
+    const newFacts = {
+      ...(payload?.results || payload?.data || payload),
+      listingUrl: originUrl || existingFacts.listingUrl || null,
+      lastScrapedAt: nowIso(),
+      source: "browseai",
+    };
+
+    // Merge intelligently: new facts overwrite existing ones
+    const mergedFacts = { ...existingFacts, ...newFacts };
+
+    // Save to Redis (and mirror for /debug/facts)
+    await setPropertyFactsBySlug(slug, mergedFacts);
+    await redis.set(`facts:${slug}`, JSON.stringify(mergedFacts)); // mirror for debug + legacy reads
+    if (mergedFacts.listingUrl) await mapUrlToSlug(mergedFacts.listingUrl, slug);
+
+    log("info", "💾 [Redis] Updated property facts", { property: slug });
+    res.json({ ok: true, slug, saved: Object.keys(mergedFacts).length });
+  } catch (err) {
+    log("error", "❌ [Webhook error]", { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
     const payload = req.body || {};
     log("info", "📦 [Webhook] BrowseAI data received");
