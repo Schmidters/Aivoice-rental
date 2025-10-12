@@ -416,6 +416,15 @@ server.on("upgrade", (req, socket, head) => {
 });
 wss.on("connection", () => log("info", "🔊 Twilio media stream connected!"));
 
+// --- Debug: view cached HTML for a property ---
+app.get("/debug/html", async (req, res) => {
+  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
+  const slug = slugify(req.query.property || "");
+  const html = await getCachedHtmlForProperty(slug);
+  if (!html) return res.status(404).send("No cached HTML found for that property");
+  res.type("text/plain").send(html.slice(0, 20000)); // show first 20k characters
+});
+
 // Start server
 server.listen(PORT, () => {
   log("info", "✅ Server listening", { port: PORT });
