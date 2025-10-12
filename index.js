@@ -183,13 +183,14 @@ async function triggerBrowseAITask(url) {
     return null;
   }
   try {
+    // Send both keys so we're compatible with either field name on the robot
     const resp = await fetch(`https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/tasks`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${BROWSEAI_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ inputParameters: { "Origin URL": url } }),
+      body: JSON.stringify({ inputParameters: { originUrl: url, "Origin URL": url } }),
     });
     const data = await resp.json();
     if (!resp.ok) {
@@ -291,7 +292,12 @@ app.post("/browseai/test", async (req, res) => {
   res.json({ ok: true, received: req.body || "no body" });
 });
 
-// --- Browse AI webhook (preferred data path) ---
+/**
+ * --- Browse AI webhook (preferred data path) ---
+ * Supports BOTH payload shapes:
+ *  A) { task: { capturedTexts, inputParameters: { originUrl } } }
+ *  B) { results: { ...fields }, inputParameters: { "Origin URL" } }
+ */
 app.post("/browseai/webhook", async (req, res) => {
   try {
     if (BROWSEAI_WEBHOOK_SECRET) {
@@ -302,35 +308,63 @@ app.post("/browseai/webhook", async (req, res) => {
     const payload = req.body || {};
     log("info", "📦 [Webhook] BrowseAI data received");
 
-    // Try to derive slug
+    // Extract from either shape
+    const task = payload.task || {};
+    const captured = task.capturedTexts || {};
+    const results = payload.results || payload.data || {};
+
+    // Origin URL (check both shapes and both key names)
     const originUrl =
+      task?.inputParameters?.originUrl ||
+      task?.inputParameters?.["Origin URL"] ||
+      payload?.inputParameters?.originUrl ||
       payload?.inputParameters?.["Origin URL"] ||
-      payload?.results?.["Origin URL"] ||
-      payload?.input?.startUrls?.[0] ||
+      results?.originUrl ||
+      results?.["Origin URL"] ||
       null;
 
-    let slug = originUrl ? await getSlugByUrl(originUrl) : null;
+    // Build a slug:
+    // 1) Prefer clean address/first line from capturedTexts
+    // 2) else try “Property Details”, “Summary”, “Title Summary”, “address”, “Title”
+    let addressLine =
+      (captured["Property Details"] || "").split("\n")[0].trim() ||
+      (captured["Summary"] || "").split("\n")[0].trim();
 
-    // Fallback: attempt to extract from results summary/title
-    if (!slug) {
-      const nameGuess =
-        payload?.results?.address ||
-        payload?.results?.Summary ||
-        payload?.results?.["Title Summary"] ||
-        payload?.results?.Title ||
-        "unknown-property";
-      slug = slugify(String(nameGuess));
+    if (!addressLine) {
+      addressLine =
+        (results.address || results["Property Details"] || results["Summary"] || results["Title Summary"] || results.Title || "unknown-property")
+          .toString()
+          .split("\n")[0]
+          .trim();
     }
 
-    const facts = {
-      ...(payload?.results || payload?.data || payload),
-      listingUrl: originUrl || (payload?.results && payload.results["Origin URL"]) || null,
+    let slug = slugify(addressLine);
+    if (!slug || slug === "unknown") {
+      // last resort: try url→slug map or the URL itself
+      slug = (originUrl && (await getSlugByUrl(originUrl))) || slugify(originUrl || "unknown-property");
+    }
+
+    // Normalize facts out of capturedTexts (A) first, then merge (B) results
+    const normalizedFromCaptured = {
+      address: addressLine || null,
+      rent: captured["Title Summary"] || null,
+      floorPlan: captured["Available Floor Plan Options"] || null,
+      parking: captured["Parking Information"] || null,
+      utilities: captured["Utility Information"] || null,
+      details: captured["Property Details"] || null,
+      summary: captured["Summary"] || null,
+    };
+
+    const mergedFacts = {
+      ...results, // keep raw BrowseAI results too
+      ...normalizedFromCaptured,
+      listingUrl: originUrl || results?.listingUrl || null,
       updatedAt: nowIso(),
       source: "browseai",
     };
 
-    await setPropertyFactsBySlug(slug, facts);
-    if (facts.listingUrl) await mapUrlToSlug(facts.listingUrl, slug);
+    await setPropertyFactsBySlug(slug, mergedFacts);
+    if (mergedFacts.listingUrl) await mapUrlToSlug(mergedFacts.listingUrl, slug);
 
     res.json({ ok: true, slug });
   } catch (err) {
