@@ -18,7 +18,17 @@ const Redis = require("ioredis");
 const { v4: uuidv4 } = require("uuid");
 const pino = require("pino");
 const OpenAI = require("openai");
-const twilio = require("twilio");
+
+const {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_SERVICE_SID,
+  TWILIO_PHONE_NUMBER,
+  TWILIO_FROM_NUMBER: ENV_TWILIO_FROM_NUMBER, // optional alias
+} = process.env;
+
+// Backward-compatible variable (uses either one)
+const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
 
 // ---------- ENV ----------
 const {
