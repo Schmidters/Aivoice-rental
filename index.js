@@ -166,7 +166,7 @@ async function fetchWithBrowserless(url) {
     log("warn", "⚠️ Browserless disabled (no token)");
     return { html: "", used: false };
   }
-const endpoint = `https://chrome.browserless.io/content?token=${encodeURIComponent(BROWSERLESS_TOKEN)}`;
+const endpoint = `https://production-sfo.browserless.io/content?token=${encodeURIComponent(BROWSERLESS_TOKEN)}`;
   try {
     const resp = await fetch(endpoint, {
       method: "POST",
