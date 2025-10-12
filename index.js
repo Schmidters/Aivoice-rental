@@ -64,26 +64,46 @@ function normalizePhone(phone) {
 function slugify(str) {
   return str ? str.replace(/\s+/g, "-").replace(/[^\w\-]/g, "").toLowerCase() : "unknown";
 }
+function smsSafe(text, limit = 320) {
+  if (!text) return "";
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length <= limit ? t : t.slice(0, limit - 1) + "…";
+}
 function isTracker(url) {
   try {
     const h = new URL(url).hostname.toLowerCase();
     return [
       "ct.sendgrid.net",
-      "cloudflare.com",
-      "challenge.cloudflare.com",
+      "t.sendgrid.net",
       "bit.ly",
       "lnkd.in",
       "l.instagram.com",
       "linktr.ee",
+      "cloudflare.com",
+      "challenge.cloudflare.com",
     ].some(d => h.endsWith(d));
   } catch {
     return true;
   }
 }
-function smsSafe(text, limit = 320) {
-  if (!text) return "";
-  const t = text.replace(/\s+/g, " ").trim();
-  return t.length <= limit ? t : t.slice(0, limit - 1) + "…";
+
+// --- URL unshortener ---
+async function unshorten(url, maxHops = 5) {
+  try {
+    let current = url;
+    for (let i = 0; i < maxHops; i++) {
+      const r = await fetch(current, { method: "HEAD", redirect: "manual" });
+      const loc = r.headers.get("location");
+      if (!loc) return current;
+      const next = new URL(loc, current).toString();
+      current = next;
+      if (!isTracker(current)) return current;
+    }
+    return current;
+  } catch (e) {
+    log("warn", "⚠️ unshorten failed", { url, error: e.message });
+    return url;
+  }
 }
 
 // --- Redis helpers ---
@@ -140,8 +160,12 @@ async function fetchDirectHTML(url) {
     return { html: "", status: 0 };
   }
 }
+
 async function fetchWithBrowserless(url) {
-  if (!BROWSERLESS_TOKEN) return { html: "", used: false };
+  if (!BROWSERLESS_TOKEN) {
+    log("warn", "⚠️ Browserless disabled (no token)");
+    return { html: "", used: false };
+  }
   const endpoint = `https://${BROWSERLESS_REGION}.browserless.io/content?token=${encodeURIComponent(BROWSERLESS_TOKEN)}`;
   try {
     const resp = await fetch(endpoint, {
@@ -150,7 +174,8 @@ async function fetchWithBrowserless(url) {
       body: JSON.stringify({ url, waitFor: "networkidle0", headers: SIMPLE_HEADERS }),
     });
     if (!resp.ok) {
-      log("warn", "⚠️ Browserless non-OK", { status: resp.status, url });
+      const errTxt = await resp.text().catch(() => "");
+      log("warn", "⚠️ Browserless non-OK", { status: resp.status, url, err: errTxt.slice(0, 300) });
       return { html: "", used: true };
     }
     const html = await resp.text();
@@ -161,20 +186,27 @@ async function fetchWithBrowserless(url) {
     return { html: "", used: true };
   }
 }
+
 async function fetchWithScrapingBee(url) {
-  if (!SCRAPINGBEE_API_KEY) return { html: "", used: false };
+  if (!SCRAPINGBEE_API_KEY) {
+    log("warn", "⚠️ ScrapingBee disabled (no key)");
+    return { html: "", used: false };
+  }
   const params = new URLSearchParams({
     api_key: SCRAPINGBEE_API_KEY,
     url,
     render_js: "true",
-    wait: "networkidle0",
+    wait: "2000",
+    premium_proxy: "true",
     country_code: "CA",
+    block_resources: "false",
   });
   const beeUrl = `https://app.scrapingbee.com/api/v1/?${params}`;
   try {
     const resp = await fetch(beeUrl, { headers: SIMPLE_HEADERS });
     if (!resp.ok) {
-      log("warn", "⚠️ ScrapingBee non-OK", { status: resp.status, url });
+      const errTxt = await resp.text().catch(() => "");
+      log("warn", "⚠️ ScrapingBee non-OK", { status: resp.status, url, err: errTxt.slice(0, 300) });
       return { html: "", used: true };
     }
     const html = await resp.text();
@@ -185,7 +217,17 @@ async function fetchWithScrapingBee(url) {
     return { html: "", used: true };
   }
 }
+
 async function fetchListingHTML(url, slug) {
+  // Resolve trackers
+  if (isTracker(url)) {
+    const real = await unshorten(url);
+    if (real && !isTracker(real)) {
+      log("info", "🔗 Unshortened URL", { from: url, to: real });
+      url = real;
+    }
+  }
+
   const cached = await getCachedHtmlForProperty(slug);
   if (cached && cached.length >= 1000) return cached;
 
@@ -250,14 +292,17 @@ async function pickPropertyForPhone(phone) {
 // --- Routes ---
 app.get("/", (req, res) => res.send("✅ AI Rental Assistant is running"));
 
-// Init facts
+// Init facts (Zapier)
 app.post("/init/facts", async (req, res) => {
   try {
     let { leadPhone, phone, property, finalUrl, rent, unit, html } = req.body;
     if (!property) return res.status(400).json({ error: "Missing property" });
     const slug = slugify(property);
-    if (finalUrl && isTracker(finalUrl))
-      return res.status(422).json({ error: "Tracking/interstitial URL provided.", got: finalUrl });
+
+    if (finalUrl && isTracker(finalUrl)) {
+      const real = await unshorten(finalUrl);
+      if (real && !isTracker(real)) finalUrl = real;
+    }
 
     const facts = {
       address: property,
@@ -280,7 +325,7 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-// --- NEW: cache warmer ---
+// Cache warmer
 app.post("/init/fetch-and-cache", async (req, res) => {
   try {
     const { property, url } = req.body;
@@ -295,7 +340,7 @@ app.post("/init/fetch-and-cache", async (req, res) => {
   }
 });
 
-// --- SMS handler ---
+// SMS (AI + page awareness)
 app.post("/twiml/sms", async (req, res) => {
   const from = normalizePhone(req.body.From);
   const body = req.body.Body?.trim() || "";
@@ -339,7 +384,7 @@ app.post("/twiml/sms", async (req, res) => {
   }
 });
 
-// --- Voice ---
+// Voice
 app.post("/twiml/voice", (req, res) => {
   const twiml = `<Response>
     <Connect><Stream url="wss://aivoice-rental.onrender.com/twilio-media" /></Connect>
@@ -348,18 +393,30 @@ app.post("/twiml/voice", (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// --- WebSocket ---
+// Debug: fetch & inspect
+app.get("/debug/fetch", async (req, res) => {
+  try {
+    const { property, url } = req.query;
+    if (!property || !url) return res.status(400).json({ error: "Missing property or url" });
+    const slug = slugify(property);
+    const html = await fetchListingHTML(url, slug);
+    res.json({ ok: html.length >= 1000, slug, bytes: html.length });
+  } catch (e) {
+    log("error", "❌ /debug/fetch error", { error: e.message });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// WebSocket
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", (req, socket, head) => {
   if (req.url === "/twilio-media") wss.handleUpgrade(req, socket, head, ws => wss.emit("connection", ws, req));
   else socket.destroy();
 });
-wss.on("connection", ws => {
-  log("info", "🔊 Twilio media stream connected!");
-});
+wss.on("connection", () => log("info", "🔊 Twilio media stream connected!"));
 
-// --- Start server ---
+// Start server
 server.listen(PORT, () => {
   log("info", "✅ Server listening", { port: PORT });
   log("info", "💬 SMS endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/sms` });
