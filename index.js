@@ -369,6 +369,7 @@ app.post("/browseai/webhook", async (req, res) => {
 });
 
 
+
     const payload = req.body || {};
     log("info", "📦 [Webhook] BrowseAI data received");
 
