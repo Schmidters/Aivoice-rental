@@ -188,35 +188,32 @@ const endpoint = `https://chrome.browserless.io/content?token=${encodeURICompone
 }
 
 async function fetchWithScrapingBee(url) {
-  if (!SCRAPINGBEE_API_KEY) {
-    log("warn", "⚠️ ScrapingBee disabled (no key)");
-    return { html: "", used: false };
-  }
+  if (!SCRAPINGBEE_API_KEY) return { html: "", used: false };
   const params = new URLSearchParams({
     api_key: SCRAPINGBEE_API_KEY,
     url,
     render_js: "true",
-    wait: "2000",
     premium_proxy: "true",
-    country_code: "CA",
-    block_resources: "false",
+    wait: "6000",           // wait 6s for JS content
+    block_ads: "true",
+    country_code: "CA"
   });
   const beeUrl = `https://app.scrapingbee.com/api/v1/?${params}`;
   try {
     const resp = await fetch(beeUrl, { headers: SIMPLE_HEADERS });
     if (!resp.ok) {
-      const errTxt = await resp.text().catch(() => "");
-      log("warn", "⚠️ ScrapingBee non-OK", { status: resp.status, url, err: errTxt.slice(0, 300) });
+      log("warn", "⚠️ ScrapingBee non-OK", { status: resp.status, url });
       return { html: "", used: true };
     }
     const html = await resp.text();
     log("info", "🌐 [Fetch] ScrapingBee OK", { url, len: html.length });
     return { html, used: true };
   } catch (e) {
-    log("warn", "⚠️ ScrapingBee fetch error", { url, error: e.message });
+    log("error", "⚠️ ScrapingBee fetch error", { url, error: e.message });
     return { html: "", used: true };
   }
 }
+
 
 async function fetchListingHTML(url, slug) {
   // Resolve trackers
