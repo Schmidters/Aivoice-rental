@@ -1,152 +1,133 @@
-import "dotenv/config.js";
+// index.js
 import express from "express";
-import twilio from "twilio";
-import Redis from "ioredis";
-import OpenAI from "openai";
 import fetch from "node-fetch";
+import bodyParser from "body-parser";
+import Redis from "ioredis";
+import { Configuration, OpenAIApi } from "openai";
+import slugify from "slugify";
 
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
+// --- Redis setup ---
+const redis = new Redis(process.env.REDIS_URL);
 
 // --- Config ---
-const {
-  PORT = 3000,
-  PUBLIC_BASE_URL,
-  OPENAI_API_KEY,
-  TWILIO_ACCOUNT_SID,
-  TWILIO_AUTH_TOKEN,
-  TWILIO_PHONE_NUMBER,
-  REDIS_URL,
-  BROWSEAI_KEY,
-  BROWSEAI_ROBOT_ID,
-  DEBUG_SECRET = "changeme123",
-} = process.env;
-
-// --- Clients ---
-const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-const redis = new Redis(REDIS_URL);
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const BROWSEAI_API_KEY = process.env.BROWSEAI_API_KEY;
+const BROWSEAI_ROBOT_ID = process.env.BROWSEAI_ROBOT_ID;
+const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
 
 // --- Helpers ---
-const slugify = s => s?.toLowerCase().replace(/\s+/g, "-").replace(/[^\w\-]/g, "") || "unknown";
-const now = () => new Date().toISOString();
-
-async function getFacts(slug) {
-  const f = await redis.get(`facts:${slug}`);
-  return f ? JSON.parse(f) : null;
+async function getCachedFacts(slug) {
+  const cached = await redis.get(`facts:${slug}`);
+  if (!cached) return null;
+  return JSON.parse(cached);
 }
+
 async function saveFacts(slug, facts) {
-  await redis.set(`facts:${slug}`, JSON.stringify(facts));
-  console.log(`💾 saved BrowseAI facts for ${slug}`);
+  await redis.set(`facts:${slug}`, JSON.stringify(facts), "EX", 60 * 60 * 24); // 24h expiry
+  console.log(`💾 [Redis] Updated property facts`, slug);
 }
 
-// --- Browse AI fetcher ---
-async function fetchWithBrowseAI(url) {
-  const start = await fetch(`https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`, {
+async function fetchFromBrowseAI(url, slug) {
+  console.log(`🤖 [BrowseAI] Triggering new run for ${url}`);
+  const res = await fetch(`https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/tasks`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${BROWSEAI_KEY}`,
+      "Authorization": `Bearer ${BROWSEAI_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ startUrls: [url] }),
+    body: JSON.stringify({ inputParameters: { "Origin URL": url } }),
   });
-  const job = await start.json();
-  const runId = job.id || job.data?.id;
-  if (!runId) throw new Error("BrowseAI missing run id");
-
-  // Poll for completion
-  let result = null;
-  const t0 = Date.now();
-  while (Date.now() - t0 < 60000) {
-    await new Promise(r => setTimeout(r, 3000));
-    const poll = await fetch(`https://api.browse.ai/v2/runs/${runId}`, {
-      headers: { Authorization: `Bearer ${BROWSEAI_KEY}` },
-    });
-    const j = await poll.json();
-    const status = j.status || j.data?.status;
-    if (status === "succeeded" || status === "completed") {
-      result = j.result || j.data?.result || j.data;
-      break;
-    }
-    if (["failed", "errored", "canceled"].includes(status)) break;
-  }
-  if (!result) throw new Error("BrowseAI run timeout");
-  const data = result.data || result.items || {};
+  const data = await res.json();
+  console.log("✅ [BrowseAI] Task created", data?.id || "");
   return data;
 }
 
-// --- Ask OpenAI using Browse AI data ---
-async function askAI(question, facts) {
-  const messages = [
-    {
-      role: "system",
-      content:
-        "You are a helpful rental assistant. Use only the structured JSON data from the listing to answer accurately and concisely.",
-    },
-    { role: "user", content: `FACTS:\n${JSON.stringify(facts, null, 2)}` },
-    { role: "user", content: `QUESTION:\n${question}` },
-  ];
-  const resp = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages,
-    temperature: 0.2,
-    max_tokens: 200,
+// --- AI reasoning ---
+async function askOpenAI(question, facts) {
+  const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
+  const openai = new OpenAIApi(configuration);
+
+  const context = Object.entries(facts || {})
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
+
+  const prompt = `You are a friendly property assistant.
+  Using the data below, answer the renter's question naturally and helpfully.
+
+  Property data:
+  ${context}
+
+  Question: ${question}
+  Answer:`;
+
+  const response = await openai.createCompletion({
+    model: "gpt-3.5-turbo-instruct",
+    prompt,
+    max_tokens: 150,
   });
-  return resp.choices[0].message.content.trim();
+
+  return response.data.choices[0].text.trim();
 }
 
-// --- Twilio SMS handler ---
-app.post("/twiml/sms", async (req, res) => {
-  const from = req.body.From;
-  const body = (req.body.Body || "").trim();
-  console.log(`📩 SMS from ${from}: ${body}`);
-  res.type("text/xml").send("<Response></Response>");
-
-  // look up last property slug
-  const slug = await redis.get(`lastprop:${from}`);
-  const facts = slug ? await getFacts(slug) : null;
-
-  if (!slug || !facts) {
-    await twilioClient.messages.create({
-      from: TWILIO_PHONE_NUMBER,
-      to: from,
-      body: "Hi! Can you send me the property link or address?",
-    });
-    return;
-  }
-
-  const answer = await askAI(body, facts);
-  await twilioClient.messages.create({
-    from: TWILIO_PHONE_NUMBER,
-    to: from,
-    body: answer,
-  });
-  console.log(`✅ replied to ${from}`);
-});
-
-// --- Endpoint to fetch & store facts from Browse AI manually ---
-app.post("/init/fetch", async (req, res) => {
+// --- Webhook endpoint ---
+app.post("/browseai/webhook", async (req, res) => {
   try {
-    const { property, url } = req.body;
-    if (!property || !url) return res.status(400).json({ error: "Need property + url" });
-    const slug = slugify(property);
-    const data = await fetchWithBrowseAI(url);
-    await saveFacts(slug, { ...data, listingUrl: url, updatedAt: now() });
-    await redis.set(`lastprop:test`, slug); // simple test binding
-    res.json({ ok: true, slug, keys: Object.keys(data) });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: e.message });
+    const data = req.body;
+    console.log("📦 [Webhook] BrowseAI data received");
+    const summary = data?.results?.Summary || data?.results?.["Title Summary"] || "unknown";
+    const slug = slugify(summary);
+    await saveFacts(slug, data.results || data);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("❌ [Webhook error]", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// --- Debug route to inspect facts ---
+// --- Manual trigger if needed ---
+app.post("/init/fetch", async (req, res) => {
+  const { property, url } = req.body;
+  const slug = slugify(property);
+  await fetchFromBrowseAI(url, slug);
+  res.json({ ok: true });
+});
+
+// --- Twilio SMS handler ---
+app.post("/sms", async (req, res) => {
+  const incoming = req.body.Body?.trim() || "";
+  const propertySlug = "215-16-street-southeast"; // could be dynamic in future
+  const cachedFacts = await getCachedFacts(propertySlug);
+
+  if (cachedFacts) {
+    console.log("💾 [Cache hit]", propertySlug);
+    const answer = await askOpenAI(incoming, cachedFacts);
+    console.log("✅ SMS reply sent:", answer);
+    return res.send(`<Response><Message>${answer}</Message></Response>`);
+  } else {
+    console.log("⚠️ [Cache miss] triggering BrowseAI...");
+    // Trigger new scrape (will later auto-update via webhook)
+    await fetchFromBrowseAI(`https://rentals.ca/calgary/${propertySlug}`, propertySlug);
+    const msg = "Thanks! I’m just gathering some details about this property — I’ll text you right back once I’ve got them.";
+    return res.send(`<Response><Message>${msg}</Message></Response>`);
+  }
+});
+
+// --- Debug endpoints ---
 app.get("/debug/facts", async (req, res) => {
   if (req.query.key !== DEBUG_SECRET) return res.status(401).send("unauthorized");
-  const slug = slugify(req.query.property || "");
-  const facts = await getFacts(slug);
-  res.json(facts);
+  const slug = req.query.property;
+  const data = await getCachedFacts(slug);
+  res.json(data || {});
 });
 
-app.listen(PORT, () => console.log(`✅ running on port ${PORT}`));
+app.get("/", (req, res) => {
+  res.send("AI Voice Rental system is live.");
+});
+
+// --- Start ---
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
