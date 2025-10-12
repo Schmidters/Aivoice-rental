@@ -330,18 +330,27 @@ app.post("/browseai/webhook", async (req, res) => {
     // Build a slug:
     // 1) Prefer clean address/first line from capturedTexts
     // 2) else try “Property Details”, “Summary”, “Title Summary”, “address”, “Title”
-    let addressLine =
-      (captured["Property Details"] || "").split("\n")[0].trim() ||
-      (captured["Summary"] || "").split("\n")[0].trim();
+let addressLine =
+  (captured["Property Details"] || "").split("\n")[0].trim() ||
+  (captured["Summary"] || "").split("\n")[0].trim();
 
-    if (!addressLine) {
-      addressLine =
-        (results.address || results["Property Details"] || results["Summary"] || results["Title Summary"] || results.Title || "unknown-property")
-          .toString()
-          .split("\n")[0]
-          .trim();
-    }
+if (!addressLine) {
+  addressLine =
+    (results.address ||
+      results["Property Details"] ||
+      results["Summary"] ||
+      results["Title Summary"] ||
+      results.Title ||
+      "unknown-property")
+      .toString()
+      .split("\n")[0]
+      .trim();
+}
 
+// 🧹 Clean up common prefixes like "About 215 ..."
+if (addressLine.toLowerCase().startsWith("about ")) {
+  addressLine = addressLine.slice(6).trim();
+}
     let slug = slugify(addressLine);
     if (!slug || slug === "unknown") {
       // last resort: try url→slug map or the URL itself
