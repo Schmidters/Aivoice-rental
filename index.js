@@ -88,6 +88,24 @@ function isTracker(url) {
   }
 }
 
+// --- Normalize scraped BrowseAI text ---
+function cleanText(str = "") {
+  if (!str) return "";
+  return str
+    .replace(/\s+/g, " ") // collapse newlines
+    .replace(/Not Included/i, "not included")
+    .replace(/Included/i, "included")
+    .replace(/Garage parking/i, "garage parking")
+    .trim();
+}
+
+// --- Check if property facts are fresh (within 24h) ---
+function isRecent(facts) {
+  if (!facts || !facts.updatedAt) return false;
+  const ageMs = Date.now() - new Date(facts.updatedAt).getTime();
+  return ageMs < 24 * 60 * 60 * 1000; // 24 hours
+}
+
 // --- Redis helpers ---
 async function getConversation(phone, property) {
   const key = `conv:${phone}:${property}`;
@@ -177,6 +195,11 @@ async function fetchListingHTML(url, slug) {
 }
 
 // --- Browse AI integration (runs + webhook) ---
+const existing = await getPropertyFactsBySlug(slug);
+if (existing && isRecent(existing)) {
+  log("info", "🕒 BrowseAI skipped: recent scrape exists", { slug });
+  return res.json({ ok: true, slug, skipped: true });
+}
 async function triggerBrowseAITask(url) {
   if (!BROWSEAI_KEY || !BROWSEAI_ROBOT_ID) {
     log("warn", "⚠️ BrowseAI not configured");
@@ -209,10 +232,14 @@ async function triggerBrowseAITask(url) {
 async function aiReasonFromSources({ question, facts, html, url }) {
   try {
     const snippet = (html || "").slice(0, HTML_SNIPPET_LIMIT);
-    const system = `You are "Alex", a concise, friendly rental assistant. 
-Use the structured FACTS first. 
-If something isn't in FACTS, you may consult the HTML snippet. 
-Be brief and helpful. If unknown, say so and offer to check.`;
+    const system = `
+You are "Alex", a natural and professional rental assistant for a property management company.
+Speak like a real human texting — short, natural sentences, no robotic tone.
+Use the structured FACTS first. Only rely on the HTML snippet if needed.
+Be conversational and confident, but don't guess. 
+If you don’t know something, say something like:
+"Let me double-check that for you" or "I’ll confirm that and get back to you."
+Keep answers under 2 sentences when possible.`;
 
     const messages = [
       { role: "system", content: system },
@@ -358,15 +385,19 @@ if (addressLine.toLowerCase().startsWith("about ")) {
     }
 
     // Normalize facts out of capturedTexts (A) first, then merge (B) results
-    const normalizedFromCaptured = {
-      address: addressLine || null,
-      rent: captured["Title Summary"] || null,
-      floorPlan: captured["Available Floor Plan Options"] || null,
-      parking: captured["Parking Information"] || null,
-      utilities: captured["Utility Information"] || null,
-      details: captured["Property Details"] || null,
-      summary: captured["Summary"] || null,
-    };
+    const normalizedFacts = {
+  address: cleanText(
+    (captured["Property Details"] || "").split("\n")[0].trim() ||
+    (captured["Summary"] || "").split("\n")[0].trim() ||
+    results.address || ""
+  ),
+  rent: cleanText(captured["Title Summary"] || results.rent),
+  floorPlan: cleanText(captured["Available Floor Plan Options"]),
+  parking: cleanText(captured["Parking Information"]),
+  utilities: cleanText(captured["Utility Information"]),
+  details: cleanText(captured["Property Details"]),
+  summary: cleanText(captured["Summary"]),
+};
 
     const mergedFacts = {
       ...results, // keep raw BrowseAI results too
