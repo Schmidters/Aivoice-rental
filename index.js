@@ -54,11 +54,6 @@ function log(level, msg, meta = {}) {
   if (levels[level] < levels[DEBUG_LEVEL]) return;
   console.log(JSON.stringify({ ts: nowIso(), level, msg, ...meta }));
 }
-function timeStart(label) { return { label, t0: Date.now() }; }
-function timeEnd(t, extra = {}) {
-  const ms = Date.now() - t.t0;
-  log("debug", `⏱️ ${t.label}`, { ms, ...extra });
-}
 
 // --- Utilities ---
 function normalizePhone(phone) {
@@ -85,19 +80,13 @@ function isTracker(url) {
     return true;
   }
 }
+function smsSafe(text, limit = 320) {
+  if (!text) return "";
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length <= limit ? t : t.slice(0, limit - 1) + "…";
+}
 
 // --- Redis helpers ---
-async function getConversation(phone, property) {
-  const key = `conv:${phone}:${property}`;
-  const data = await redis.get(key);
-  return data ? JSON.parse(data) : [];
-}
-async function saveConversation(phone, property, messages) {
-  const key = `conv:${phone}:${property}`;
-  const metaKey = `meta:${phone}:${property}`;
-  await redis.set(key, JSON.stringify(messages.slice(-10)));
-  await redis.hset(metaKey, "lastInteraction", DateTime.now().toISO());
-}
 async function getPropertyFactsBySlug(slug) {
   const raw = await redis.get(`facts:prop:${slug}`);
   return raw ? JSON.parse(raw) : null;
@@ -144,6 +133,7 @@ async function fetchDirectHTML(url) {
       log("warn", "⚠️ direct non-OK", { status: resp.status, url });
       return { html: "", status: resp.status };
     }
+    log("info", "🌐 [Fetch] Direct OK", { url, len: html.length });
     return { html, status: resp.status };
   } catch (e) {
     log("warn", "⚠️ direct fetch error", { url, error: e.message });
@@ -159,9 +149,15 @@ async function fetchWithBrowserless(url) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, waitFor: "networkidle0", headers: SIMPLE_HEADERS }),
     });
-    if (!resp.ok) return { html: "", used: true };
-    return { html: await resp.text(), used: true };
-  } catch {
+    if (!resp.ok) {
+      log("warn", "⚠️ Browserless non-OK", { status: resp.status, url });
+      return { html: "", used: true };
+    }
+    const html = await resp.text();
+    log("info", "🌐 [Fetch] Browserless OK", { url, len: html.length });
+    return { html, used: true };
+  } catch (e) {
+    log("warn", "⚠️ Browserless fetch error", { url, error: e.message });
     return { html: "", used: true };
   }
 }
@@ -177,9 +173,15 @@ async function fetchWithScrapingBee(url) {
   const beeUrl = `https://app.scrapingbee.com/api/v1/?${params}`;
   try {
     const resp = await fetch(beeUrl, { headers: SIMPLE_HEADERS });
-    if (!resp.ok) return { html: "", used: true };
-    return { html: await resp.text(), used: true };
-  } catch {
+    if (!resp.ok) {
+      log("warn", "⚠️ ScrapingBee non-OK", { status: resp.status, url });
+      return { html: "", used: true };
+    }
+    const html = await resp.text();
+    log("info", "🌐 [Fetch] ScrapingBee OK", { url, len: html.length });
+    return { html, used: true };
+  } catch (e) {
+    log("warn", "⚠️ ScrapingBee fetch error", { url, error: e.message });
     return { html: "", used: true };
   }
 }
@@ -244,16 +246,11 @@ async function pickPropertyForPhone(phone) {
   const props = await getPropertiesForPhone(phone);
   return props?.length === 1 ? props[0] : null;
 }
-function smsSafe(text, limit = 320) {
-  if (!text) return "";
-  const t = text.replace(/\s+/g, " ").trim();
-  return t.length <= limit ? t : t.slice(0, limit - 1) + "…";
-}
 
-// --- Health check ---
+// --- Routes ---
 app.get("/", (req, res) => res.send("✅ AI Rental Assistant is running"));
 
-// --- Init facts (Zapier) ---
+// Init facts
 app.post("/init/facts", async (req, res) => {
   try {
     let { leadPhone, phone, property, finalUrl, rent, unit, html } = req.body;
@@ -283,7 +280,22 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-// --- SMS handler (AI + page awareness) ---
+// --- NEW: cache warmer ---
+app.post("/init/fetch-and-cache", async (req, res) => {
+  try {
+    const { property, url } = req.body;
+    if (!property || !url) return res.status(400).json({ error: "Missing property or url" });
+    const slug = slugify(property);
+    const html = await fetchListingHTML(url, slug);
+    if (html.length < 1000) return res.status(502).json({ error: "Failed to fetch full HTML" });
+    res.json({ success: true, slug, cachedChars: html.length });
+  } catch (err) {
+    log("error", "❌ /init/fetch-and-cache error", { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- SMS handler ---
 app.post("/twiml/sms", async (req, res) => {
   const from = normalizePhone(req.body.From);
   const body = req.body.Body?.trim() || "";
@@ -307,9 +319,7 @@ app.post("/twiml/sms", async (req, res) => {
 
     let html = await getCachedHtmlForProperty(slug);
     const url = facts.listingUrl || null;
-    if (!html && url) {
-      html = await fetchListingHTML(url, slug);
-    }
+    if (!html && url) html = await fetchListingHTML(url, slug);
 
     const answer = await aiReasonFromPage({
       question: body,
@@ -338,21 +348,6 @@ app.post("/twiml/voice", (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// --- Debug routes ---
-app.get("/debug/facts", async (req, res) => {
-  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
-  const slug = slugify(req.query.property || "");
-  const facts = await getPropertyFactsBySlug(slug);
-  res.json({ slug, facts });
-});
-app.get("/debug/html", async (req, res) => {
-  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
-  const slug = slugify(req.query.property || "");
-  const html = await getCachedHtmlForProperty(slug);
-  if (!html) return res.status(404).send("No cached HTML");
-  res.type("text/plain").send(html.slice(0, 4000));
-});
-
 // --- WebSocket ---
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
@@ -370,4 +365,5 @@ server.listen(PORT, () => {
   log("info", "💬 SMS endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/sms` });
   log("info", "🌐 Voice endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/voice` });
   log("info", "🧠 Init facts endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/init/facts` });
+  log("info", "⚡ Cache warm endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/init/fetch-and-cache` });
 });
