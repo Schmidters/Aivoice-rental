@@ -18,7 +18,6 @@ const cookieFetch = fetchCookie(fetch, cookieJar);
 
 // --- Express setup ---
 const app = express();
-// ✅ Fix: ensure Twilio form POSTs are parsed
 app.use(express.text({ type: "text/*" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -153,9 +152,7 @@ async function fetchDirectHTML(url) {
 }
 async function fetchWithBrowserless(url) {
   if (!BROWSERLESS_TOKEN) return { html: "", used: false };
-  const endpoint = `https://${BROWSERLESS_REGION}.browserless.io/content?token=${encodeURIComponent(
-    BROWSERLESS_TOKEN
-  )}`;
+  const endpoint = `https://${BROWSERLESS_REGION}.browserless.io/content?token=${encodeURIComponent(BROWSERLESS_TOKEN)}`;
   try {
     const resp = await fetch(endpoint, {
       method: "POST",
@@ -239,6 +236,20 @@ async function aiReasonFromPage({ question, html, facts, url }) {
   }
 }
 
+// --- Helper functions for SMS context ---
+async function pickPropertyForPhone(phone) {
+  if (!phone) return null;
+  const last = await getLastPropertyForPhone(phone);
+  if (last) return last;
+  const props = await getPropertiesForPhone(phone);
+  return props?.length === 1 ? props[0] : null;
+}
+function smsSafe(text, limit = 320) {
+  if (!text) return "";
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length <= limit ? t : t.slice(0, limit - 1) + "…";
+}
+
 // --- Health check ---
 app.get("/", (req, res) => res.send("✅ AI Rental Assistant is running"));
 
@@ -261,7 +272,10 @@ app.post("/init/facts", async (req, res) => {
     await setPropertyFactsBySlug(slug, facts);
     if (html && html.length > 200) await cacheHtmlForProperty(slug, html);
     const prospect = normalizePhone(leadPhone || phone);
-    if (prospect) await addPropertyForPhone(prospect, slug);
+    if (prospect) {
+      await addPropertyForPhone(prospect, slug);
+      await setLastPropertyForPhone(prospect, slug);
+    }
     res.json({ success: true, property: slug, data: facts });
   } catch (e) {
     log("error", "❌ /init/facts error", { error: e.message });
@@ -269,7 +283,7 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-// --- Twilio SMS ---
+// --- SMS handler (AI + page awareness) ---
 app.post("/twiml/sms", async (req, res) => {
   const from = normalizePhone(req.body.From);
   const body = req.body.Body?.trim() || "";
@@ -277,13 +291,39 @@ app.post("/twiml/sms", async (req, res) => {
   res.type("text/xml").send("<Response></Response>");
 
   try {
-    // Simplified: just reply echo for now
+    const slug = await pickPropertyForPhone(from);
+    if (!slug) {
+      const msg = "Hi! Which property are you asking about? (Please reply with the address)";
+      await twilioClient.messages.create({ from: TWILIO_PHONE_NUMBER, to: from, body: msg });
+      return log("info", "ℹ️ asked user to specify property", { to: from });
+    }
+
+    const facts = await getPropertyFactsBySlug(slug);
+    if (!facts) {
+      const msg = "I couldn’t find details for that property yet. Please share the listing link or address.";
+      await twilioClient.messages.create({ from: TWILIO_PHONE_NUMBER, to: from, body: msg });
+      return log("warn", "⚠️ no facts for slug", { slug, to: from });
+    }
+
+    let html = await getCachedHtmlForProperty(slug);
+    const url = facts.listingUrl || null;
+    if (!html && url) {
+      html = await fetchListingHTML(url, slug);
+    }
+
+    const answer = await aiReasonFromPage({
+      question: body,
+      html: html || "",
+      facts,
+      url: url || "(no url)",
+    });
+
     await twilioClient.messages.create({
       from: TWILIO_PHONE_NUMBER,
       to: from,
-      body: "Thanks for your message! I'll reply with property info soon.",
+      body: smsSafe(answer),
     });
-    log("info", "✅ SMS reply sent", { to: from });
+    log("info", "✅ SMS reply sent", { to: from, slug });
   } catch (err) {
     log("error", "❌ SMS send error", { error: err.message });
   }
