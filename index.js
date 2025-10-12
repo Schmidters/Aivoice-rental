@@ -363,7 +363,8 @@ app.post("/browseai/webhook", async (req, res) => {
       source: "browseai",
     };
 
-    await setPropertyFactsBySlug(slug, mergedFacts);
+await setPropertyFactsBySlug(slug, mergedFacts);
+await redis.set(`facts:${slug}`, JSON.stringify(mergedFacts)); // mirror for debug + legacy reads
     if (mergedFacts.listingUrl) await mapUrlToSlug(mergedFacts.listingUrl, slug);
 
     res.json({ ok: true, slug });
