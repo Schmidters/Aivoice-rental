@@ -3,7 +3,7 @@ import express from "express";
 import fetch from "node-fetch";
 import bodyParser from "body-parser";
 import Redis from "ioredis";
-import { Configuration, OpenAIApi } from "openai";
+import OpenAI from "openai";
 import slugify from "slugify";
 
 const app = express();
@@ -22,12 +22,11 @@ const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
 // --- Helpers ---
 async function getCachedFacts(slug) {
   const cached = await redis.get(`facts:${slug}`);
-  if (!cached) return null;
-  return JSON.parse(cached);
+  return cached ? JSON.parse(cached) : null;
 }
 
 async function saveFacts(slug, facts) {
-  await redis.set(`facts:${slug}`, JSON.stringify(facts), "EX", 60 * 60 * 24); // 24h expiry
+  await redis.set(`facts:${slug}`, JSON.stringify(facts), "EX", 60 * 60 * 24); // 24h cache
   console.log(`💾 [Redis] Updated property facts`, slug);
 }
 
@@ -47,30 +46,32 @@ async function fetchFromBrowseAI(url, slug) {
 }
 
 // --- AI reasoning ---
-async function askOpenAI(question, facts) {
-  const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
-  const openai = new OpenAIApi(configuration);
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
+async function askOpenAI(question, facts) {
   const context = Object.entries(facts || {})
     .map(([k, v]) => `${k}: ${v}`)
     .join("\n");
 
-  const prompt = `You are a friendly property assistant.
-  Using the data below, answer the renter's question naturally and helpfully.
+  const messages = [
+    {
+      role: "system",
+      content:
+        "You are a friendly, helpful rental assistant. Use the property facts provided to answer renter questions clearly and naturally.",
+    },
+    {
+      role: "user",
+      content: `Property facts:\n${context}\n\nQuestion: ${question}`,
+    },
+  ];
 
-  Property data:
-  ${context}
-
-  Question: ${question}
-  Answer:`;
-
-  const response = await openai.createCompletion({
-    model: "gpt-3.5-turbo-instruct",
-    prompt,
-    max_tokens: 150,
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages,
+    max_tokens: 200,
   });
 
-  return response.data.choices[0].text.trim();
+  return completion.choices[0].message.content.trim();
 }
 
 // --- Webhook endpoint ---
@@ -99,7 +100,7 @@ app.post("/init/fetch", async (req, res) => {
 // --- Twilio SMS handler ---
 app.post("/sms", async (req, res) => {
   const incoming = req.body.Body?.trim() || "";
-  const propertySlug = "215-16-street-southeast"; // could be dynamic in future
+  const propertySlug = "215-16-street-southeast"; // could be dynamic
   const cachedFacts = await getCachedFacts(propertySlug);
 
   if (cachedFacts) {
@@ -109,7 +110,6 @@ app.post("/sms", async (req, res) => {
     return res.send(`<Response><Message>${answer}</Message></Response>`);
   } else {
     console.log("⚠️ [Cache miss] triggering BrowseAI...");
-    // Trigger new scrape (will later auto-update via webhook)
     await fetchFromBrowseAI(`https://rentals.ca/calgary/${propertySlug}`, propertySlug);
     const msg = "Thanks! I’m just gathering some details about this property — I’ll text you right back once I’ve got them.";
     return res.send(`<Response><Message>${msg}</Message></Response>`);
