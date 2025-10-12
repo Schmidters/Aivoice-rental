@@ -285,6 +285,12 @@ app.post("/init/fetch", async (req, res) => {
   }
 });
 
+// Simple test route so we can confirm Render is reachable
+app.post("/browseai/test", async (req, res) => {
+  log("info", "✅ Test webhook hit", { body: req.body });
+  res.json({ ok: true, received: req.body || "no body" });
+});
+
 // --- Browse AI webhook (preferred data path) ---
 app.post("/browseai/webhook", async (req, res) => {
   try {
