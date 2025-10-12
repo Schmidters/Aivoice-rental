@@ -18,6 +18,7 @@ const Redis = require("ioredis");
 const { v4: uuidv4 } = require("uuid");
 const pino = require("pino");
 const OpenAI = require("openai");
+const twilio = require("twilio");
 
 const {
   TWILIO_ACCOUNT_SID,
