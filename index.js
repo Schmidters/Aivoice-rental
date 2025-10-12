@@ -18,7 +18,6 @@ const cookieFetch = fetchCookie(fetch, cookieJar);
 
 // --- Express setup ---
 const app = express();
-// Twilio sends application/x-www-form-urlencoded by default
 app.use(express.text({ type: "text/*" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -39,10 +38,10 @@ const DEBUG_LEVEL = (process.env.DEBUG_LEVEL || "info").toLowerCase();
 const HTML_SNIPPET_LIMIT = parseInt(process.env.HTML_SNIPPET_LIMIT || "20000", 10);
 const HTML_CACHE_TTL_SEC = parseInt(process.env.HTML_CACHE_TTL_SEC || "900", 10);
 
-// Browse AI
+// BrowseAI
 const BROWSEAI_KEY = process.env.BROWSEAI_KEY || process.env.BROWSEAI_API_KEY || "";
 const BROWSEAI_ROBOT_ID = process.env.BROWSEAI_ROBOT_ID || "";
-const BROWSEAI_WEBHOOK_SECRET = process.env.BROWSEAI_WEBHOOK_SECRET || ""; // optional
+const BROWSEAI_WEBHOOK_SECRET = process.env.BROWSEAI_WEBHOOK_SECRET || "";
 
 // --- Clients ---
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -88,36 +87,23 @@ function isTracker(url) {
   }
 }
 
-// --- Normalize scraped BrowseAI text ---
+// --- Text cleanup + freshness helpers ---
 function cleanText(str = "") {
   if (!str) return "";
   return str
-    .replace(/\s+/g, " ") // collapse newlines
+    .replace(/\s+/g, " ")
     .replace(/Not Included/i, "not included")
     .replace(/Included/i, "included")
     .replace(/Garage parking/i, "garage parking")
     .trim();
 }
-
-// --- Check if property facts are fresh (within 24h) ---
 function isRecent(facts) {
   if (!facts || !facts.updatedAt) return false;
   const ageMs = Date.now() - new Date(facts.updatedAt).getTime();
-  return ageMs < 24 * 60 * 60 * 1000; // 24 hours
+  return ageMs < 24 * 60 * 60 * 1000;
 }
 
 // --- Redis helpers ---
-async function getConversation(phone, property) {
-  const key = `conv:${phone}:${property}`;
-  const data = await redis.get(key);
-  return data ? JSON.parse(data) : [];
-}
-async function saveConversation(phone, property, messages) {
-  const key = `conv:${phone}:${property}`;
-  const metaKey = `meta:${phone}:${property}`;
-  await redis.set(key, JSON.stringify(messages.slice(-10)));
-  await redis.hset(metaKey, "lastInteraction", DateTime.now().toISO());
-}
 async function getPropertyFactsBySlug(slug) {
   const raw = await redis.get(`facts:prop:${slug}`);
   return raw ? JSON.parse(raw) : null;
@@ -156,14 +142,12 @@ async function getSlugByUrl(url) {
   return await redis.get(`url2slug:${url}`);
 }
 
-// --- Direct HTML Fetcher only (Browserless & ScrapingBee removed) ---
+// --- Direct HTML Fetcher ---
 const SIMPLE_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
 };
-
 async function fetchDirectHTML(url) {
   try {
     const resp = await cookieFetch(url, { headers: SIMPLE_HEADERS, redirect: "follow" });
@@ -178,35 +162,26 @@ async function fetchDirectHTML(url) {
     return { html: "", status: 0 };
   }
 }
-
 async function fetchListingHTML(url, slug) {
   const cached = await getCachedHtmlForProperty(slug);
   if (cached && cached.length >= 1000) return cached;
-
   const direct = await fetchDirectHTML(url);
   const tooSmall = (direct.html || "").length < 1000;
   if (!tooSmall) {
     await cacheHtmlForProperty(slug, direct.html);
     return direct.html;
   }
-
-  log("warn", "⚠️ fetchListingHTML: tiny/empty HTML and no other fetchers enabled", { url });
+  log("warn", "⚠️ fetchListingHTML: tiny/empty HTML", { url });
   return "";
 }
 
-// --- Browse AI integration (runs + webhook) ---
-const existing = await getPropertyFactsBySlug(slug);
-if (existing && isRecent(existing)) {
-  log("info", "🕒 BrowseAI skipped: recent scrape exists", { slug });
-  return res.json({ ok: true, slug, skipped: true });
-}
+// --- BrowseAI integration ---
 async function triggerBrowseAITask(url) {
   if (!BROWSEAI_KEY || !BROWSEAI_ROBOT_ID) {
     log("warn", "⚠️ BrowseAI not configured");
     return null;
   }
   try {
-    // Send both keys so we're compatible with either field name on the robot
     const resp = await fetch(`https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/tasks`, {
       method: "POST",
       headers: {
@@ -228,7 +203,7 @@ async function triggerBrowseAITask(url) {
   }
 }
 
-// --- AI reasoning (prefers BrowseAI facts, falls back to HTML) ---
+// --- AI reasoning ---
 async function aiReasonFromSources({ question, facts, html, url }) {
   try {
     const snippet = (html || "").slice(0, HTML_SNIPPET_LIMIT);
@@ -240,7 +215,6 @@ Be conversational and confident, but don't guess.
 If you don’t know something, say something like:
 "Let me double-check that for you" or "I’ll confirm that and get back to you."
 Keep answers under 2 sentences when possible.`;
-
     const messages = [
       { role: "system", content: system },
       { role: "user", content: `FACTS:\n${JSON.stringify(facts || {}, null, 2)}` },
@@ -248,12 +222,11 @@ Keep answers under 2 sentences when possible.`;
       { role: "user", content: `HTML_SNIPPET:\n${snippet}` },
       { role: "user", content: `QUESTION:\n${question}` },
     ];
-
     const ai = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages,
       max_tokens: 250,
-      temperature: 0.2,
+      temperature: 0.3,
     });
     return ai.choices?.[0]?.message?.content?.trim() || "Not mentioned in the listing.";
   } catch (err) {
@@ -262,7 +235,7 @@ Keep answers under 2 sentences when possible.`;
   }
 }
 
-// --- Health check ---
+// --- Routes ---
 app.get("/", (req, res) => res.send("✅ AI Rental Assistant is running"));
 
 // --- Init facts (Zapier/manual) ---
@@ -298,12 +271,19 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-// --- Manual trigger to run BrowseAI for a URL and bind it to a property ---
+// --- Manual trigger (fixed freshness check) ---
 app.post("/init/fetch", async (req, res) => {
   try {
     const { property, url } = req.body;
     if (!property || !url) return res.status(400).json({ error: "Need property + url" });
+
     const slug = slugify(property);
+    const existing = await getPropertyFactsBySlug(slug);
+    if (existing && isRecent(existing)) {
+      log("info", "🕒 BrowseAI skipped: recent scrape exists", { slug });
+      return res.json({ ok: true, slug, skipped: true });
+    }
+
     await mapUrlToSlug(url, slug);
     const task = await triggerBrowseAITask(url);
     res.json({ ok: true, slug, taskId: task?.id || task?.data?.id || null });
@@ -313,105 +293,73 @@ app.post("/init/fetch", async (req, res) => {
   }
 });
 
-// Simple test route so we can confirm Render is reachable
+// --- Test ---
 app.post("/browseai/test", async (req, res) => {
   log("info", "✅ Test webhook hit", { body: req.body });
   res.json({ ok: true, received: req.body || "no body" });
 });
 
-/**
- * --- Browse AI webhook (preferred data path) ---
- * Supports BOTH payload shapes:
- *  A) { task: { capturedTexts, inputParameters: { originUrl } } }
- *  B) { results: { ...fields }, inputParameters: { "Origin URL" } }
- */
-// --- Browse AI webhook (stable slug + merge existing facts) ---
+// --- BrowseAI webhook ---
 app.post("/browseai/webhook", async (req, res) => {
   try {
-    // Optional: Verify webhook secret
     if (BROWSEAI_WEBHOOK_SECRET) {
       const sig = req.headers["x-browseai-secret"];
-      if (sig !== BROWSEAI_WEBHOOK_SECRET) {
-        return res.status(401).send("unauthorized");
-      }
+      if (sig !== BROWSEAI_WEBHOOK_SECRET) return res.status(401).send("unauthorized");
     }
-
     const payload = req.body || {};
     log("info", "📦 [Webhook] BrowseAI data received");
 
-    // Extract from either shape
-    const task = payload.task || {};
-    const captured = task.capturedTexts || {};
-    const results = payload.results || payload.data || {};
-
-    // Origin URL (check both shapes and both key names)
     const originUrl =
-      task?.inputParameters?.originUrl ||
-      task?.inputParameters?.["Origin URL"] ||
-      payload?.inputParameters?.originUrl ||
       payload?.inputParameters?.["Origin URL"] ||
-      results?.originUrl ||
-      results?.["Origin URL"] ||
-      null;
+      payload?.task?.inputParameters?.originUrl ||
+      payload?.results?.["Origin URL"] ||
+      payload?.input?.startUrls?.[0] || null;
 
-    // Build a slug:
-    // 1) Prefer clean address/first line from capturedTexts
-    // 2) else try “Property Details”, “Summary”, “Title Summary”, “address”, “Title”
-let addressLine =
-  (captured["Property Details"] || "").split("\n")[0].trim() ||
-  (captured["Summary"] || "").split("\n")[0].trim();
-
-if (!addressLine) {
-  addressLine =
-    (results.address ||
-      results["Property Details"] ||
-      results["Summary"] ||
-      results["Title Summary"] ||
-      results.Title ||
-      "unknown-property")
-      .toString()
-      .split("\n")[0]
-      .trim();
-}
-
-// 🧹 Clean up common prefixes like "About 215 ..."
-if (addressLine.toLowerCase().startsWith("about ")) {
-  addressLine = addressLine.slice(6).trim();
-}
-    let slug = slugify(addressLine);
-    if (!slug || slug === "unknown") {
-      // last resort: try url→slug map or the URL itself
-      slug = (originUrl && (await getSlugByUrl(originUrl))) || slugify(originUrl || "unknown-property");
+    let slug = originUrl ? await getSlugByUrl(originUrl) : null;
+    if (!slug && originUrl) {
+      try {
+        const u = new URL(originUrl);
+        slug = slugify(u.pathname.split("/").pop());
+      } catch {}
+    }
+    if (!slug) {
+      const nameGuess = payload?.results?.address || payload?.results?.Summary || payload?.results?.Title || "unknown-property";
+      slug = slugify(String(nameGuess));
     }
 
-    // Normalize facts out of capturedTexts (A) first, then merge (B) results
-    const normalizedFacts = {
-  address: cleanText(
-    (captured["Property Details"] || "").split("\n")[0].trim() ||
-    (captured["Summary"] || "").split("\n")[0].trim() ||
-    results.address || ""
-  ),
-  rent: cleanText(captured["Title Summary"] || results.rent),
-  floorPlan: cleanText(captured["Available Floor Plan Options"]),
-  parking: cleanText(captured["Parking Information"]),
-  utilities: cleanText(captured["Utility Information"]),
-  details: cleanText(captured["Property Details"]),
-  summary: cleanText(captured["Summary"]),
-};
+    const task = payload.task || {};
+    const captured = task.capturedTexts || payload.capturedTexts || {};
+    const results = payload.results || payload.data || {};
 
+    const normalizedFacts = {
+      address: cleanText(
+        (captured["Property Details"] || "").split("\n")[0].trim() ||
+        (captured["Summary"] || "").split("\n")[0].trim() ||
+        results.address || ""
+      ),
+      rent: cleanText(captured["Title Summary"] || results.rent),
+      floorPlan: cleanText(captured["Available Floor Plan Options"]),
+      parking: cleanText(captured["Parking Information"]),
+      utilities: cleanText(captured["Utility Information"]),
+      details: cleanText(captured["Property Details"]),
+      summary: cleanText(captured["Summary"]),
+    };
+
+    const existingFacts = (await getPropertyFactsBySlug(slug)) || {};
     const mergedFacts = {
-      ...results, // keep raw BrowseAI results too
-      ...normalizedFromCaptured,
-      listingUrl: originUrl || results?.listingUrl || null,
+      ...existingFacts,
+      ...results,
+      ...normalizedFacts,
+      listingUrl: originUrl || existingFacts.listingUrl || null,
       updatedAt: nowIso(),
       source: "browseai",
     };
 
-await setPropertyFactsBySlug(slug, mergedFacts);
-await redis.set(`facts:${slug}`, JSON.stringify(mergedFacts)); // mirror for debug + legacy reads
+    await setPropertyFactsBySlug(slug, mergedFacts);
+    await redis.set(`facts:${slug}`, JSON.stringify(mergedFacts));
     if (mergedFacts.listingUrl) await mapUrlToSlug(mergedFacts.listingUrl, slug);
 
-    res.json({ ok: true, slug });
+    res.json({ ok: true, slug, saved: Object.keys(mergedFacts).length });
   } catch (err) {
     log("error", "❌ [Webhook error]", { error: err.message });
     res.status(500).json({ error: err.message });
@@ -423,32 +371,25 @@ app.post("/twiml/sms", async (req, res) => {
   const from = normalizePhone(req.body.From);
   const body = req.body.Body?.trim() || "";
   log("info", "📩 SMS received", { from, body });
-  // immediately ack Twilio
   res.type("text/xml").send("<Response></Response>");
-
   try {
-    // Determine the active property for this number
     let slug = await getLastPropertyForPhone(from);
     if (!slug) {
       const props = await getPropertiesForPhone(from);
       slug = props && props[0];
     }
     if (!slug) {
-      // ask user to share link or address
       await twilioClient.messages.create({
         from: TWILIO_PHONE_NUMBER,
         to: from,
-        body: "Got your message! Send me the property link or address so I can pull details.",
+        body: "Hey! Can you send me the property link or address so I can pull up the details?",
       });
       return;
     }
 
-    // Load best-available sources
     const facts = await getPropertyFactsBySlug(slug);
     const url = facts?.listingUrl || null;
     let html = await getCachedHtmlForProperty(slug);
-
-    // If we have a URL but no html cached, try direct fetch (only once here)
     if (url && !html) {
       const t = timeStart("directFetch");
       const fresh = await fetchListingHTML(url, slug);
@@ -456,25 +397,15 @@ app.post("/twiml/sms", async (req, res) => {
       html = fresh;
     }
 
-    const answer = await aiReasonFromSources({
-      question: body,
-      facts,
-      html,
-      url: url || "n/a",
-    });
-
-    await twilioClient.messages.create({
-      from: TWILIO_PHONE_NUMBER,
-      to: from,
-      body: answer,
-    });
+    const answer = await aiReasonFromSources({ question: body, facts, html, url });
+    await twilioClient.messages.create({ from: TWILIO_PHONE_NUMBER, to: from, body: answer });
     log("info", "✅ SMS reply sent", { to: from, slug });
   } catch (err) {
     log("error", "❌ SMS send error", { error: err.message });
   }
 });
 
-// --- Voice (unchanged) ---
+// --- Voice ---
 app.post("/twiml/voice", (req, res) => {
   const twiml = `<Response>
     <Connect><Stream url="wss://${new URL(PUBLIC_BASE_URL).host}/twilio-media" /></Connect>
@@ -483,39 +414,11 @@ app.post("/twiml/voice", (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// --- Debug routes ---
+// --- Debug + WebSocket ---
 app.get("/debug/facts", async (req, res) => {
   if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
   const slug = slugify(req.query.property || "");
   const facts = await getPropertyFactsBySlug(slug);
   res.json({ slug, facts });
 });
-
-app.get("/debug/html", async (req, res) => {
-  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
-  const slug = slugify(req.query.property || "");
-  const html = await getCachedHtmlForProperty(slug);
-  if (!html) return res.status(404).send("No cached HTML");
-  res.type("text/plain").send(html.slice(0, 4000));
-});
-
-// --- WebSocket (Twilio media stream placeholder) ---
-const server = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true });
-server.on("upgrade", (req, socket, head) => {
-  if (req.url === "/twilio-media") wss.handleUpgrade(req, socket, head, ws => wss.emit("connection", ws, req));
-  else socket.destroy();
-});
-wss.on("connection", ws => {
-  log("info", "🔊 Twilio media stream connected!");
-});
-
-// --- Start server ---
-server.listen(PORT, () => {
-  log("info", "✅ Server listening", { port: PORT });
-  log("info", "💬 SMS endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/sms` });
-  log("info", "🌐 Voice endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/voice` });
-  log("info", "🧠 Init facts endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/init/facts` });
-  log("info", "🤖 BrowseAI webhook", { method: "POST", url: `${PUBLIC_BASE_URL}/browseai/webhook` });
-  log("info", "🔍 Init fetch (BrowseAI)", { method: "POST", url: `${PUBLIC_BASE_URL}/init/fetch` });
-});
+app.get("/debug/html", async (req,
