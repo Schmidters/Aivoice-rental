@@ -1,456 +1,468 @@
-// --- Imports & setup ---
-import "dotenv/config.js";
-import express from "express";
-import http from "http";
-import { WebSocketServer } from "ws";
-import { DateTime } from "luxon";
-import twilio from "twilio";
-import Redis from "ioredis";
-import OpenAI from "openai";
-import { parsePhoneNumberFromString } from "libphonenumber-js";
-import fetch from "node-fetch";
-import Tough from "tough-cookie";
-import fetchCookie from "fetch-cookie";
+/**
+ * AI Voice Rental — v2 “AI Brain Expansion”
+ * - Property Context Enrichment (Redis cache)
+ * - Lead Memory (per-lead history + auto-summarization)
+ * - Intent Detection (classifier)
+ * - Unified Prompt (human leasing assistant)
+ * - Lightweight analytics counters
+ *
+ * Assumes a working v1 (Express + Twilio + Redis + OpenAI).
+ * This file is self-contained; wire it to your existing Render app.
+ */
 
-// --- Cookie-aware fetch setup ---
-const cookieJar = new Tough.CookieJar();
-const cookieFetch = fetchCookie(fetch, cookieJar);
+require("dotenv").config();
 
-// --- Express setup ---
+const express = require("express");
+const bodyParser = require("body-parser");
+const Redis = require("ioredis");
+const { v4: uuidv4 } = require("uuid");
+const pino = require("pino");
+const OpenAI = require("openai");
+const twilio = require("twilio");
+
+// ---------- ENV ----------
+const {
+  PORT = 3000,
+  NODE_ENV = "production",
+  REDIS_URL,
+  OPENAI_API_KEY,
+  OPENAI_MODEL = "gpt-4o-mini",
+  OPENAI_MODEL_SUMMARY = "gpt-4o-mini",
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_SERVICE_SID, // or TWILIO_FROM_NUMBER
+  TWILIO_FROM_NUMBER,
+} = process.env;
+
+// ---------- GUARDS ----------
+if (!REDIS_URL) throw new Error("Missing REDIS_URL");
+if (!OPENAI_API_KEY) throw new Error("Missing OPENAI_API_KEY");
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+  throw new Error("Missing Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)");
+}
+if (!TWILIO_MESSAGING_SERVICE_SID && !TWILIO_FROM_NUMBER) {
+  throw new Error("Provide TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER");
+}
+
+// ---------- CORE ----------
 const app = express();
-app.use(express.text({ type: "text/*" }));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(bodyParser.urlencoded({ extended: false })); // Twilio sends x-www-form-urlencoded
+app.use(bodyParser.json());
 
-// --- Config ---
-const PORT = process.env.PORT || 3000;
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://aivoice-rental.onrender.com";
-
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
-const REDIS_URL = process.env.REDIS_URL;
-
-const DEBUG_SECRET = process.env.DEBUG_SECRET || "changeme123";
-const DEBUG_LEVEL = (process.env.DEBUG_LEVEL || "info").toLowerCase();
-
-const HTML_SNIPPET_LIMIT = parseInt(process.env.HTML_SNIPPET_LIMIT || "20000", 10);
-const HTML_CACHE_TTL_SEC = parseInt(process.env.HTML_CACHE_TTL_SEC || "900", 10);
-
-// BrowseAI
-const BROWSEAI_KEY = process.env.BROWSEAI_KEY || process.env.BROWSEAI_API_KEY || "";
-const BROWSEAI_ROBOT_ID = process.env.BROWSEAI_ROBOT_ID || "";
-const BROWSEAI_WEBHOOK_SECRET = process.env.BROWSEAI_WEBHOOK_SECRET || "";
-
-// --- Clients ---
-const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-const redis = new Redis(REDIS_URL, { tls: false });
+const log = pino({ level: NODE_ENV === "development" ? "debug" : "info" });
+const redis = new Redis(REDIS_URL, { lazyConnect: false });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// --- Logging helpers ---
-const nowIso = () => new Date().toISOString();
-function log(level, msg, meta = {}) {
-  const levels = { debug: 10, info: 20, warn: 30, error: 40 };
-  if (levels[level] < levels[DEBUG_LEVEL]) return;
-  console.log(JSON.stringify({ ts: nowIso(), level, msg, ...meta }));
-}
-function timeStart(label) { return { label, t0: Date.now() }; }
-function timeEnd(t, extra = {}) {
-  const ms = Date.now() - t.t0;
-  log("debug", `⏱️ ${t.label}`, { ms, ...extra });
-}
+// ---------- CONSTANTS ----------
+const MAX_HISTORY_ITEMS = 12;     // keep most recent messages for context
+const SUMMARY_AFTER = 10;         // summarize history after this many turns
+const MAX_HISTORY_TOKEN_HINT = 800; // (heuristic) used in summarization
+const PROPERTY_TTL_SECONDS = 6 * 60 * 60; // 6 hours (refreshable by scrape ingest)
+const ANALYTICS_KEY = "analytics:counters"; // Redis hash
+const INTENT_LABELS = [
+  "book_showing",
+  "pricing_question",
+  "availability",
+  "parking",
+  "pets",
+  "application_process",
+  "negotiation",
+  "general_info",
+  "spam_or_unknown"
+];
 
-// --- Utilities ---
-function normalizePhone(phone) {
-  if (!phone) return null;
-  const parsed = parsePhoneNumberFromString(phone, "CA");
-  return parsed && parsed.isValid() ? parsed.number : phone;
-}
-function slugify(str) {
-  return str ? str.replace(/\s+/g, "-").replace(/[^\w\-]/g, "").toLowerCase() : "unknown";
-}
-function isTracker(url) {
-  try {
-    const h = new URL(url).hostname.toLowerCase();
-    return [
-      "ct.sendgrid.net",
-      "cloudflare.com",
-      "challenge.cloudflare.com",
-      "bit.ly",
-      "lnkd.in",
-      "l.instagram.com",
-      "linktr.ee",
-    ].some(d => h.endsWith(d));
-  } catch {
-    return true;
+// ---------- HELPERS ----------
+const normalizePhone = (num) => {
+  if (!num) return "";
+  let s = num.trim();
+  if (!s.startsWith("+")) {
+    // Normalize to E.164-ish if possible; assume North America if missing
+    s = "+1" + s.replace(/[^\d]/g, "");
   }
+  return s;
+};
+
+const slugify = (s) =>
+  (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "");
+
+const propertyKey = (slug) => `property:${slug}`;
+const leadHistoryKey = (phone) => `lead:${phone}:history`;
+const leadSummaryKey = (phone) => `lead:${phone}:summary`;
+const leadIntentKey = (phone) => `lead:${phone}:intent`;
+const leadPropsKey = (phone) => `lead:${phone}:properties`; // set of slugs
+const perPropLeadIdx = (slug) => `property:${slug}:leads`; // set of phones
+
+async function incCounter(field) {
+  await redis.hincrby(ANALYTICS_KEY, field, 1);
 }
 
-// --- Text cleanup + freshness helpers ---
-function cleanText(str = "") {
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function trimText(str, max = 300) {
   if (!str) return "";
-  return str
-    .replace(/\s+/g, " ")
-    .replace(/Not Included/i, "not included")
-    .replace(/Included/i, "included")
-    .replace(/Garage parking/i, "garage parking")
-    .trim();
-}
-function isRecent(facts) {
-  if (!facts || !facts.updatedAt) return false;
-  const ageMs = Date.now() - new Date(facts.updatedAt).getTime();
-  return ageMs < 24 * 60 * 60 * 1000;
+  return str.length > max ? str.slice(0, max) + "…" : str;
 }
 
-// --- Redis helpers ---
-async function getPropertyFactsBySlug(slug) {
-  const raw = await redis.get(`facts:prop:${slug}`);
+// ---------- MEMORY LAYER ----------
+async function appendLeadHistory(phone, role, content) {
+  const key = leadHistoryKey(phone);
+  const item = JSON.stringify({ t: nowIso(), role, content: trimText(content, 1000) });
+  await redis.lpush(key, item);
+  await redis.ltrim(key, 0, MAX_HISTORY_ITEMS - 1);
+}
+
+async function getLeadHistory(phone) {
+  const raw = await redis.lrange(leadHistoryKey(phone), 0, -1);
+  return raw.map((s) => {
+    try { return JSON.parse(s); } catch { return null; }
+  }).filter(Boolean).reverse(); // oldest → newest
+}
+
+async function getLeadSummary(phone) {
+  return redis.get(leadSummaryKey(phone));
+}
+
+async function setLeadSummary(phone, summary) {
+  return redis.set(leadSummaryKey(phone), summary, "EX", 7 * 24 * 3600);
+}
+
+async function maybeSummarizeHistory(phone) {
+  const history = await getLeadHistory(phone);
+  if (history.length < SUMMARY_AFTER) return;
+
+  // Build a compact transcript to summarize
+  const transcript = history
+    .map(h => `[${h.t}] ${h.role === "user" ? "Lead" : "Assistant"}: ${h.content}`)
+    .join("\n");
+
+  const prompt = `Summarize the following SMS conversation between a leasing assistant and a rental lead. 
+Keep it under ${Math.round(MAX_HISTORY_TOKEN_HINT)} tokens. 
+Capture key facts mentioned (timing preferences, desired unit type, budget, questions asked, objections).
+Conversation:
+${transcript}`;
+
+  const resp = await openai.chat.completions.create({
+    model: OPENAI_MODEL_SUMMARY,
+    temperature: 0.2,
+    messages: [
+      { role: "system", content: "You create concise, factual CRM-style conversation summaries." },
+      { role: "user", content: prompt }
+    ]
+  });
+
+  const summary = resp.choices?.[0]?.message?.content?.trim() || "";
+  if (summary) await setLeadSummary(phone, summary);
+}
+
+// ---------- PROPERTY CONTEXT ----------
+/**
+ * Example property object structure we store:
+ * {
+ *   slug: "215-16-street-southeast",
+ *   address: "215 16 Street Southeast, Calgary",
+ *   unit_type: "1-Bedroom",
+ *   rent: 1895,
+ *   bedrooms: 1,
+ *   bathrooms: 1,
+ *   sqft: 620,
+ *   parking: "Included", // or "Available $150", "Street", "None"
+ *   pets: "Small pets OK", // or "No pets"
+ *   utilities: "Heat & Water Included",
+ *   available: "Nov 1",
+ *   deposit: "One month",
+ *   application_url: "https://…",
+ *   photos_url: "https://…",
+ *   source_url: "https://…",
+ *   last_updated: "2025-10-12T18:00:00Z"
+ * }
+ */
+async function setPropertyContext(obj) {
+  const slug = slugify(obj.slug || obj.address);
+  if (!slug) throw new Error("Property slug/address required");
+
+  const key = propertyKey(slug);
+  const data = {
+    slug,
+    last_updated: nowIso(),
+    ...obj
+  };
+  await redis.set(key, JSON.stringify(data), "EX", PROPERTY_TTL_SECONDS);
+  return data;
+}
+
+async function getPropertyContext(slug) {
+  const raw = await redis.get(propertyKey(slug));
   return raw ? JSON.parse(raw) : null;
 }
-async function setPropertyFactsBySlug(slug, facts) {
-  await redis.set(`facts:prop:${slug}`, JSON.stringify(facts));
-  await redis.sadd("props:index", slug);
-  log("info", "💾 [Redis] Updated property facts", { property: slug });
-}
-async function addPropertyForPhone(phone, slug) {
-  if (!phone || !slug) return;
-  await redis.sadd(`phoneprops:${phone}`, slug);
-}
-async function getPropertiesForPhone(phone) {
-  return (await redis.smembers(`phoneprops:${phone}`)) || [];
-}
-async function setLastPropertyForPhone(phone, slug) {
-  await redis.set(`lastprop:${phone}`, slug);
-}
-async function getLastPropertyForPhone(phone) {
-  return await redis.get(`lastprop:${phone}`);
-}
-async function cacheHtmlForProperty(slug, html) {
-  if (!html) return;
-  await redis.setex(`html:${slug}`, HTML_CACHE_TTL_SEC, html);
-}
-async function getCachedHtmlForProperty(slug) {
-  return await redis.get(`html:${slug}`);
-}
-async function mapUrlToSlug(url, slug) {
-  if (!url || !slug) return;
-  await redis.set(`url2slug:${url}`, slug, "EX", 60 * 60 * 24 * 7);
-}
-async function getSlugByUrl(url) {
-  if (!url) return null;
-  return await redis.get(`url2slug:${url}`);
+
+async function findBestPropertyForLead(phone) {
+  // First check if lead already touched any property
+  const props = await redis.smembers(leadPropsKey(phone));
+  if (props && props.length) {
+    // Prefer the most recently updated among them
+    let newest = null;
+    for (const s of props) {
+      const p = await getPropertyContext(s);
+      if (p && (!newest || (p.last_updated > newest.last_updated))) newest = p;
+    }
+    if (newest) return newest;
+  }
+  // Fallback: none
+  return null;
 }
 
-// --- Direct HTML Fetcher ---
-const SIMPLE_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-  "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
-};
-async function fetchDirectHTML(url) {
+// ---------- INTENT DETECTION ----------
+async function detectIntent(messageText) {
+  const sys = `Classify the user's SMS into one of these labels: ${INTENT_LABELS.join(", ")}.
+Return ONLY the label. If unclear or spam, use "spam_or_unknown".`;
+
+  const resp = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    temperature: 0,
+    messages: [
+      { role: "system", content: sys },
+      { role: "user", content: messageText || "" }
+    ]
+  });
+
+  const label = resp.choices?.[0]?.message?.content?.trim();
+  return INTENT_LABELS.includes(label) ? label : "spam_or_unknown";
+}
+
+// ---------- UNIFIED AGENT PROMPT ----------
+function buildAgentSystemPrompt(property, summary) {
+  const facts = property ? `
+Property Info:
+- Address: ${property.address || property.slug}
+- Unit: ${property.unit_type || "N/A"}
+- Rent: ${property.rent ? `$${property.rent}` : "N/A"}
+- Bedrooms/Bath: ${property.bedrooms ?? "?"}/${property.bathrooms ?? "?"}
+- Sqft: ${property.sqft ?? "?"}
+- Parking: ${property.parking ?? "N/A"}
+- Pets: ${property.pets ?? "N/A"}
+- Utilities: ${property.utilities ?? "N/A"}
+- Available: ${property.available ?? "N/A"}
+- Apply: ${property.application_url ?? "Ask me and I’ll send it"}
+` : `
+Property Info:
+- (No cached details available yet. If asked, request to share the listing link or give general guidance.)`;
+
+  const mem = summary ? `Lead Summary (from prior messages): ${summary}\n` : "";
+
+  return `
+You are a friendly, human-sounding leasing assistant for a property management company.
+Never say you are an AI. Keep replies warm, concise (1–2 sentences), and proactive.
+
+${facts}
+${mem}
+
+Rules:
+- Answer directly and factually using Property Info when relevant.
+- If the lead asks to book a showing, propose 2 time options (e.g., tomorrow 6pm or Saturday 2pm) and offer to confirm.
+- If asked about parking/pets/utilities, answer precisely from Property Info.
+- If price sensitive or negotiating, be empathetic and offer alternatives without committing to discounts.
+- If spam/off-topic, reply once politely or ignore.
+- Always write like a real human text — no corporate tone, no disclaimers.
+`;
+}
+
+// ---------- REPLY GENERATION ----------
+async function generateAssistantReply({ incomingText, property, history, summary }) {
+  const system = buildAgentSystemPrompt(property, summary);
+
+  const msgs = [
+    { role: "system", content: system }
+  ];
+
+  // Inject brief recent conversation for continuity
+  for (const h of (history || []).slice(-6)) {
+    msgs.push({ role: h.role === "assistant" ? "assistant" : "user", content: h.content });
+  }
+  msgs.push({ role: "user", content: incomingText });
+
+  const resp = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    temperature: 0.4,
+    messages: msgs
+  });
+
+  return resp.choices?.[0]?.message?.content?.trim() || "Thanks for reaching out! How can I help?";
+}
+
+// ---------- TWILIO SEND ----------
+async function sendSms(to, body) {
+  const msg = {
+    to,
+    body
+  };
+  if (TWILIO_MESSAGING_SERVICE_SID) {
+    msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
+  } else {
+    msg.from = TWILIO_FROM_NUMBER;
+  }
+  const res = await twilioClient.messages.create(msg);
+  return res.sid;
+}
+
+// ---------- WEBHOOKS ----------
+
+/**
+ * Twilio SMS Inbound Webhook
+ * Fields of interest: From, To, Body
+ * Optional: a property hint can be passed via your ad links as metadata in previous flow.
+ */
+app.post("/twilio/sms", async (req, res) => {
   try {
-    const resp = await cookieFetch(url, { headers: SIMPLE_HEADERS, redirect: "follow" });
-    const html = await resp.text();
-    if (!resp.ok) {
-      log("warn", "⚠️ direct non-OK", { status: resp.status, url });
-      return { html: "", status: resp.status };
-    }
-    return { html, status: resp.status };
-  } catch (e) {
-    log("warn", "⚠️ direct fetch error", { url, error: e.message });
-    return { html: "", status: 0 };
-  }
-}
-async function fetchListingHTML(url, slug) {
-  const cached = await getCachedHtmlForProperty(slug);
-  if (cached && cached.length >= 1000) return cached;
-  const direct = await fetchDirectHTML(url);
-  const tooSmall = (direct.html || "").length < 1000;
-  if (!tooSmall) {
-    await cacheHtmlForProperty(slug, direct.html);
-    return direct.html;
-  }
-  log("warn", "⚠️ fetchListingHTML: tiny/empty HTML", { url });
-  return "";
-}
+    const from = normalizePhone(req.body.From);
+    const to = normalizePhone(req.body.To);
+    const body = (req.body.Body || "").trim();
 
-// --- BrowseAI integration ---
-async function triggerBrowseAITask(url) {
-  if (!BROWSEAI_KEY || !BROWSEAI_ROBOT_ID) {
-    log("warn", "⚠️ BrowseAI not configured");
-    return null;
-  }
-  try {
-    const resp = await fetch(`https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/tasks`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${BROWSEAI_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ inputParameters: { originUrl: url, "Origin URL": url } }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) {
-      log("warn", "⚠️ BrowseAI task create non-OK", { status: resp.status, data });
-      return null;
-    }
-    log("info", "🤖 [BrowseAI] Task created", { id: data?.id || data?.data?.id || "unknown" });
-    return data;
-  } catch (e) {
-    log("error", "❌ BrowseAI task error", { error: e.message });
-    return null;
-  }
-}
-
-// --- AI reasoning ---
-async function aiReasonFromSources({ question, facts, html, url }) {
-  try {
-    const snippet = (html || "").slice(0, HTML_SNIPPET_LIMIT);
-    const system = `
-You are "Alex", a natural and professional rental assistant for a property management company.
-Speak like a real human texting — short, natural sentences, no robotic tone.
-Use the structured FACTS first. Only rely on the HTML snippet if needed.
-Be conversational and confident, but don't guess. 
-If you don’t know something, say something like:
-"Let me double-check that for you" or "I’ll confirm that and get back to you."
-Keep answers under 2 sentences when possible.`;
-    const messages = [
-      { role: "system", content: system },
-      { role: "user", content: `FACTS:\n${JSON.stringify(facts || {}, null, 2)}` },
-      { role: "user", content: `URL:\n${url || "n/a"}` },
-      { role: "user", content: `HTML_SNIPPET:\n${snippet}` },
-      { role: "user", content: `QUESTION:\n${question}` },
-    ];
-    const ai = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages,
-      max_tokens: 250,
-      temperature: 0.3,
-    });
-    return ai.choices?.[0]?.message?.content?.trim() || "Not mentioned in the listing.";
-  } catch (err) {
-    log("error", "❌ aiReasonFromSources error", { error: err.message });
-    return "Sorry—something went wrong while checking the listing.";
-  }
-}
-
-// --- Routes ---
-app.get("/", (req, res) => res.send("✅ AI Rental Assistant is running"));
-
-// --- Init facts (Zapier/manual) ---
-app.post("/init/facts", async (req, res) => {
-  try {
-    let { leadPhone, phone, property, finalUrl, rent, unit, html } = req.body;
-    if (!property) return res.status(400).json({ error: "Missing property" });
-    const slug = slugify(property);
-    if (finalUrl && isTracker(finalUrl))
-      return res.status(422).json({ error: "Tracking/interstitial URL provided.", got: finalUrl });
-
-    const facts = {
-      address: property,
-      rent: rent || null,
-      unit: unit || null,
-      listingUrl: finalUrl || null,
-      initializedAt: nowIso(),
-      source: "init/facts",
-    };
-    await setPropertyFactsBySlug(slug, facts);
-    if (finalUrl) await mapUrlToSlug(finalUrl, slug);
-    if (html && html.length > 200) await cacheHtmlForProperty(slug, html);
-
-    const prospect = normalizePhone(leadPhone || phone);
-    if (prospect) {
-      await addPropertyForPhone(prospect, slug);
-      await setLastPropertyForPhone(prospect, slug);
-    }
-    res.json({ success: true, property: slug, data: facts });
-  } catch (e) {
-    log("error", "❌ /init/facts error", { error: e.message });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// --- Manual trigger (fixed freshness check) ---
-app.post("/init/fetch", async (req, res) => {
-  try {
-    const { property, url } = req.body;
-    if (!property || !url) return res.status(400).json({ error: "Need property + url" });
-
-    const slug = slugify(property);
-    const existing = await getPropertyFactsBySlug(slug);
-    if (existing && isRecent(existing)) {
-      log("info", "🕒 BrowseAI skipped: recent scrape exists", { slug });
-      return res.json({ ok: true, slug, skipped: true });
-    }
-
-    await mapUrlToSlug(url, slug);
-    const task = await triggerBrowseAITask(url);
-    res.json({ ok: true, slug, taskId: task?.id || task?.data?.id || null });
-  } catch (e) {
-    log("error", "❌ /init/fetch error", { error: e.message });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// --- Test ---
-app.post("/browseai/test", async (req, res) => {
-  log("info", "✅ Test webhook hit", { body: req.body });
-  res.json({ ok: true, received: req.body || "no body" });
-});
-
-// --- BrowseAI webhook ---
-app.post("/browseai/webhook", async (req, res) => {
-  try {
-    if (BROWSEAI_WEBHOOK_SECRET) {
-      const sig = req.headers["x-browseai-secret"];
-      if (sig !== BROWSEAI_WEBHOOK_SECRET) return res.status(401).send("unauthorized");
-    }
-    const payload = req.body || {};
-    log("info", "📦 [Webhook] BrowseAI data received");
-
-    const originUrl =
-      payload?.inputParameters?.["Origin URL"] ||
-      payload?.task?.inputParameters?.originUrl ||
-      payload?.results?.["Origin URL"] ||
-      payload?.input?.startUrls?.[0] || null;
-
-    let slug = originUrl ? await getSlugByUrl(originUrl) : null;
-    if (!slug && originUrl) {
-      try {
-        const u = new URL(originUrl);
-        slug = slugify(u.pathname.split("/").pop());
-      } catch {}
-    }
-    if (!slug) {
-      const nameGuess = payload?.results?.address || payload?.results?.Summary || payload?.results?.Title || "unknown-property";
-      slug = slugify(String(nameGuess));
-    }
-
-    const task = payload.task || {};
-    const captured = task.capturedTexts || payload.capturedTexts || {};
-    const results = payload.results || payload.data || {};
-
-    const normalizedFacts = {
-      address: cleanText(
-        (captured["Property Details"] || "").split("\n")[0].trim() ||
-        (captured["Summary"] || "").split("\n")[0].trim() ||
-        results.address || ""
-      ),
-      rent: cleanText(captured["Title Summary"] || results.rent),
-      floorPlan: cleanText(captured["Available Floor Plan Options"]),
-      parking: cleanText(captured["Parking Information"]),
-      utilities: cleanText(captured["Utility Information"]),
-      details: cleanText(captured["Property Details"]),
-      summary: cleanText(captured["Summary"]),
-    };
-
-    const existingFacts = (await getPropertyFactsBySlug(slug)) || {};
-    const mergedFacts = {
-      ...existingFacts,
-      ...results,
-      ...normalizedFacts,
-      listingUrl: originUrl || existingFacts.listingUrl || null,
-      updatedAt: nowIso(),
-      source: "browseai",
-    };
-
-    await setPropertyFactsBySlug(slug, mergedFacts);
-    await redis.set(`facts:${slug}`, JSON.stringify(mergedFacts));
-    if (mergedFacts.listingUrl) await mapUrlToSlug(mergedFacts.listingUrl, slug);
-
-    res.json({ ok: true, slug, saved: Object.keys(mergedFacts).length });
-  } catch (err) {
-    log("error", "❌ [Webhook error]", { error: err.message });
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// --- Twilio SMS ---
-app.post("/twiml/sms", async (req, res) => {
-  const from = normalizePhone(req.body.From);
-  const body = req.body.Body?.trim() || "";
-  log("info", "📩 SMS received", { from, body });
-  res.type("text/xml").send("<Response></Response>");
-  try {
-    let slug = await getLastPropertyForPhone(from);
-    if (!slug) {
-      const props = await getPropertiesForPhone(from);
-      slug = props && props[0];
-    }
-    if (!slug) {
-      await twilioClient.messages.create({
-        from: TWILIO_PHONE_NUMBER,
-        to: from,
-        body: "Hey! Can you send me the property link or address so I can pull up the details?",
-      });
+    if (!from || !body) {
+      res.status(200).send(""); // ack fast
       return;
     }
 
-    const facts = await getPropertyFactsBySlug(slug);
-    const url = facts?.listingUrl || null;
-    let html = await getCachedHtmlForProperty(slug);
-    if (url && !html) {
-      const t = timeStart("directFetch");
-      const fresh = await fetchListingHTML(url, slug);
-      timeEnd(t, { bytes: fresh?.length || 0 });
-      html = fresh;
+    // Analytics
+    await incCounter("inbound_sms");
+
+    // Append inbound to memory
+    await appendLeadHistory(from, "user", body);
+
+    // Try to resolve a property context for this lead
+    let property = await findBestPropertyForLead(from);
+    const summary = await getLeadSummary(from);
+    const history = await getLeadHistory(from);
+
+    // Intent detection (lightweight)
+    const intent = await detectIntent(body);
+    await redis.set(leadIntentKey(from), intent, "EX", 2 * 24 * 3600);
+
+    // Dynamic behaviors (examples)
+    if (intent === "spam_or_unknown") {
+      // Optional: silently ignore or send one polite reply
+      const reply = "Hey there — are you asking about one of our rentals? Happy to help with availability, price, or showings.";
+      await sendSms(from, reply);
+      await appendLeadHistory(from, "assistant", reply);
+      await incCounter("replied_sms");
+      res.status(200).send("");
+      return;
     }
 
-    const answer = await aiReasonFromSources({ question: body, facts, html, url });
-    await twilioClient.messages.create({ from: TWILIO_PHONE_NUMBER, to: from, body: answer });
-    log("info", "✅ SMS reply sent", { to: from, slug });
+    if (intent === "availability" && property && property.available) {
+      const reply = `Yes — it's available. Want to see it ${property.available === "Now" ? "today or tomorrow" : `around ${property.available}`}? I can offer tomorrow 6pm or Saturday 2pm.`;
+      await sendSms(from, reply);
+      await appendLeadHistory(from, "assistant", reply);
+      await maybeSummarizeHistory(from);
+      await incCounter("replied_sms");
+      res.status(200).send("");
+      return;
+    }
+
+    // General reply using unified prompt + history + property facts
+    const reply = await generateAssistantReply({
+      incomingText: body,
+      property,
+      history,
+      summary
+    });
+
+    await sendSms(from, reply);
+    await appendLeadHistory(from, "assistant", reply);
+    await maybeSummarizeHistory(from);
+    await incCounter("replied_sms");
+
+    res.status(200).send(""); // Twilio requires quick 2xx
   } catch (err) {
-    log("error", "❌ SMS send error", { error: err.message });
+    log.error({ err }, "SMS webhook error");
+    await incCounter("errors_sms");
+    // Twilio still needs a 2xx; we won't retry here
+    res.status(200).send("");
   }
 });
 
-// --- Voice ---
-app.post("/twiml/voice", (req, res) => {
-  const twiml = `<Response>
-    <Connect><Stream url="wss://${new URL(PUBLIC_BASE_URL).host}/twilio-media" /></Connect>
-    <Say voice="Polly.Joanna">Hi, connecting you to the rental assistant now.</Say>
-  </Response>`;
-  res.type("text/xml").send(twiml);
-});
+/**
+ * BrowseAI (or any scraper) → Property Ingest Webhook
+ * POST JSON payload like:
+ * {
+ *   "address": "215 16 Street Southeast, Calgary",
+ *   "slug": "215-16-street-southeast",
+ *   "unit_type": "1-Bedroom",
+ *   "rent": 1895,
+ *   "bedrooms": 1,
+ *   "bathrooms": 1,
+ *   "sqft": 620,
+ *   "parking": "Included",
+ *   "pets": "Small pets OK",
+ *   "utilities": "Heat & Water Included",
+ *   "available": "Nov 1",
+ *   "application_url": "https://...",
+ *   "photos_url": "https://...",
+ *   "source_url": "https://..."
+ * }
+ * Optionally pass lead_phone to bind a lead → property.
+ */
+app.post("/browseai/webhook", async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const slug = slugify(payload.slug || payload.address);
+    if (!slug) return res.status(400).json({ ok: false, error: "Missing property slug/address" });
 
-// --- Debug + WebSocket ---
-app.get("/debug/facts", async (req, res) => {
-  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
-  const slug = slugify(req.query.property || "");
-  const facts = await getPropertyFactsBySlug(slug);
-  res.json({ slug, facts });
-});
-app.get("/debug/html", async (req, res) => {
-  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
-  const slug = slugify(req.query.property || "");
-  const html = await getCachedHtmlForProperty(slug);
-  if (!html) return res.status(404).send("No cached HTML");
-  res.type("text/plain").send(html.slice(0, 4000));
-});
+    const prop = await setPropertyContext({ ...payload, slug });
+    await incCounter("property_ingest");
 
-// --- WebSocket (Twilio media stream placeholder) ---
-const server = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true });
+    // If lead phone provided, link it
+    if (payload.lead_phone) {
+      const phone = normalizePhone(payload.lead_phone);
+      if (phone) {
+        await redis.sadd(leadPropsKey(phone), slug);
+        await redis.sadd(perPropLeadIdx(slug), phone);
+      }
+    }
 
-server.on("upgrade", (req, socket, head) => {
-  if (req.url === "/twilio-media") {
-    wss.handleUpgrade(req, socket, head, ws => wss.emit("connection", ws, req));
-  } else {
-    socket.destroy();
+    res.json({ ok: true, slug: prop.slug, stored: true });
+  } catch (err) {
+    log.error({ err }, "Property ingest error");
+    await incCounter("errors_ingest");
+    res.status(500).json({ ok: false });
   }
 });
 
-wss.on("connection", ws => {
-  log("info", "🔊 Twilio media stream connected!");
+// ---------- LIGHT UTILITIES / INSIGHTS ----------
+app.get("/health", async (_req, res) => {
+  try {
+    const pong = await redis.ping();
+    res.json({ ok: true, redis: pong === "PONG", time: nowIso(), env: NODE_ENV });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
 });
 
-// --- Start server ---
-server.listen(PORT, () => {
-  log("info", "✅ Server listening", { port: PORT });
-  log("info", "💬 SMS endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/sms` });
-  log("info", "🌐 Voice endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/voice` });
-  log("info", "🧠 Init facts endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/init/facts` });
-  log("info", "🤖 BrowseAI webhook", { method: "POST", url: `${PUBLIC_BASE_URL}/browseai/webhook` });
-  log("info", "🔍 Init fetch (BrowseAI)", { method: "POST", url: `${PUBLIC_BASE_URL}/init/fetch` });
+// simple JSON view for a lead’s recent history + summary (for debugging)
+app.get("/debug/lead", async (req, res) => {
+  const phone = normalizePhone(req.query.phone || "");
+  if (!phone) return res.status(400).json({ ok: false, error: "Provide ?phone=+1..." });
+  const [history, summary, intent] = await Promise.all([
+    getLeadHistory(phone),
+    getLeadSummary(phone),
+    redis.get(leadIntentKey(phone))
+  ]);
+  res.json({ ok: true, phone, intent, summary, history });
+});
+
+// quick peek at a property
+app.get("/debug/property/:slug", async (req, res) => {
+  const prop = await getPropertyContext(req.params.slug);
+  if (!prop) return res.status(404).json({ ok: false, error: "Not found" });
+  res.json({ ok: true, prop });
+});
+
+// ---------- START ----------
+app.listen(PORT, () => {
+  log.info(`🚀 AI Leasing Assistant v2 running on :${PORT} (${NODE_ENV})`);
 });
