@@ -24,10 +24,9 @@ const {
   TWILIO_AUTH_TOKEN,
   TWILIO_MESSAGING_SERVICE_SID,
   TWILIO_PHONE_NUMBER,
-  TWILIO_FROM_NUMBER: ENV_TWILIO_FROM_NUMBER, // optional alias
+  TWILIO_FROM_NUMBER: ENV_TWILIO_FROM_NUMBER,
 } = process.env;
 
-// Backward-compatible variable (uses either one)
 const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
 
 // ---------- ENV ----------
@@ -38,10 +37,6 @@ const {
   OPENAI_API_KEY,
   OPENAI_MODEL = "gpt-4o-mini",
   OPENAI_MODEL_SUMMARY = "gpt-4o-mini",
-  TWILIO_ACCOUNT_SID,
-  TWILIO_AUTH_TOKEN,
-  TWILIO_MESSAGING_SERVICE_SID, // or TWILIO_FROM_NUMBER
-  TWILIO_FROM_NUMBER,
 } = process.env;
 
 // ---------- GUARDS ----------
