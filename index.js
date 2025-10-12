@@ -421,4 +421,36 @@ app.get("/debug/facts", async (req, res) => {
   const facts = await getPropertyFactsBySlug(slug);
   res.json({ slug, facts });
 });
-app.get("/debug/html", async (req,
+app.get("/debug/html", async (req, res) => {
+  if (req.query.key !== DEBUG_SECRET) return res.status(401).send("Unauthorized");
+  const slug = slugify(req.query.property || "");
+  const html = await getCachedHtmlForProperty(slug);
+  if (!html) return res.status(404).send("No cached HTML");
+  res.type("text/plain").send(html.slice(0, 4000));
+});
+
+// --- WebSocket (Twilio media stream placeholder) ---
+const server = http.createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+
+server.on("upgrade", (req, socket, head) => {
+  if (req.url === "/twilio-media") {
+    wss.handleUpgrade(req, socket, head, ws => wss.emit("connection", ws, req));
+  } else {
+    socket.destroy();
+  }
+});
+
+wss.on("connection", ws => {
+  log("info", "🔊 Twilio media stream connected!");
+});
+
+// --- Start server ---
+server.listen(PORT, () => {
+  log("info", "✅ Server listening", { port: PORT });
+  log("info", "💬 SMS endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/sms` });
+  log("info", "🌐 Voice endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/twiml/voice` });
+  log("info", "🧠 Init facts endpoint", { method: "POST", url: `${PUBLIC_BASE_URL}/init/facts` });
+  log("info", "🤖 BrowseAI webhook", { method: "POST", url: `${PUBLIC_BASE_URL}/browseai/webhook` });
+  log("info", "🔍 Init fetch (BrowseAI)", { method: "POST", url: `${PUBLIC_BASE_URL}/init/fetch` });
+});
