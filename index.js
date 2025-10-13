@@ -254,7 +254,7 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-// ---------- BROWSEAI WEBHOOK (V1 ORIGINAL STYLE) ----------
+// ---------- BROWSEAI WEBHOOK (V1 ORIGINAL STYLE, FIXED COUNTER CALL) ----------
 app.post("/browseai/webhook", async (req, res) => {
   try {
     const body = req.body || {};
@@ -273,16 +273,18 @@ app.post("/browseai/webhook", async (req, res) => {
     // 🧭 Derive property slug from multiple possible fields
     const slug = slugify(
       data.slug ||
-      data.address ||
-      data.Summary ||
-      data["Property Details"] ||
-      data["Title Summary"] ||
-      ""
+        data.address ||
+        data.Summary ||
+        data["Property Details"] ||
+        data["Title Summary"] ||
+        ""
     );
 
     if (!slug) {
       console.warn("⚠️ BrowseAI webhook missing slug/address field:", body);
-      return res.status(200).json({ ok: false, error: "Missing property slug/address" });
+      return res
+        .status(200)
+        .json({ ok: false, error: "Missing property slug/address" });
     }
 
     const key = propertyKey(slug);
@@ -310,7 +312,10 @@ app.post("/browseai/webhook", async (req, res) => {
       await redis.sadd(perPropLeadIdx(slug), leadPhone);
     }
 
-    await incCounter("property_ingest");
+    // ✅ Safely increment analytics if helper exists
+    if (typeof incCounter === "function") {
+      await incCounter("property_ingest");
+    }
 
     console.log(`🏗️ [V1-style] Stored property: ${slug}`);
     console.log(`📦 Fields received: ${Object.keys(data).length}`);
@@ -318,7 +323,9 @@ app.post("/browseai/webhook", async (req, res) => {
     res.json({ ok: true, slug, stored: true });
   } catch (err) {
     console.error("❌ BrowseAI ingest error:", err);
-    await incCounter("errors_ingest");
+    if (typeof incCounter === "function") {
+      await incCounter("errors_ingest");
+    }
     res.status(500).json({ ok: false });
   }
 });
