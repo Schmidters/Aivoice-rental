@@ -204,16 +204,22 @@ app.post("/twilio/sms", async (req, res) => {
       }
     }
 
+    console.log("🏠 Property resolved:", property ? property.slug : "none");
+
     // Generate AI reply
     const reply = await aiReasonFromSources(body, property, intent);
+    console.log("💬 AI reply generated:", reply);
+
     await sendSms(from, reply);
-    console.log("✅ AI reply sent:", reply);
+    console.log("✅ SMS sent to lead:", from);
+
     res.status(200).send("");
   } catch (err) {
     console.error("❌ SMS webhook error:", err);
     res.status(200).send("");
   }
 });
+
 
 // Zapier → Property ingest (unchanged)
 app.post("/init/facts", async (req, res) => {
