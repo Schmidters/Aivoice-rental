@@ -1,17 +1,16 @@
 /**
- * AI Voice Rental — Stable v1 + Intent Brain + Restored BrowseAI Webhook
- * ---------------------------------------------------------------------
+ * AI Voice Rental — Stable v1 + Intent Brain + BrowseAI Webhook + Sync Bridge
+ * --------------------------------------------------------------------------
  * - Keeps all original v1 webhooks (Twilio + Zapier)
  * - Restores full BrowseAI webhook from v1
+ * - Re-adds sync bridge (auto-link scraped data to existing leads)
  * - Adds lightweight OpenAI-based intent detection
  * - Includes safe debug logging for Render
- * - No breaking changes
  */
 
 import express from "express";
 import bodyParser from "body-parser";
 import Redis from "ioredis";
-import { v4 as uuidv4 } from "uuid";
 import OpenAI from "openai";
 import twilio from "twilio";
 import dotenv from "dotenv";
@@ -57,10 +56,8 @@ const normalizePhone = (num) => {
   if (!s.startsWith("+")) s = "+1" + s.replace(/[^\d]/g, "");
   return s;
 };
-
 const slugify = (s) =>
   (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
-
 const propertyKey = (slug) => `property:${slug}`;
 const leadPropsKey = (phone) => `lead:${phone}:properties`;
 const perPropLeadIdx = (slug) => `property:${slug}:leads`;
@@ -75,12 +72,10 @@ async function setPropertyContext(obj) {
   await redis.set(key, JSON.stringify(data), "EX", 6 * 3600);
   return data;
 }
-
 async function getPropertyContext(slug) {
   const raw = await redis.get(propertyKey(slug));
   return raw ? JSON.parse(raw) : null;
 }
-
 async function findBestPropertyForLead(phone) {
   const props = await redis.smembers(leadPropsKey(phone));
   if (props.length) {
@@ -106,7 +101,6 @@ const INTENT_LABELS = [
   "general_info",
   "spam_or_unknown",
 ];
-
 async function detectIntent(text) {
   try {
     const sys = `Classify the user's SMS into one of these labels: ${INTENT_LABELS.join(
@@ -143,27 +137,21 @@ Property Info:
 - Utilities: ${property.utilities || "N/A"}
 `;
   }
-
   const systemPrompt = `
 You are a warm, human-sounding leasing assistant for a property management company.
 Never say you're an AI. Be concise and helpful.
 If intent is "${intent}", adjust tone accordingly.`;
 
-  const messages = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: `${context}\n\nLead message: ${prompt}` },
-  ];
-
   try {
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       temperature: 0.5,
-      messages,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `${context}\n\nLead message: ${prompt}` },
+      ],
     });
-    return (
-      resp.choices?.[0]?.message?.content?.trim() ||
-      "Thanks for reaching out!"
-    );
+    return resp.choices?.[0]?.message?.content?.trim() || "Thanks for reaching out!";
   } catch (err) {
     console.error("❌ OpenAI reply error:", err);
     return "Hey! Thanks for reaching out — when would you like to see the place?";
@@ -192,7 +180,6 @@ app.post("/twilio/sms", async (req, res) => {
     const intent = await detectIntent(body);
     console.log("🎯 Detected intent:", intent);
 
-    // Find property context
     let property = await findBestPropertyForLead(from);
 
     // Auto-fallback (ignore :leads keys)
@@ -236,9 +223,7 @@ app.post("/init/facts", async (req, res) => {
     const { leadPhone, property, unit, finalUrl } = req.body || {};
     const slug = slugify(property);
     if (!slug)
-      return res
-        .status(400)
-        .json({ ok: false, error: "Missing property address" });
+      return res.status(400).json({ ok: false, error: "Missing property address" });
 
     const prop = await setPropertyContext({
       address: property,
@@ -261,7 +246,7 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-// ✅ Restored BrowseAI webhook (full property ingestion)
+// ✅ Restored BrowseAI webhook (full property ingestion + sync bridge)
 app.post("/browseai/webhook", async (req, res) => {
   try {
     const payload = req.body || {};
@@ -273,10 +258,20 @@ app.post("/browseai/webhook", async (req, res) => {
 
     const prop = await setPropertyContext({ ...payload, slug });
 
+    // Link provided lead_phone (if any)
     if (payload.lead_phone) {
       const phone = normalizePhone(payload.lead_phone);
       await redis.sadd(leadPropsKey(phone), slug);
       await redis.sadd(perPropLeadIdx(slug), phone);
+    }
+
+    // 🔁 Sync Bridge: find all existing leads linked to this property and update them
+    const existingLeads = await redis.smembers(perPropLeadIdx(slug));
+    if (existingLeads.length) {
+      for (const phone of existingLeads) {
+        await redis.sadd(leadPropsKey(phone), slug);
+      }
+      console.log(`🔗 Sync bridge linked ${existingLeads.length} existing lead(s) → ${slug}`);
     }
 
     console.log("🏗️ BrowseAI webhook stored property:", slug);
@@ -295,13 +290,11 @@ app.get("/debug/lead", async (req, res) => {
   const props = await redis.smembers(leadPropsKey(phone));
   res.json({ ok: true, phone, properties: props });
 });
-
 app.get("/debug/property/:slug", async (req, res) => {
   const prop = await getPropertyContext(req.params.slug);
   if (!prop) return res.status(404).json({ ok: false, error: "Not found" });
   res.json({ ok: true, prop });
 });
-
 app.get("/health", async (_req, res) => {
   try {
     const pong = await redis.ping();
@@ -313,5 +306,5 @@ app.get("/health", async (_req, res) => {
 
 // ---------- START ----------
 app.listen(PORT, () => {
-  console.log(`🚀 Stable v1 + Intent Brain + BrowseAI webhook running on :${PORT} (${NODE_ENV})`);
+  console.log(`🚀 Stable v1 + Intent Brain + BrowseAI + Sync Bridge running on :${PORT} (${NODE_ENV})`);
 });
