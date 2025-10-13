@@ -191,18 +191,24 @@ app.post("/twilio/sms", async (req, res) => {
     // Try to find property context
     let property = await findBestPropertyForLead(from);
 
-    // Auto-fallback: if no linked property, use latest cached one
-    if (!property) {
-      const keys = await redis.keys("property:*");
-      if (keys.length) {
-        const recent = keys.sort().reverse()[0];
-        property = JSON.parse(await redis.get(recent));
-        if (property) {
-          await redis.sadd(leadPropsKey(from), property.slug);
-          await redis.sadd(perPropLeadIdx(property.slug), from);
-        }
-      }
+// Auto-fallback: if no linked property, use latest cached one
+if (!property) {
+  const keys = (await redis.keys("property:*")).filter(k => !k.endsWith(":leads"));
+  if (keys.length) {
+    const recent = keys.sort().reverse()[0];
+    const raw = await redis.get(recent);
+    try {
+      property = JSON.parse(raw);
+    } catch {
+      property = null;
     }
+    if (property) {
+      await redis.sadd(leadPropsKey(from), property.slug);
+      await redis.sadd(perPropLeadIdx(property.slug), from);
+    }
+  }
+}
+
 
     console.log("🏠 Property resolved:", property ? property.slug : "none");
 
