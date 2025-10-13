@@ -323,6 +323,40 @@ app.get("/health", async (_req, res) => {
   }
 });
 
+// ---------- DEBUG ROUTES ----------
+
+// Quick peek at a lead’s conversation
+app.get("/debug/lead", async (req, res) => {
+  try {
+    const phone = normalizePhone(req.query.phone || "");
+    if (!phone) return res.status(400).json({ ok: false, error: "Provide ?phone=+1..." });
+
+    const [history, summary, intent, props] = await Promise.all([
+      getLeadHistory(phone),
+      getLeadSummary(phone),
+      redis.get(leadIntentKey(phone)),
+      redis.smembers(leadPropsKey(phone))
+    ]);
+
+    res.json({ ok: true, phone, intent, summary, properties: props, history });
+  } catch (err) {
+    console.error("❌ /debug/lead error:", err);
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+// Quick peek at a property
+app.get("/debug/property/:slug", async (req, res) => {
+  try {
+    const prop = await getPropertyContext(req.params.slug);
+    if (!prop) return res.status(404).json({ ok: false, error: "Not found" });
+    res.json({ ok: true, prop });
+  } catch (err) {
+    console.error("❌ /debug/property error:", err);
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
 // ---------- START ----------
 app.listen(PORT, () => {
   log.info(`🚀 AI Leasing Assistant v2 running on :${PORT} (${NODE_ENV})`);
