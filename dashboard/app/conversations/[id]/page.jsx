@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import ChatBubble from "@/components/ChatBubble";
-import ChatInput from "@/components/ChatInput";
+import ChatBubble from "../../components/ChatBubble";
+import ChatInput from "../../components/ChatInput";
 
 export default function ConversationThread() {
   const { id } = useParams();
