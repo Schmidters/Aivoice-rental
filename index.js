@@ -254,96 +254,75 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-// ✅ BrowseAI webhook — single source of truth
-// ---------- BROWSEAI WEBHOOK (V1-style + V2 hybrid) ----------
+// ---------- BROWSEAI WEBHOOK (V1 ORIGINAL STYLE) ----------
 app.post("/browseai/webhook", async (req, res) => {
   try {
-    const data = req.body || {};
+    const body = req.body || {};
+    const task = body.task || {};
+    const texts = task.capturedTexts || {};
+    const input = task.inputParameters || {};
 
-    // 🧠 Attempt to resolve the property slug/address
-    const slug =
-      slugify(
-        data.slug ||
-          data.address ||
-          data.Summary ||
-          data["Property Details"] ||
-          data["Summary Column"] ||
-          ""
-      );
+    // 🔄 Merge all possible data sources (BrowseAI sends deep JSON)
+    const data = {
+      ...body,
+      ...task,
+      ...texts,
+      origin_url: input.originUrl || body.origin_url || "",
+    };
+
+    // 🧭 Derive property slug from multiple possible fields
+    const slug = slugify(
+      data.slug ||
+      data.address ||
+      data.Summary ||
+      data["Property Details"] ||
+      data["Title Summary"] ||
+      ""
+    );
 
     if (!slug) {
-      console.warn("⚠️ BrowseAI webhook missing slug/address field:", data);
-      return res.status(400).json({ ok: false, error: "Missing property slug/address" });
+      console.warn("⚠️ BrowseAI webhook missing slug/address field:", body);
+      return res.status(200).json({ ok: false, error: "Missing property slug/address" });
     }
 
     const key = propertyKey(slug);
+
+    // 🧱 Retrieve existing data (if any)
     const existingRaw = await redis.get(key);
     const existing = existingRaw ? JSON.parse(existingRaw) : {};
 
-    // 🧩 Build normalized fields (for GPT clarity)
-    const normalized = {
-      address:
-        data.address ||
-        data.Summary ||
-        data["Property Details"] ||
-        existing.address ||
-        "",
-      rent: data.rent || data["Title Summary"] || existing.rent || "",
-      unit_type:
-        data.unit_type ||
-        data["Available Floor Plan Options"] ||
-        existing.unit_type ||
-        "",
-      parking:
-        data.parking ||
-        data["Parking Information"] ||
-        data["Parking Information Provided by Rentals.ca"] ||
-        existing.parking ||
-        "",
-      utilities:
-        data.utilities ||
-        data["Utility Information"] ||
-        data["Utilities Included"] ||
-        existing.utilities ||
-        "",
-      source_url: data["Origin URL"] || data.source_url || existing.source_url || "",
+    // 🧠 Merge everything into one large record
+    const merged = {
+      ...existing,
+      ...data,
+      slug,
       last_updated: new Date().toISOString(),
     };
 
-    // 🧠 Merge raw data (for backwards compatibility)
-    const merged = {
-      ...existing,
-      ...data, // keep all raw BrowseAI fields
-      slug,
-      normalized,
-      last_updated: normalized.last_updated,
-    };
-
-    // 🧱 Save back to Redis
+    // 🪣 Save property record (6h expiry)
     await redis.set(key, JSON.stringify(merged), "EX", 6 * 3600);
 
-    // 🔗 Link to any known leads
-    if (data.lead_phone) {
-      const phone = normalizePhone(data.lead_phone);
-      if (phone) {
-        await redis.sadd(leadPropsKey(phone), slug);
-        await redis.sadd(perPropLeadIdx(slug), phone);
-      }
+    // 🔗 Link property ↔ lead if a phone was passed
+    const leadPhone =
+      normalizePhone(data.lead_phone || body.leadPhone || task.lead_phone || "");
+    if (leadPhone) {
+      await redis.sadd(leadPropsKey(leadPhone), slug);
+      await redis.sadd(perPropLeadIdx(slug), leadPhone);
     }
 
-    // 🧮 Increment analytics counter
     await incCounter("property_ingest");
 
-    console.log(`🏗️ BrowseAI webhook stored property: ${slug}`);
-    console.log(`🔢 Fields stored: ${Object.keys(normalized).join(", ")}`);
+    console.log(`🏗️ [V1-style] Stored property: ${slug}`);
+    console.log(`📦 Fields received: ${Object.keys(data).length}`);
 
-    res.json({ ok: true, slug, stored: true, normalized });
+    res.json({ ok: true, slug, stored: true });
   } catch (err) {
     console.error("❌ BrowseAI ingest error:", err);
     await incCounter("errors_ingest");
     res.status(500).json({ ok: false });
   }
 });
+
 
 
 // ---------- DEBUG + HEALTH ----------
