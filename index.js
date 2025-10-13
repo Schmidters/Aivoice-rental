@@ -1,10 +1,11 @@
 /**
- * AI Voice Rental — Stable v1 + Intent Brain Expansion
- * ----------------------------------------------------
- * - Keeps all original webhooks (Twilio + Zapier)
+ * AI Voice Rental — Stable v1 + Intent Brain + Restored BrowseAI Webhook
+ * ---------------------------------------------------------------------
+ * - Keeps all original v1 webhooks (Twilio + Zapier)
+ * - Restores full BrowseAI webhook from v1
  * - Adds lightweight OpenAI-based intent detection
- * - Enhances AI replies with contextual understanding
- * - No breaking changes to existing flows
+ * - Includes safe debug logging for Render
+ * - No breaking changes
  */
 
 import express from "express";
@@ -27,7 +28,7 @@ const {
   TWILIO_AUTH_TOKEN,
   TWILIO_MESSAGING_SERVICE_SID,
   TWILIO_PHONE_NUMBER,
-  TWILIO_FROM_NUMBER: ENV_TWILIO_FROM_NUMBER
+  TWILIO_FROM_NUMBER: ENV_TWILIO_FROM_NUMBER,
 } = process.env;
 
 const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
@@ -44,6 +45,7 @@ if (!TWILIO_MESSAGING_SERVICE_SID && !TWILIO_FROM_NUMBER)
 const app = express();
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
+
 const redis = new Redis(REDIS_URL, { lazyConnect: false });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -60,6 +62,8 @@ const slugify = (s) =>
   (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
 
 const propertyKey = (slug) => `property:${slug}`;
+const leadPropsKey = (phone) => `lead:${phone}:properties`;
+const perPropLeadIdx = (slug) => `property:${slug}:leads`;
 const nowIso = () => new Date().toISOString();
 
 // ---------- PROPERTY STORAGE ----------
@@ -76,9 +80,6 @@ async function getPropertyContext(slug) {
   const raw = await redis.get(propertyKey(slug));
   return raw ? JSON.parse(raw) : null;
 }
-
-const leadPropsKey = (phone) => `lead:${phone}:properties`;
-const perPropLeadIdx = (slug) => `property:${slug}:leads`;
 
 async function findBestPropertyForLead(phone) {
   const props = await redis.smembers(leadPropsKey(phone));
@@ -103,7 +104,7 @@ const INTENT_LABELS = [
   "application_process",
   "negotiation",
   "general_info",
-  "spam_or_unknown"
+  "spam_or_unknown",
 ];
 
 async function detectIntent(text) {
@@ -116,8 +117,8 @@ async function detectIntent(text) {
       temperature: 0,
       messages: [
         { role: "system", content: sys },
-        { role: "user", content: text }
-      ]
+        { role: "user", content: text },
+      ],
     });
     const label = resp.choices?.[0]?.message?.content?.trim();
     return INTENT_LABELS.includes(label) ? label : "general_info";
@@ -139,6 +140,7 @@ Property Info:
 - Available: ${property.available || "N/A"}
 - Parking: ${property.parking || "N/A"}
 - Pets: ${property.pets || "N/A"}
+- Utilities: ${property.utilities || "N/A"}
 `;
   }
 
@@ -149,16 +151,19 @@ If intent is "${intent}", adjust tone accordingly.`;
 
   const messages = [
     { role: "system", content: systemPrompt },
-    { role: "user", content: `${context}\n\nLead message: ${prompt}` }
+    { role: "user", content: `${context}\n\nLead message: ${prompt}` },
   ];
 
   try {
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       temperature: 0.5,
-      messages
+      messages,
     });
-    return resp.choices?.[0]?.message?.content?.trim() || "Thanks for reaching out!";
+    return (
+      resp.choices?.[0]?.message?.content?.trim() ||
+      "Thanks for reaching out!"
+    );
   } catch (err) {
     console.error("❌ OpenAI reply error:", err);
     return "Hey! Thanks for reaching out — when would you like to see the place?";
@@ -184,35 +189,34 @@ app.post("/twilio/sms", async (req, res) => {
     console.log("📩 Inbound SMS:", from, body);
     if (!from || !body) return res.status(200).send("");
 
-    // Detect intent
     const intent = await detectIntent(body);
     console.log("🎯 Detected intent:", intent);
 
-    // Try to find property context
+    // Find property context
     let property = await findBestPropertyForLead(from);
 
-// Auto-fallback: if no linked property, use latest cached one
-if (!property) {
-  const keys = (await redis.keys("property:*")).filter(k => !k.endsWith(":leads"));
-  if (keys.length) {
-    const recent = keys.sort().reverse()[0];
-    const raw = await redis.get(recent);
-    try {
-      property = JSON.parse(raw);
-    } catch {
-      property = null;
+    // Auto-fallback (ignore :leads keys)
+    if (!property) {
+      const keys = (await redis.keys("property:*")).filter(
+        (k) => !k.endsWith(":leads")
+      );
+      if (keys.length) {
+        const recent = keys.sort().reverse()[0];
+        const raw = await redis.get(recent);
+        try {
+          property = JSON.parse(raw);
+        } catch {
+          property = null;
+        }
+        if (property) {
+          await redis.sadd(leadPropsKey(from), property.slug);
+          await redis.sadd(perPropLeadIdx(property.slug), from);
+        }
+      }
     }
-    if (property) {
-      await redis.sadd(leadPropsKey(from), property.slug);
-      await redis.sadd(perPropLeadIdx(property.slug), from);
-    }
-  }
-}
-
 
     console.log("🏠 Property resolved:", property ? property.slug : "none");
 
-    // Generate AI reply
     const reply = await aiReasonFromSources(body, property, intent);
     console.log("💬 AI reply generated:", reply);
 
@@ -226,20 +230,22 @@ if (!property) {
   }
 });
 
-
-// Zapier → Property ingest (unchanged)
+// Zapier → Property ingest (simple facts)
 app.post("/init/facts", async (req, res) => {
   try {
     const { leadPhone, property, unit, finalUrl } = req.body || {};
     const slug = slugify(property);
-    if (!slug) return res.status(400).json({ ok: false, error: "Missing property" });
+    if (!slug)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing property address" });
 
     const prop = await setPropertyContext({
       address: property,
       slug,
       unit_type: unit,
       source_url: finalUrl,
-      lead_phone: leadPhone
+      lead_phone: leadPhone,
     });
 
     if (leadPhone) {
@@ -255,10 +261,37 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-// Debug endpoints (optional)
+// ✅ Restored BrowseAI webhook (full property ingestion)
+app.post("/browseai/webhook", async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const slug = slugify(payload.slug || payload.address);
+    if (!slug)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing property slug/address" });
+
+    const prop = await setPropertyContext({ ...payload, slug });
+
+    if (payload.lead_phone) {
+      const phone = normalizePhone(payload.lead_phone);
+      await redis.sadd(leadPropsKey(phone), slug);
+      await redis.sadd(perPropLeadIdx(slug), phone);
+    }
+
+    console.log("🏗️ BrowseAI webhook stored property:", slug);
+    res.json({ ok: true, slug: prop.slug, stored: true });
+  } catch (err) {
+    console.error("❌ Property ingest error:", err);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// ---------- DEBUG + HEALTH ----------
 app.get("/debug/lead", async (req, res) => {
   const phone = normalizePhone(req.query.phone || "");
-  if (!phone) return res.status(400).json({ ok: false, error: "Provide ?phone=+1..." });
+  if (!phone)
+    return res.status(400).json({ ok: false, error: "Provide ?phone=+1..." });
   const props = await redis.smembers(leadPropsKey(phone));
   res.json({ ok: true, phone, properties: props });
 });
@@ -269,7 +302,16 @@ app.get("/debug/property/:slug", async (req, res) => {
   res.json({ ok: true, prop });
 });
 
+app.get("/health", async (_req, res) => {
+  try {
+    const pong = await redis.ping();
+    res.json({ ok: true, redis: pong === "PONG", time: nowIso(), env: NODE_ENV });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
 // ---------- START ----------
 app.listen(PORT, () => {
-  console.log(`🚀 Stable v1 + Intent Brain running on :${PORT} (${NODE_ENV})`);
+  console.log(`🚀 Stable v1 + Intent Brain + BrowseAI webhook running on :${PORT} (${NODE_ENV})`);
 });
