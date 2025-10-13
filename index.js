@@ -1,11 +1,10 @@
 /**
- * AI Voice Rental — Stable v1 + Intent Brain + BrowseAI Webhook + Sync Bridge
- * --------------------------------------------------------------------------
- * - Keeps all original v1 webhooks (Twilio + Zapier)
- * - Restores full BrowseAI webhook from v1
- * - Re-adds sync bridge (auto-link scraped data to existing leads)
- * - Adds lightweight OpenAI-based intent detection
- * - Includes safe debug logging for Render
+ * AI Voice Rental — Hybrid v2.1
+ * ------------------------------------------------------------------
+ * ✅ Keeps stable v1 logic (Twilio, Zapier, BrowseAI ingestion)
+ * ✅ BrowseAI = single source of truth for property facts
+ * ✅ v2 smarts (intent detection, lead memory, logging)
+ * ✅ Compatible with Render + Twilio + Zapier + BrowseAI
  */
 
 import express from "express";
@@ -67,15 +66,22 @@ const nowIso = () => new Date().toISOString();
 async function setPropertyContext(obj) {
   const slug = slugify(obj.slug || obj.address);
   if (!slug) throw new Error("Property slug/address required");
+
   const key = propertyKey(slug);
-  const data = { slug, last_updated: nowIso(), ...obj };
-  await redis.set(key, JSON.stringify(data), "EX", 6 * 3600);
-  return data;
+  const existingRaw = await redis.get(key);
+  const existing = existingRaw ? JSON.parse(existingRaw) : {};
+
+  // ✅ Merge existing + new data (BrowseAI overwrites missing fields)
+  const merged = { ...existing, ...obj, slug, last_updated: nowIso() };
+  await redis.set(key, JSON.stringify(merged), "EX", 6 * 3600);
+  return merged;
 }
+
 async function getPropertyContext(slug) {
   const raw = await redis.get(propertyKey(slug));
   return raw ? JSON.parse(raw) : null;
 }
+
 async function findBestPropertyForLead(phone) {
   const props = await redis.smembers(leadPropsKey(phone));
   if (props.length) {
@@ -125,6 +131,7 @@ async function detectIntent(text) {
 // ---------- AI REASONING ----------
 async function aiReasonFromSources(prompt, property, intent) {
   let context = "";
+
   if (property) {
     context = `
 Property Info:
@@ -135,8 +142,10 @@ Property Info:
 - Parking: ${property.parking || "N/A"}
 - Pets: ${property.pets || "N/A"}
 - Utilities: ${property.utilities || "N/A"}
+- Deposit: ${property.deposit || "N/A"}
 `;
   }
+
   const systemPrompt = `
 You are a warm, human-sounding leasing assistant for a property management company.
 Never say you're an AI. Be concise and helpful.
@@ -151,7 +160,10 @@ If intent is "${intent}", adjust tone accordingly.`;
         { role: "user", content: `${context}\n\nLead message: ${prompt}` },
       ],
     });
-    return resp.choices?.[0]?.message?.content?.trim() || "Thanks for reaching out!";
+    return (
+      resp.choices?.[0]?.message?.content?.trim() ||
+      "Thanks for reaching out!"
+    );
   } catch (err) {
     console.error("❌ OpenAI reply error:", err);
     return "Hey! Thanks for reaching out — when would you like to see the place?";
@@ -182,22 +194,18 @@ app.post("/twilio/sms", async (req, res) => {
 
     let property = await findBestPropertyForLead(from);
 
-    // Auto-fallback (ignore :leads keys)
+    // fallback — get latest property if none linked
     if (!property) {
       const keys = (await redis.keys("property:*")).filter(
         (k) => !k.endsWith(":leads")
       );
       if (keys.length) {
-        const recent = keys.sort().reverse()[0];
-        const raw = await redis.get(recent);
+        const latestKey = keys.sort().reverse()[0];
+        const raw = await redis.get(latestKey);
         try {
           property = JSON.parse(raw);
         } catch {
           property = null;
-        }
-        if (property) {
-          await redis.sadd(leadPropsKey(from), property.slug);
-          await redis.sadd(perPropLeadIdx(property.slug), from);
         }
       }
     }
@@ -217,7 +225,7 @@ app.post("/twilio/sms", async (req, res) => {
   }
 });
 
-// Zapier → Property ingest (simple facts)
+// Zapier → property stub
 app.post("/init/facts", async (req, res) => {
   try {
     const { leadPhone, property, unit, finalUrl } = req.body || {};
@@ -246,7 +254,7 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-// ✅ Restored BrowseAI webhook (full property ingestion + sync bridge)
+// ✅ BrowseAI webhook — single source of truth
 app.post("/browseai/webhook", async (req, res) => {
   try {
     const payload = req.body || {};
@@ -256,25 +264,28 @@ app.post("/browseai/webhook", async (req, res) => {
         .status(400)
         .json({ ok: false, error: "Missing property slug/address" });
 
+    // ✅ Overwrite existing data with BrowseAI truth
     const prop = await setPropertyContext({ ...payload, slug });
 
-    // Link provided lead_phone (if any)
+    // Link lead to property (if provided)
     if (payload.lead_phone) {
       const phone = normalizePhone(payload.lead_phone);
       await redis.sadd(leadPropsKey(phone), slug);
       await redis.sadd(perPropLeadIdx(slug), phone);
     }
 
-    // 🔁 Sync Bridge: find all existing leads linked to this property and update them
+    // 🔁 Sync bridge — propagate updated data to all linked leads
     const existingLeads = await redis.smembers(perPropLeadIdx(slug));
     if (existingLeads.length) {
       for (const phone of existingLeads) {
         await redis.sadd(leadPropsKey(phone), slug);
       }
-      console.log(`🔗 Sync bridge linked ${existingLeads.length} existing lead(s) → ${slug}`);
+      console.log(
+        `🔗 Sync bridge linked ${existingLeads.length} existing lead(s) → ${slug}`
+      );
     }
 
-    console.log("🏗️ BrowseAI webhook stored property:", slug);
+    console.log("🏗️ BrowseAI webhook stored full property:", slug);
     res.json({ ok: true, slug: prop.slug, stored: true });
   } catch (err) {
     console.error("❌ Property ingest error:", err);
@@ -290,11 +301,13 @@ app.get("/debug/lead", async (req, res) => {
   const props = await redis.smembers(leadPropsKey(phone));
   res.json({ ok: true, phone, properties: props });
 });
+
 app.get("/debug/property/:slug", async (req, res) => {
   const prop = await getPropertyContext(req.params.slug);
   if (!prop) return res.status(404).json({ ok: false, error: "Not found" });
   res.json({ ok: true, prop });
 });
+
 app.get("/health", async (_req, res) => {
   try {
     const pong = await redis.ping();
@@ -306,5 +319,7 @@ app.get("/health", async (_req, res) => {
 
 // ---------- START ----------
 app.listen(PORT, () => {
-  console.log(`🚀 Stable v1 + Intent Brain + BrowseAI + Sync Bridge running on :${PORT} (${NODE_ENV})`);
+  console.log(
+    `🚀 AI Voice Rental v2.1 running on :${PORT} (${NODE_ENV}) — BrowseAI = source of truth`
+  );
 });
