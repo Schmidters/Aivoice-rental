@@ -3,7 +3,7 @@ export const metadata = {
   description: "Clean analytics for your AI rental assistant",
 };
 
-import "./globals.css";
+import "../globals.css";
 
 export default function RootLayout({ children }) {
   return (
