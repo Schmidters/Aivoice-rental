@@ -255,43 +255,96 @@ app.post("/init/facts", async (req, res) => {
 });
 
 // ✅ BrowseAI webhook — single source of truth
+// ---------- BROWSEAI WEBHOOK (V1-style + V2 hybrid) ----------
 app.post("/browseai/webhook", async (req, res) => {
   try {
-    const payload = req.body || {};
-    const slug = slugify(payload.slug || payload.address);
-    if (!slug)
-      return res
-        .status(400)
-        .json({ ok: false, error: "Missing property slug/address" });
+    const data = req.body || {};
 
-    // ✅ Overwrite existing data with BrowseAI truth
-    const prop = await setPropertyContext({ ...payload, slug });
-
-    // Link lead to property (if provided)
-    if (payload.lead_phone) {
-      const phone = normalizePhone(payload.lead_phone);
-      await redis.sadd(leadPropsKey(phone), slug);
-      await redis.sadd(perPropLeadIdx(slug), phone);
-    }
-
-    // 🔁 Sync bridge — propagate updated data to all linked leads
-    const existingLeads = await redis.smembers(perPropLeadIdx(slug));
-    if (existingLeads.length) {
-      for (const phone of existingLeads) {
-        await redis.sadd(leadPropsKey(phone), slug);
-      }
-      console.log(
-        `🔗 Sync bridge linked ${existingLeads.length} existing lead(s) → ${slug}`
+    // 🧠 Attempt to resolve the property slug/address
+    const slug =
+      slugify(
+        data.slug ||
+          data.address ||
+          data.Summary ||
+          data["Property Details"] ||
+          data["Summary Column"] ||
+          ""
       );
+
+    if (!slug) {
+      console.warn("⚠️ BrowseAI webhook missing slug/address field:", data);
+      return res.status(400).json({ ok: false, error: "Missing property slug/address" });
     }
 
-    console.log("🏗️ BrowseAI webhook stored full property:", slug);
-    res.json({ ok: true, slug: prop.slug, stored: true });
+    const key = propertyKey(slug);
+    const existingRaw = await redis.get(key);
+    const existing = existingRaw ? JSON.parse(existingRaw) : {};
+
+    // 🧩 Build normalized fields (for GPT clarity)
+    const normalized = {
+      address:
+        data.address ||
+        data.Summary ||
+        data["Property Details"] ||
+        existing.address ||
+        "",
+      rent: data.rent || data["Title Summary"] || existing.rent || "",
+      unit_type:
+        data.unit_type ||
+        data["Available Floor Plan Options"] ||
+        existing.unit_type ||
+        "",
+      parking:
+        data.parking ||
+        data["Parking Information"] ||
+        data["Parking Information Provided by Rentals.ca"] ||
+        existing.parking ||
+        "",
+      utilities:
+        data.utilities ||
+        data["Utility Information"] ||
+        data["Utilities Included"] ||
+        existing.utilities ||
+        "",
+      source_url: data["Origin URL"] || data.source_url || existing.source_url || "",
+      last_updated: new Date().toISOString(),
+    };
+
+    // 🧠 Merge raw data (for backwards compatibility)
+    const merged = {
+      ...existing,
+      ...data, // keep all raw BrowseAI fields
+      slug,
+      normalized,
+      last_updated: normalized.last_updated,
+    };
+
+    // 🧱 Save back to Redis
+    await redis.set(key, JSON.stringify(merged), "EX", 6 * 3600);
+
+    // 🔗 Link to any known leads
+    if (data.lead_phone) {
+      const phone = normalizePhone(data.lead_phone);
+      if (phone) {
+        await redis.sadd(leadPropsKey(phone), slug);
+        await redis.sadd(perPropLeadIdx(slug), phone);
+      }
+    }
+
+    // 🧮 Increment analytics counter
+    await incCounter("property_ingest");
+
+    console.log(`🏗️ BrowseAI webhook stored property: ${slug}`);
+    console.log(`🔢 Fields stored: ${Object.keys(normalized).join(", ")}`);
+
+    res.json({ ok: true, slug, stored: true, normalized });
   } catch (err) {
-    console.error("❌ Property ingest error:", err);
+    console.error("❌ BrowseAI ingest error:", err);
+    await incCounter("errors_ingest");
     res.status(500).json({ ok: false });
   }
 });
+
 
 // ---------- DEBUG + HEALTH ----------
 app.get("/debug/lead", async (req, res) => {
