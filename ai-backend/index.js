@@ -1,11 +1,11 @@
 /**
- * AI Voice Rental — V3 (V1 plumbing + V2 brain, zero ingestion changes)
+ * AI Voice Rental — V3 + Handoff
  * --------------------------------------------------------------------
  * - Keeps original V1 ingestion (Zapier + BrowseAI) exactly as-is
  * - BrowseAI webhook: merge-anything V1 style (no schema enforcement)
- * - Adds auto-link on first SMS: lead ↔ property (from address/URL in text)
- * - Smarter AI reasoning + intent detection (no changes to your data flow)
- * - Debug logs for precise visibility in Render
+ * - Auto-link on first SMS: lead ↔ property (from address/URL in text)
+ * - Smarter AI reasoning + intent detection
+ * - NEW: message history, AI→human handoff, dashboard /send/sms
  */
 
 import express from "express";
@@ -28,9 +28,11 @@ const {
   TWILIO_MESSAGING_SERVICE_SID,
   TWILIO_PHONE_NUMBER,
   TWILIO_FROM_NUMBER: ENV_TWILIO_FROM_NUMBER,
+  HANDOFF_ENABLED: ENV_HANDOFF_ENABLED,
 } = process.env;
 
 const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
+const HANDOFF_ENABLED = String(ENV_HANDOFF_ENABLED ?? "true") === "true";
 
 // ---------- GUARDS ----------
 if (!REDIS_URL) throw new Error("Missing REDIS_URL");
@@ -38,12 +40,18 @@ if (!OPENAI_API_KEY) throw new Error("Missing OPENAI_API_KEY");
 if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN)
   throw new Error("Missing Twilio credentials");
 if (!TWILIO_MESSAGING_SERVICE_SID && !TWILIO_FROM_NUMBER)
-  throw new Error("Provide TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER");
+  throw new Error("Provide TWILIO_MESSAGING_SERVICE_SID or TWILIO_PHONE_NUMBER/TWILIO_FROM_NUMBER");
 
 // ---------- CORE ----------
 const app = express();
 app.use(bodyParser.urlencoded({ extended: true })); // Twilio posts form-encoded
 app.use(bodyParser.json());
+
+// tiny request log
+app.use((req, _res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
 
 const redis = new Redis(REDIS_URL, { lazyConnect: false });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -74,6 +82,26 @@ const propertyKey = (slug) => `property:${slug}`;
 const leadPropsKey = (phone) => `lead:${phone}:properties`;
 const perPropLeadIdx = (slug) => `property:${slug}:leads`;
 
+// Conversation state keys (AI vs Human handoff)
+const convModeKey = (phone) => `conv:${phone}:mode`; // "auto" | "human"
+const convHandoffReasonKey = (phone) => `conv:${phone}:handoff_reason`;
+const convHandoffAtKey = (phone) => `conv:${phone}:handoff_at`;
+const convOwnerKey = (phone) => `conv:${phone}:owner`;
+const handoffQueueKey = "queue:handoffs";
+const leadHistoryKey = (phone) => `lead:${phone}:history`; // list of {t, role, content, meta?}
+
+async function appendHistory(phone, role, content, meta) {
+  const item = { t: nowIso(), role, content };
+  if (meta && typeof meta === "object") item.meta = meta;
+  try {
+    await redis.rpush(leadHistoryKey(phone), JSON.stringify(item));
+    // Optional cap:
+    // await redis.ltrim(leadHistoryKey(phone), -200, -1);
+  } catch (e) {
+    console.error("history append error:", e);
+  }
+}
+
 async function setPropertyV1Merge(obj) {
   // V1 behavior: merge whatever arrives (no schema enforcement)
   if (!obj) obj = {};
@@ -96,7 +124,7 @@ async function setPropertyV1Merge(obj) {
 
   const merged = {
     ...existing,
-    ...obj, // keep ALL raw BrowseAI/Zapier fields (Summary, Property Details, etc.)
+    ...obj, // keep ALL raw fields
     slug,
     last_updated: nowIso(),
   };
@@ -123,7 +151,6 @@ async function findBestPropertyForLead(phone) {
 }
 
 // Extract a property slug from an inbound text (address or URL in the text)
-// This links lead → property immediately (V1 feeling, explicit link)
 function extractSlugFromText(text) {
   if (!text) return "";
 
@@ -139,7 +166,7 @@ function extractSlugFromText(text) {
     } catch {}
   }
 
-  // Fallback: naïve address → slug (e.g., "215 16 Street Southeast")
+  // Fallback: naïve address → slug
   const addrMatch = text.match(
     /\b\d{2,6}\s+[a-z0-9 ]+(?:st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|way|trail|terrace|ter|place|pl|court|ct)\b.*?(?:calgary|edmonton|ab|alberta)?/i
   );
@@ -151,7 +178,7 @@ function extractSlugFromText(text) {
   return "";
 }
 
-// ---------- INTENT DETECTION (brain layer only; does not change data model) ----------
+// ---------- INTENT DETECTION ----------
 const INTENT_LABELS = [
   "book_showing",
   "pricing_question",
@@ -185,12 +212,10 @@ async function detectIntent(text) {
   }
 }
 
-// ---------- AI REASONING (reads whatever data exists; no schema assumption) ----------
+// ---------- AI REASONING ----------
 function buildContextFromProperty(property) {
   if (!property) return "";
 
-  // Try to surface the most useful fields if present,
-  // but keep V1 robustness by falling back to a trimmed JSON dump.
   const candidates = [
     "address",
     "unit_type",
@@ -219,7 +244,6 @@ function buildContextFromProperty(property) {
     }
   }
 
-  // If still thin, include a compact JSON snapshot (keeps V1 behavior)
   if (lines.length < 4) {
     try {
       let snap = JSON.stringify(property);
@@ -251,26 +275,80 @@ Never say you're an AI. Be concise (1–2 sentences) and proactive. Use any prop
       temperature: 0.4,
       messages,
     });
-    return resp.choices?.[0]?.message?.content?.trim() ||
-      "Thanks for reaching out!";
+    return (
+      resp.choices?.[0]?.message?.content?.trim() ||
+      "Thanks for reaching out!"
+    );
   } catch (e) {
     console.error("❌ OpenAI reply error:", e);
     return "Hey! Thanks for reaching out — when would you like to see the place?";
   }
 }
 
+// ---------- HANDOFF LOGIC ----------
+const HANDOFF_REASONS = {
+  LOW_CONF: "LOW_CONF",
+  POLICY_UNKNOWN: "POLICY_UNKNOWN",
+  OOS_INTENT: "OOS_INTENT",
+  MAX_TURNS: "MAX_TURNS",
+};
+
+async function shouldHandoff({ phone, text, intent, property }) {
+  if (!HANDOFF_ENABLED) return null;
+
+  // Out-of-scope examples
+  if (/\b(transfer|terminate|legal|complaint|lawyer)\b/i.test(text)) {
+    return HANDOFF_REASONS.OOS_INTENT;
+  }
+
+  // Policy gaps: renter is asking policy but we lack facts
+  const policyIntents = [
+    "pricing_question",
+    "availability",
+    "parking",
+    "pets",
+    "application_process",
+  ];
+  if (policyIntents.includes(intent) && !property) {
+    return HANDOFF_REASONS.POLICY_UNKNOWN;
+  }
+
+  // Max turns without resolution (~6 exchanges)
+  const turns = await redis.llen(leadHistoryKey(phone));
+  if (turns > 12) return HANDOFF_REASONS.MAX_TURNS;
+
+  return null;
+}
+
+async function handoffToHuman(phone, reason) {
+  const now = nowIso();
+  await redis.mset(
+    convModeKey(phone),
+    "human",
+    convHandoffReasonKey(phone),
+    reason,
+    convHandoffAtKey(phone),
+    now
+  );
+  await redis.lpush(handoffQueueKey, phone);
+}
+
+async function aiPermitted(phone) {
+  const mode = await redis.get(convModeKey(phone));
+  return mode !== "human"; // default allow if unset
+}
+
 // ---------- TWILIO SEND ----------
 async function sendSms(to, body) {
   const msg = { to, body };
-  if (TWILIO_MESSAGING_SERVICE_SID)
-    msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
+  if (TWILIO_MESSAGING_SERVICE_SID) msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
   else msg.from = TWILIO_FROM_NUMBER;
   return twilioClient.messages.create(msg);
 }
 
 // ---------- ROUTES ----------
 
-// Twilio inbound SMS (V1 plumbing + new brain + auto-link)
+// Twilio inbound SMS (V1 plumbing + brain + auto-link + handoff)
 app.post("/twilio/sms", async (req, res) => {
   try {
     const from = normalizePhone(req.body.From);
@@ -279,8 +357,9 @@ app.post("/twilio/sms", async (req, res) => {
     if (!from || !body) return res.status(200).send("");
 
     await incCounter("inbound_sms");
+    await appendHistory(from, "user", body);
 
-    // NEW: immediately try to link lead → property from the text itself
+    // Auto-link lead -> property
     const possibleSlug = extractSlugFromText(body);
     if (possibleSlug) {
       await redis.sadd(leadPropsKey(from), possibleSlug);
@@ -288,10 +367,8 @@ app.post("/twilio/sms", async (req, res) => {
       console.log(`🏷️ Linked lead ${from} → property ${possibleSlug} (from SMS text)`);
     }
 
-    // Resolve property (V1 behavior)
+    // Resolve property
     let property = await findBestPropertyForLead(from);
-
-    // Fallback: latest property key (ignoring :leads sets)
     if (!property) {
       const keys = (await redis.keys("property:*")).filter(
         (k) => !k.endsWith(":leads")
@@ -304,16 +381,33 @@ app.post("/twilio/sms", async (req, res) => {
         } catch {}
       }
     }
-
     console.log("🏠 Property resolved:", property ? property.slug : "none");
 
-    // Brain: intent + reply
+    // Human mode → AI muted
+    if (!(await aiPermitted(from))) {
+      console.log("🤫 AI muted (human mode).");
+      return res.status(200).send("");
+    }
+
+    // Intent + possible handoff
     const intent = await detectIntent(body);
     console.log("🎯 Detected intent:", intent);
 
+    const reason = await shouldHandoff({ phone: from, text: body, intent, property });
+    if (reason) {
+      console.log("🧭 Handoff triggered:", reason);
+      await handoffToHuman(from, reason);
+      const msg = "Thanks! I’m looping in a leasing specialist to help with that.";
+      await appendHistory(from, "assistant", msg, { handoff: reason });
+      await sendSms(from, msg);
+      await incCounter("replied_sms");
+      return res.status(200).send("");
+    }
+
+    // AI reply (booking-first)
     const reply = await aiReply({ incomingText: body, property, intent });
     console.log("💬 AI reply generated:", reply);
-
+    await appendHistory(from, "assistant", reply);
     await sendSms(from, reply);
     await incCounter("replied_sms");
     console.log("✅ SMS sent to lead:", from);
@@ -323,6 +417,38 @@ app.post("/twilio/sms", async (req, res) => {
     console.error("❌ SMS webhook error:", err);
     await incCounter("errors_sms");
     res.status(200).send("");
+  }
+});
+
+// Dashboard → send human reply (also flips to human mode)
+app.post("/send/sms", async (req, res) => {
+  try {
+    const { to, text, agentId } = req.body || {};
+    const phone = normalizePhone(to);
+    if (!phone || !text)
+      return res.status(400).json({ ok: false, error: "Missing to/text" });
+
+    await appendHistory(phone, "agent", text, { agentId: agentId || "agent" });
+    await redis.mset(
+      convModeKey(phone),
+      "human",
+      convOwnerKey(phone),
+      agentId || "agent"
+    );
+    try {
+      await redis.lrem(handoffQueueKey, 0, phone);
+    } catch {}
+
+    const msg = { to: phone, body: text };
+    if (TWILIO_MESSAGING_SERVICE_SID) msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
+    else msg.from = TWILIO_FROM_NUMBER;
+
+    await twilioClient.messages.create(msg);
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("send/sms error:", e);
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -352,7 +478,7 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-// BrowseAI webhook — V1 ORIGINAL merge-anything (no schema enforcement)
+// BrowseAI webhook — V1 ORIGINAL merge-anything
 app.post("/browseai/webhook", async (req, res) => {
   try {
     const body = req.body || {};
@@ -360,7 +486,6 @@ app.post("/browseai/webhook", async (req, res) => {
     const texts = task.capturedTexts || {};
     const input = task.inputParameters || {};
 
-    // Merge everything (V1 behavior)
     const data = {
       ...body,
       ...task,
@@ -368,7 +493,6 @@ app.post("/browseai/webhook", async (req, res) => {
       origin_url: input.originUrl || body.origin_url || "",
     };
 
-    // Derive slug (prefer origin_url for cleanliness, but DO NOT touch Summary/data)
     let slug = "";
     if (data.origin_url) {
       try {
@@ -394,7 +518,6 @@ app.post("/browseai/webhook", async (req, res) => {
 
     const merged = await setPropertyV1Merge({ ...data, slug });
 
-    // Link if any phone known inside payload
     const leadPhone = normalizePhone(
       data.lead_phone || body.leadPhone || task.lead_phone || ""
     );
@@ -440,5 +563,5 @@ app.get("/health", async (_req, res) => {
 
 // ---------- START ----------
 app.listen(PORT, () => {
-  console.log(`🚀 V3 running on :${PORT} (${NODE_ENV}) — V1 plumbing intact, smarter brain on top`);
+  console.log(`🚀 V3+Handoff on :${PORT} (${NODE_ENV}) — V1 plumbing intact, human handoff ready`);
 });
