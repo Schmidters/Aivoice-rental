@@ -1,41 +1,70 @@
-export default async function LeadsPage() {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/leads`, {
-    cache: "no-store",
-  });
-  const { leads } = await res.json();
+'use client';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+
+export default function LeadsPage() {
+  const [leads, setLeads] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchLeads() {
+      try {
+        const res = await fetch('/api/leads');
+        const data = await res.json();
+        if (data.ok) setLeads(data.leads);
+      } catch (err) {
+        console.error('Failed to load leads', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchLeads();
+  }, []);
+
+  if (loading) return <p className="p-6 text-gray-500">Loading leads...</p>;
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-semibold mb-4">Leads</h1>
+    <div className="p-8">
+      <h1 className="text-2xl font-bold mb-6 text-gray-800 dark:text-gray-100">Leads</h1>
+      <div className="grid gap-4">
+        {leads.map((lead, i) => {
+          const phone = lead.key.match(/\+?\d+/)?.[0] || 'Unknown';
+          const intent = lead.type === 'string' && lead.data ? lead.data : '';
+          const summary =
+            lead.key.includes(':summary') && typeof lead.data === 'string'
+              ? lead.data.slice(0, 200) + '...'
+              : '';
 
-      {(!leads || leads.length === 0) && (
-        <p className="text-gray-500">No leads found yet.</p>
-      )}
-
-      <div className="grid gap-3">
-        {leads?.map((lead) => (
-          <div
-            key={lead.id}
-            className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm"
-          >
-            <div className="flex justify-between items-center mb-2">
-              <h2 className="font-semibold text-lg">
-                {lead.phone ? `(${lead.phone})` : "Unknown Lead"}
-              </h2>
-              {lead.intent && (
-                <span className="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
-                  {lead.intent}
-                </span>
-              )}
-            </div>
-            <p className="text-gray-700">{lead.message}</p>
-            {lead.property && (
-              <p className="text-gray-500 text-sm mt-1">
-                Property: {lead.property}
-              </p>
-            )}
-          </div>
-        ))}
+          return (
+            <Card key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition">
+              <CardHeader>
+                <CardTitle>{phone}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-gray-600 dark:text-gray-300 mb-2">
+                  <strong>Type:</strong> {lead.type}
+                </p>
+                {intent && (
+                  <p className="text-gray-600 dark:text-gray-300 mb-2">
+                    <strong>Intent:</strong> {intent}
+                  </p>
+                )}
+                {summary && (
+                  <p className="text-gray-500 dark:text-gray-400 text-sm mb-2 whitespace-pre-wrap">
+                    {summary}
+                  </p>
+                )}
+                <Link
+                  href={`/conversations/${phone}`}
+                  className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                >
+                  View Conversation →
+                </Link>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );
