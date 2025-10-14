@@ -26,14 +26,38 @@ export default function ConversationPage({ params }) {
     return b.replace(/\/$/, '');
   }, []);
 
-  // Initial load
-  async function load() {
-    try {
-      const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`, { cache: 'no-store' });
-      const j = await r.json();
-      if (j?.ok) setData(j);
-    } catch {}
+// Initial load
+async function load() {
+  try {
+    const url = `${aiBackendBase}/history/${encodeURIComponent(id)}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    const j = await r.json();
+    if (j?.ok) {
+      setData((d) => ({
+        ...d,
+        id,
+        lead: j.phone,
+        mode: j.mode || 'auto',
+        handoffReason: j.handoffReason || '',
+        owner: j.owner || '',
+        messages: (j.messages || []).map((m) => ({
+          t: m.ts,
+          role: m.sender === 'lead'
+            ? 'user'
+            : m.sender === 'ai'
+            ? 'assistant'
+            : 'agent',
+          content: m.text,
+          meta: m.meta,
+        })),
+        properties: d.properties || [],
+      }));
+    }
+  } catch (err) {
+    console.error("Failed to load conversation history:", err);
   }
+}
+
 
   // Smooth scroll on new messages
   useEffect(() => {
