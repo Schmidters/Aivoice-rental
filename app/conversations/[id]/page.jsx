@@ -23,44 +23,48 @@ export default function ConversationPage({ params }) {
   const isHuman = data.mode === 'human';
   const aiBackendBase = useMemo(() => {
     const b = process.env.NEXT_PUBLIC_AI_BACKEND_URL || '';
-    return b.replace(/\/$/, '');
+    const clean = b.replace(/\/$/, '');
+    return clean;
   }, []);
 
-// Initial load (fetch real history from backend)
-async function load() {
-  try {
-    const url = `${aiBackendBase}/history/${encodeURIComponent(id)}`;
-    const r = await fetch(url, { cache: 'no-store' });
-    const j = await r.json();
-    if (j?.ok) {
-      setData((d) => ({
-        ...d,
-        id,
-        lead: j.phone,
-        mode: j.mode || 'auto',
-        handoffReason: j.handoffReason || '',
-        owner: j.owner || '',
-        messages: (j.messages || []).map((m) => ({
-          t: m.ts,
-          role:
-            m.sender === 'lead'
-              ? 'user'
-              : m.sender === 'ai'
-              ? 'assistant'
-              : 'agent',
-          content: m.text,
-          meta: m.meta,
-        })),
-        properties: d.properties || [],
-      }));
+  // Initial load (fetch real history from backend)
+  async function load() {
+    try {
+      console.log("AI backend base:", aiBackendBase);
+      const url = `${aiBackendBase}/history/${encodeURIComponent(id)}`;
+      console.log("Fetching history from:", url);
+
+      const r = await fetch(url, { cache: 'no-store' });
+      const j = await r.json();
+
+      if (j?.ok) {
+        setData((d) => ({
+          ...d,
+          id,
+          lead: j.phone,
+          mode: j.mode || 'auto',
+          handoffReason: j.handoffReason || '',
+          owner: j.owner || '',
+          messages: (j.messages || []).map((m) => ({
+            t: m.ts,
+            role:
+              m.sender === 'lead'
+                ? 'user'
+                : m.sender === 'ai'
+                ? 'assistant'
+                : 'agent',
+            content: m.text,
+            meta: m.meta,
+          })),
+          properties: d.properties || [],
+        }));
+      } else {
+        console.warn("No history found or response invalid:", j);
+      }
+    } catch (err) {
+      console.error('Failed to load conversation history:', err);
     }
-  } catch (err) {
-    console.error('Failed to load conversation history:', err);
   }
-}
-
-
-
 
   // Smooth scroll on new messages
   useEffect(() => {
@@ -70,10 +74,16 @@ async function load() {
 
   // SSE live updates
   useEffect(() => {
-    load(); // initial snapshot via our API
+    load(); // initial snapshot via backend
 
-    if (!aiBackendBase) return; // no SSE if backend not configured
+    if (!aiBackendBase) {
+      console.warn("Missing NEXT_PUBLIC_AI_BACKEND_URL — SSE disabled");
+      return;
+    }
+
     const url = `${aiBackendBase}/events/conversation/${encodeURIComponent(id)}`;
+    console.log("Connecting to SSE:", url);
+
     const es = new EventSource(url, { withCredentials: false });
 
     es.onmessage = (e) => {
@@ -99,11 +109,15 @@ async function load() {
             owner: evt.owner || d.owner,
           }));
         }
-      } catch { /* ignore parse errors */ }
+      } catch {
+        // ignore malformed/ping events
+      }
     };
 
-    es.addEventListener('ping', () => { /* keep-alive */ });
-    es.onerror = () => { /* optional: fallback to polling */ };
+    es.addEventListener('ping', () => { /* heartbeat */ });
+    es.onerror = (err) => {
+      console.warn("SSE connection lost:", err);
+    };
 
     return () => es.close();
   }, [id, aiBackendBase]);
@@ -118,8 +132,8 @@ async function load() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
       });
-      // We do NOT mutate UI here — the SSE will push the new message instantly
       await r.json().catch(() => ({}));
+      // SSE will update UI automatically
     } finally {
       setSending(false);
     }
@@ -143,7 +157,10 @@ async function load() {
       </div>
 
       {/* Messages */}
-      <div ref={listRef} className="flex-1 overflow-y-auto bg-white p-4 dark:bg-gray-900">
+      <div
+        ref={listRef}
+        className="flex-1 overflow-y-auto bg-white p-4 dark:bg-gray-900"
+      >
         {(data.messages || []).map((m, idx) => (
           <ChatBubble
             key={idx}
@@ -159,9 +176,11 @@ async function load() {
       <div className="border-t p-3">
         <ChatInput
           disabled={sending}
-          placeholder={isHuman
-            ? 'Reply as leasing agent…'
-            : 'AI is active. Replying will switch to human mode.'}
+          placeholder={
+            isHuman
+              ? 'Reply as leasing agent…'
+              : 'AI is active. Replying will switch to human mode.'
+          }
           onSend={onSend}
         />
       </div>
