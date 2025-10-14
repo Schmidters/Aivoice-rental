@@ -156,21 +156,27 @@ export default function ConversationPage({ params }) {
         </div>
       </div>
 
-      {/* Messages */}
-      <div
-        ref={listRef}
-        className="flex-1 overflow-y-auto bg-white p-4 dark:bg-gray-900"
-      >
-        {(data.messages || []).map((m, idx) => (
-          <ChatBubble
-            key={idx}
-            role={m.role}        // 'user' | 'assistant' | 'agent'
-            text={m.content}
-            time={m.t}
-            meta={m.meta}
-          />
-        ))}
-      </div>
+{/* Messages */}
+<div
+  ref={listRef}
+  className="flex-1 overflow-y-auto bg-white p-4 dark:bg-gray-900"
+>
+  {(data.messages || []).map((m, idx) => (
+    <ChatBubble
+      key={idx}
+      role={
+        m.sender === 'lead'
+          ? 'user'
+          : m.sender === 'ai'
+          ? 'assistant'
+          : 'agent'
+      }
+      text={m.text}
+      time={m.ts}
+      meta={m.meta}
+    />
+  ))}
+</div>
 
       {/* Composer */}
       <div className="border-t p-3">
