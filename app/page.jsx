@@ -7,7 +7,7 @@ import Button from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
 export default function Page() {
-  // dashboard metric cards (now fed from live API)
+  // dashboard metric cards (live from APIs)
   const [m, setM] = useState({ leads: 0, conversations: 0, bookings: 0, rate: 0 });
 
   // recent conversations list on home
@@ -17,21 +17,27 @@ export default function Page() {
   useEffect(() => {
     async function load() {
       try {
-        const [convRes, leadRes] = await Promise.all([
+        const [convRes, leadRes, bookRes] = await Promise.all([
           fetch('/api/conversations', { cache: 'no-store' }),
           fetch('/api/leads', { cache: 'no-store' }),
+          fetch('/api/bookings', { cache: 'no-store' }),
         ]);
-        const [convData, leadData] = await Promise.all([convRes.json(), leadRes.json()]);
+        const [convData, leadData, bookData] = await Promise.all([
+          convRes.json(),
+          leadRes.json(),
+          bookRes.json(),
+        ]);
 
         const convs = Array.isArray(convData?.conversations) ? convData.conversations : [];
         const leadsCount = Number.isFinite(leadData?.count) ? leadData.count : 0;
+        const bookings = Number.isFinite(bookData?.count) ? bookData.count : 0;
 
         setRows(convs);
 
-        // bookings are TODO until /api/bookings exists
-        const bookings = 0;
         const rate =
-          leadsCount > 0 ? Math.round(((bookings / leadsCount) * 100 + Number.EPSILON) * 10) / 10 : 0;
+          leadsCount > 0
+            ? Math.round(((bookings / leadsCount) * 100 + Number.EPSILON) * 10) / 10
+            : 0;
 
         setM({
           leads: leadsCount,
@@ -42,7 +48,7 @@ export default function Page() {
       } catch (e) {
         console.error('Failed to load dashboard data:', e);
         setRows([]);
-        setM((prev) => ({ ...prev, leads: 0, conversations: 0 }));
+        setM({ leads: 0, conversations: 0, bookings: 0, rate: 0 });
       } finally {
         setLoading(false);
       }
@@ -50,7 +56,7 @@ export default function Page() {
     load();
   }, []);
 
-  // placeholder chart data (can wire real analytics later)
+  // placeholder chart data (swap with real analytics later)
   const d = [
     { label: 'Mon', leads: 3, bookings: 1 },
     { label: 'Tue', leads: 5, bookings: 2 },
