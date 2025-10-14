@@ -1,25 +1,43 @@
+// app/api/conversations/[id]/send/route.js
 import { NextResponse } from "next/server";
-import { redis } from "@/lib/redis";
 
 export async function POST(req, { params }) {
-  const phone = decodeURIComponent(params.id);
   try {
-    const { message } = await req.json();
-    if (!message || typeof message !== 'string' || message.length > 2000) {
-      return NextResponse.json({ ok: false, error: "Invalid message" }, { status: 400 });
+    const id = decodeURIComponent(params.id); // phone number
+    const { text } = await req.json();
+    const backend = process.env.NEXT_PUBLIC_AI_BACKEND_URL?.replace(/\/$/, "");
+
+    if (!backend) {
+      return NextResponse.json(
+        { ok: false, error: "NEXT_PUBLIC_AI_BACKEND_URL not set" },
+        { status: 500 }
+      );
     }
 
-    const now = new Date().toISOString();
+    // Forward to backend /send/sms
+    const r = await fetch(`${backend}/send/sms`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: id, text, agentId: "fraser" }),
+    });
 
-    // TODO: forward to AI/SMS backend here:
-    // await fetch(process.env.AI_BACKEND_URL + '/send', { method: 'POST', body: JSON.stringify({ to: phone, text: message }) })
+    const j = await r.json().catch(() => ({}));
 
-    // Store in history (assistant reply)
-    const payload = JSON.stringify({ t: now, role: "assistant", content: message });
-    await redis.rpush(`lead:${phone}:history`, payload);
+    if (!r.ok) {
+      console.error("Backend /send/sms error:", j);
+      return NextResponse.json(
+        { ok: false, error: j.error || "Failed to send" },
+        { status: r.status }
+      );
+    }
 
-    return NextResponse.json({ ok: true, phone, t: now });
+    // Return immediately so dashboard shows it optimistically
+    return NextResponse.json({ ok: true, proxied: true });
   } catch (err) {
-    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
+    console.error("Send proxy error:", err);
+    return NextResponse.json(
+      { ok: false, error: err.message },
+      { status: 500 }
+    );
   }
 }
