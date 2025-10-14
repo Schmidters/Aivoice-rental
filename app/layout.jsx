@@ -1,5 +1,5 @@
-// app/layout.jsx
 import './globals.css';
+import Sidebar from '@/components/Sidebar';
 
 export const metadata = {
   title: 'AI Leasing Dashboard',
@@ -9,11 +9,15 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen bg-gray-50 dark:bg-gray-900">
-        <div className="flex">
-          {/* If you have a Sidebar component, render it here */}
-          {/* <Sidebar /> */}
-          <main className="flex-1 p-6">{children}</main>
+      <body className="min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100">
+        <div className="flex min-h-screen">
+          {/* left */}
+          <Sidebar />
+
+          {/* right / main */}
+          <main className="flex-1 p-6">
+            {children}
+          </main>
         </div>
       </body>
     </html>

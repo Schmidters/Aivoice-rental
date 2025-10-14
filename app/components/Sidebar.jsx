@@ -1,43 +1,58 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Home, Users, MessageCircle, Calendar, FileText } from "lucide-react";
-import clsx from "clsx";
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import {
+  LayoutDashboard,
+  MessageSquare,
+  PhoneCall,
+  CalendarDays,
+  BookOpenText,
+  ListTree,
+} from 'lucide-react';
 
-const navItems = [
-  { name: "Dashboard", href: "/dashboard", icon: Home },
-  { name: "Leads", href: "/leads", icon: Users },
-  { name: "Conversations", href: "/conversations", icon: MessageCircle },
-  { name: "Bookings", href: "/bookings", icon: Calendar },
-  { name: "Logs", href: "/logs", icon: FileText },
+const NAV = [
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/leads', label: 'Leads', icon: ListTree },
+  { href: '/conversations', label: 'Conversations', icon: MessageSquare },
+  { href: '/bookings', label: 'Bookings', icon: CalendarDays },
+  { href: '/logs', label: 'Logs', icon: BookOpenText },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <div className="h-screen w-64 bg-gray-900 text-white flex flex-col border-r border-gray-800">
-      <div className="px-6 py-4 text-2xl font-semibold tracking-tight border-b border-gray-800">
-        AI Leasing
+    <aside className="hidden md:flex md:w-64 md:flex-col md:shrink-0 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
+      <div className="h-14 flex items-center px-4 border-b border-gray-200 dark:border-gray-800">
+        <span className="text-sm font-semibold tracking-wide text-gray-800 dark:text-gray-100">
+          AI Leasing
+        </span>
       </div>
-      <nav className="flex-1 mt-4 space-y-1">
-        {navItems.map(({ name, href, icon: Icon }) => (
-          <Link
-            key={name}
-            href={href}
-            className={clsx(
-              "flex items-center px-6 py-3 text-sm font-medium hover:bg-gray-800 transition-colors",
-              pathname.startsWith(href)
-                ? "bg-gray-800 text-white"
-                : "text-gray-400 hover:text-white"
-            )}
-          >
-            <Icon className="mr-3 h-4 w-4" />
-            {name}
-          </Link>
-        ))}
+
+      <nav className="flex-1 p-3 space-y-1">
+        {NAV.map(({ href, label, icon: Icon }) => {
+          const active =
+            pathname === href || (href !== '/' && pathname?.startsWith(href));
+          return (
+            <Link
+              key={href}
+              href={href}
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition
+                ${active
+                  ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300'
+                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'}`}
+            >
+              <Icon size={18} />
+              <span>{label}</span>
+            </Link>
+          );
+        })}
       </nav>
-    </div>
+
+      <div className="p-3 text-xs text-gray-400 border-t border-gray-200 dark:border-gray-800">
+        v1 • {new Date().getFullYear()}
+      </div>
+    </aside>
   );
 }
