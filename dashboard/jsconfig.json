@@ -1,8 +1,9 @@
 {
   "compilerOptions": {
-    "baseUrl": "./",
+    "baseUrl": "app",
     "paths": {
-      "@/*": ["./*", "../lib/*"]
+      "@/*": ["*"],
+      "@/lib/*": ["../lib/*"]
     }
   }
 }
