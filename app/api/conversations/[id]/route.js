@@ -1,18 +1,38 @@
-export async function GET(req,{params}){
-  const {id}=params;
-  const mockMessages={
-    '1':[
-      {id:1,sender:'lead',text:'Is there parking?',time:'2m ago'},
-      {id:2,sender:'bot',text:'Street parking only for this property.',time:'1m ago'}
-    ],
-    '2':[
-      {id:1,sender:'lead',text:'Still available?',time:'15m ago'},
-      {id:2,sender:'bot',text:'Yes, still available!',time:'14m ago'}
-    ],
-    '3':[
-      {id:1,sender:'lead',text:'Can I book a viewing?',time:'1h ago'},
-      {id:2,sender:'bot',text:'Sure! What time works for you?',time:'1h ago'}
-    ]
-  };
-  return new Response(JSON.stringify({id,messages:mockMessages[id]||[]}),{status:200});
+import { NextResponse } from "next/server";
+import { redis } from "@/lib/redis";
+
+export async function GET(_req, { params }) {
+  const phone = decodeURIComponent(params.id);
+  try {
+    const historyKey = `lead:${phone}:history`;
+    const raw = await redis.lrange(historyKey, 0, -1);
+
+    const messages = raw.map((s) => {
+      try {
+        const j = JSON.parse(s);
+        return {
+          t: j.t || null,
+          role: j.role || "assistant",
+          content: j.content || String(s),
+        };
+      } catch {
+        return { t: null, role: "assistant", content: String(s) };
+      }
+    });
+
+    const properties = await redis.smembers(`lead:${phone}:properties`);
+    const intent = await redis.get(`lead:${phone}:intent`).catch(() => null);
+    const summary = await redis.get(`lead:${phone}:summary`).catch(() => null);
+
+    return NextResponse.json({
+      ok: true,
+      phone,
+      properties,
+      intent,
+      summary,
+      messages,
+    });
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
+  }
 }

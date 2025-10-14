@@ -1,1 +1,45 @@
-'use client';import{useEffect,useState}from'react';import{useParams,useRouter}from'next/navigation';import ChatBubble from'@/components/ChatBubble';import ChatInput from'@/components/ChatInput';export default function ConversationThread(){const{id}=useParams();const router=useRouter();const[messages,setMessages]=useState([]);const[leadInfo,setLeadInfo]=useState(null);useEffect(()=>{fetch(`/api/conversations/${id}`).then(r=>r.json()).then(d=>setMessages(d.messages||[]));fetch('/api/conversations').then(r=>r.json()).then(list=>setLeadInfo(list.find(i=>i.id===id)));},[id]);const handleSend=(text)=>{const newMsg={sender:'bot',text,time:'just now'};setMessages(p=>[...p,newMsg]);};return(<div className='min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 flex flex-col'><div className='border-b border-gray-200 dark:border-gray-800 p-4 flex justify-between items-center'><div><button onClick={()=>router.push('/conversations')} className='text-sm text-gray-500 hover:underline'>← Back</button><h1 className='text-lg font-semibold'>{leadInfo?`${leadInfo.lead} - ${leadInfo.property}`:'Conversation'}</h1></div><div className='flex gap-2'><button className='rounded-xl bg-green-500 px-3 py-1 text-sm text-white hover:bg-green-600'>Book Showing</button><button className='rounded-xl bg-gray-300 dark:bg-gray-700 px-3 py-1 text-sm text-gray-900 dark:text-gray-100 hover:opacity-80'>Mark Closed</button></div></div><div className='flex-1 overflow-y-auto p-4'>{messages.map((m,i)=><ChatBubble key={i}{...m}/>)}</div><div className='p-4 border-t border-gray-200 dark:border-gray-700'><ChatInput onSend={handleSend}/></div></div>);}
+'use client';
+import { useEffect, useState } from 'react';
+import ChatBubble from '@/components/ChatBubble';
+import ChatInput from '@/components/ChatInput';
+
+export default function ConversationDetail({ params }) {
+  const id = decodeURIComponent(params.id);
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
+      const j = await r.json();
+      if (j.ok) setData(j);
+    })();
+  }, [id]);
+
+  if (!data) return <div className="p-6 text-gray-500">Loading…</div>;
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
+      <div className="border-b border-gray-200 dark:border-gray-800 p-4">
+        <h1 className="text-lg font-semibold">{id}</h1>
+        {data.properties?.[0] && (
+          <p className="text-sm text-gray-500">{data.properties[0]}</p>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        {data.messages.map((m, idx) => (
+          <ChatBubble key={idx} role={m.role} message={m.content} />
+        ))}
+      </div>
+
+      {/* sending will hook to your ai-backend later; for now just echo */}
+      <ChatInput onSend={(msg) => {
+        // optimistic append
+        setData((old) => ({
+          ...old,
+          messages: [...(old?.messages || []), { role: 'user', content: msg, t: new Date().toISOString() }]
+        }));
+      }} />
+    </div>
+  );
+}

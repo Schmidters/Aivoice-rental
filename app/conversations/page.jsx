@@ -1,1 +1,52 @@
-'use client';import{useEffect,useState}from'react';export default function ConversationsPage(){const[c,setC]=useState([]);useEffect(()=>{fetch('/api/conversations').then(r=>r.json()).then(setC);},[]);return(<div className='min-h-screen bg-gray-50 dark:bg-gray-900 p-6'><h1 className='text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100'>All Conversations</h1><div className='space-y-3'>{c.map(x=>(<a key={x.id} href={`/conversations/${x.id}`} className='block p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition'><div className='flex justify-between'><p className='font-medium'>{x.lead}</p><span className='text-xs text-gray-400'>{x.time}</span></div><p className='text-sm text-gray-600 dark:text-gray-300'>{x.property}</p><p className='text-sm mt-1 text-gray-500 dark:text-gray-400 italic'>{x.lastMessage}</p></a>))}</div></div>);}
+'use client';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+
+export default function ConversationsPage() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('/api/conversations');
+        const data = await r.json();
+        if (data.ok) setRows(data.conversations);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) return <div className="p-6 text-gray-500">Loading conversations…</div>;
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-2xl font-semibold">Conversations</h1>
+      <div className="grid gap-4">
+        {rows.map((c) => (
+          <Card key={c.id} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition">
+            <CardHeader>
+              <CardTitle>{c.id}</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm space-y-1">
+              {c.property && <p><strong>Property:</strong> {c.property}</p>}
+              {c.intent && <p><strong>Intent:</strong> {c.intent}</p>}
+              {c.lastMessage && (
+                <p className="italic text-gray-600 dark:text-gray-300">
+                  “{c.lastMessage}”
+                  {c.lastTime && <span className="ml-2 text-xs text-gray-400">({new Date(c.lastTime).toLocaleString()})</span>}
+                </p>
+              )}
+              <Link className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                    href={`/conversations/${encodeURIComponent(c.id)}`}>
+                Open →
+              </Link>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
