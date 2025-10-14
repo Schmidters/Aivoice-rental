@@ -1,85 +1,160 @@
 'use client';
-import { useEffect, useState } from 'react';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ChatBubble from '@/components/ChatBubble';
 import ChatInput from '@/components/ChatInput';
-import PropertyDrawer from '@/components/PropertyDrawer';
 
-export default function ConversationDetail({ params }) {
-  const id = decodeURIComponent(params.id);
-  const [data, setData] = useState(null);
+export default function ConversationPage({ params }) {
+  const id = decodeURIComponent(params.id); // phone in E.164
+  const [data, setData] = useState({
+    ok: true,
+    id,
+    lead: id,
+    mode: 'auto',
+    handoffReason: '',
+    owner: '',
+    messages: [],
+    properties: []
+  });
   const [sending, setSending] = useState(false);
+  const listRef = useRef(null);
 
+  // Convenience computed flags
+  const isHuman = data.mode === 'human';
+  const aiBackendBase = useMemo(() => {
+    const b = process.env.NEXT_PUBLIC_AI_BACKEND_URL || '';
+    return b.replace(/\/$/, '');
+  }, []);
+
+  // Initial load
   async function load() {
-    const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`, { cache: 'no-store' });
-    const j = await r.json();
-    if (j.ok) setData(j);
+    try {
+      const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`, { cache: 'no-store' });
+      const j = await r.json();
+      if (j?.ok) setData(j);
+    } catch {}
   }
 
+  // Smooth scroll on new messages
   useEffect(() => {
-    (async () => {
-      // mark read first
-      await fetch(`/api/conversations/${encodeURIComponent(id)}/read`, { method: 'POST' });
-      await load();
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+    if (!listRef.current) return;
+    listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [data.messages?.length]);
 
-  if (!data) return <div className="p-6 text-gray-500">Loading…</div>;
+  // SSE live updates
+  useEffect(() => {
+    load(); // initial snapshot via our API
 
-  async function handleSend(msg) {
-    if (!msg || sending) return;
+    if (!aiBackendBase) return; // no SSE if backend not configured
+    const url = `${aiBackendBase}/events/conversation/${encodeURIComponent(id)}`;
+    const es = new EventSource(url, { withCredentials: false });
+
+    es.onmessage = (e) => {
+      try {
+        const evt = JSON.parse(e.data);
+        if (evt.type === 'snapshot') {
+          setData((d) => ({
+            ...d,
+            mode: evt.mode || 'auto',
+            handoffReason: evt.handoffReason || '',
+            owner: evt.owner || d.owner,
+          }));
+        } else if (evt.type === 'message' && evt.item) {
+          setData((d) => ({
+            ...d,
+            messages: [...(d.messages || []), evt.item],
+          }));
+        } else if (evt.type === 'mode') {
+          setData((d) => ({
+            ...d,
+            mode: evt.mode || d.mode,
+            handoffReason: evt.handoffReason || '',
+            owner: evt.owner || d.owner,
+          }));
+        }
+      } catch { /* ignore parse errors */ }
+    };
+
+    es.addEventListener('ping', () => { /* keep-alive */ });
+    es.onerror = () => { /* optional: fallback to polling */ };
+
+    return () => es.close();
+  }, [id, aiBackendBase]);
+
+  // Send a human message (keeps convo in human mode on backend)
+  async function onSend(text) {
+    if (!text?.trim()) return;
     setSending(true);
     try {
-      // optimistic append
-      setData((old) => ({
-        ...old,
-        messages: [...(old?.messages || []), { role: 'assistant', content: msg, t: new Date().toISOString() }]
-      }));
-
-      const res = await fetch(`/api/conversations/${encodeURIComponent(id)}/send`, {
+      const r = await fetch(`/api/conversations/${encodeURIComponent(id)}/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg }),
+        body: JSON.stringify({ text })
       });
-      const j = await res.json();
-      if (!j.ok) {
-        alert(j.error || 'Failed to send');
-        // optional: roll back optimistic append by reloading thread
-        await load();
-      }
-    } catch (e) {
-      alert('Network error sending message');
-      await load();
+      // We do NOT mutate UI here — the SSE will push the new message instantly
+      await r.json().catch(() => ({}));
     } finally {
       setSending(false);
     }
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)]">
-      <div className="border-b border-gray-200 dark:border-gray-800 p-4">
-        <h1 className="text-lg font-semibold">{id}</h1>
-        {data.properties?.[0] && (
-          <div className="text-sm text-gray-500">
-            <PropertyDrawer slug={data.properties[0]} trigger="View property details" />
-          </div>
-        )}
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-2">
-        {data.messages.map((m, idx) => (
-          <div key={idx}>
-            <ChatBubble role={m.role} message={m.content} />
-            {m.t && (
-              <div className="text-[10px] text-gray-400 mt-1 pl-2">
-                {new Date(m.t).toLocaleString()}
-              </div>
+    <div className="flex h-[calc(100vh-64px)] flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <div className="flex flex-col">
+          <h2 className="text-lg font-semibold">{data.lead || id}</h2>
+          <div className="flex items-center gap-2">
+            <ModeChip mode={data.mode} reason={data.handoffReason} owner={data.owner} />
+            {!!data.properties?.length && (
+              <span className="text-xs text-gray-500">
+                Linked: {data.properties.join(', ')}
+              </span>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div ref={listRef} className="flex-1 overflow-y-auto bg-white p-4 dark:bg-gray-900">
+        {(data.messages || []).map((m, idx) => (
+          <ChatBubble
+            key={idx}
+            role={m.role}        // 'user' | 'assistant' | 'agent'
+            text={m.content}
+            time={m.t}
+            meta={m.meta}
+          />
         ))}
       </div>
 
-      <ChatInput onSend={handleSend} />
+      {/* Composer */}
+      <div className="border-t p-3">
+        <ChatInput
+          disabled={sending}
+          placeholder={isHuman
+            ? 'Reply as leasing agent…'
+            : 'AI is active. Replying will switch to human mode.'}
+          onSend={onSend}
+        />
+      </div>
     </div>
+  );
+}
+
+function ModeChip({ mode, reason, owner }) {
+  if (mode === 'human') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+        Human mode
+        {owner ? <span className="opacity-70">• {owner}</span> : null}
+        {reason ? <span className="opacity-70">• {reason}</span> : null}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
+      AI mode
+    </span>
   );
 }
