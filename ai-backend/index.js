@@ -1,11 +1,11 @@
 /**
- * AI Voice Rental — V3 + Handoff
+ * AI Voice Rental — V3 + Handoff + Live Events (SSE)
  * --------------------------------------------------------------------
  * - Keeps original V1 ingestion (Zapier + BrowseAI) exactly as-is
- * - BrowseAI webhook: merge-anything V1 style (no schema enforcement)
  * - Auto-link on first SMS: lead ↔ property (from address/URL in text)
  * - Smarter AI reasoning + intent detection
  * - NEW: message history, AI→human handoff, dashboard /send/sms
+ * - NEW: SSE stream for live dashboard updates
  */
 
 import express from "express";
@@ -29,6 +29,8 @@ const {
   TWILIO_PHONE_NUMBER,
   TWILIO_FROM_NUMBER: ENV_TWILIO_FROM_NUMBER,
   HANDOFF_ENABLED: ENV_HANDOFF_ENABLED,
+  // For CORS on SSE (set to your dashboard URL, e.g., https://ai-leasing-dashboard.onrender.com)
+  DASHBOARD_ORIGIN = "*",
 } = process.env;
 
 const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
@@ -47,9 +49,17 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: true })); // Twilio posts form-encoded
 app.use(bodyParser.json());
 
-// tiny request log
+// Tiny request log
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
+
+// CORS (for dashboard connecting to SSE from the browser)
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", DASHBOARD_ORIGIN);
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.status(200).end();
   next();
 });
 
@@ -95,6 +105,8 @@ async function appendHistory(phone, role, content, meta) {
   if (meta && typeof meta === "object") item.meta = meta;
   try {
     await redis.rpush(leadHistoryKey(phone), JSON.stringify(item));
+    // Publish a live event for the dashboard via Pub/Sub
+    await redis.publish(`events:lead:${phone}`, JSON.stringify({ type: "message", item }));
     // Optional cap:
     // await redis.ltrim(leadHistoryKey(phone), -200, -1);
   } catch (e) {
@@ -323,14 +335,17 @@ async function shouldHandoff({ phone, text, intent, property }) {
 async function handoffToHuman(phone, reason) {
   const now = nowIso();
   await redis.mset(
-    convModeKey(phone),
-    "human",
-    convHandoffReasonKey(phone),
-    reason,
-    convHandoffAtKey(phone),
-    now
+    convModeKey(phone), "human",
+    convHandoffReasonKey(phone), reason,
+    convHandoffAtKey(phone), now
   );
   await redis.lpush(handoffQueueKey, phone);
+  // Publish mode change
+  await redis.publish(`events:lead:${phone}`, JSON.stringify({
+    type: "mode",
+    mode: "human",
+    handoffReason: reason
+  }));
 }
 
 async function aiPermitted(phone) {
@@ -376,9 +391,7 @@ app.post("/twilio/sms", async (req, res) => {
       if (keys.length) {
         const recent = keys.sort().reverse()[0];
         const raw = await redis.get(recent);
-        try {
-          property = JSON.parse(raw);
-        } catch {}
+        try { property = JSON.parse(raw); } catch {}
       }
     }
     console.log("🏠 Property resolved:", property ? property.slug : "none");
@@ -430,14 +443,17 @@ app.post("/send/sms", async (req, res) => {
 
     await appendHistory(phone, "agent", text, { agentId: agentId || "agent" });
     await redis.mset(
-      convModeKey(phone),
-      "human",
-      convOwnerKey(phone),
-      agentId || "agent"
+      convModeKey(phone), "human",
+      convOwnerKey(phone), agentId || "agent"
     );
-    try {
-      await redis.lrem(handoffQueueKey, 0, phone);
-    } catch {}
+    try { await redis.lrem(handoffQueueKey, 0, phone); } catch {}
+
+    // Publish mode change (explicit)
+    await redis.publish(`events:lead:${phone}`, JSON.stringify({
+      type: "mode",
+      mode: "human",
+      owner: agentId || "agent"
+    }));
 
     const msg = { to: phone, body: text };
     if (TWILIO_MESSAGING_SERVICE_SID) msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
@@ -538,6 +554,54 @@ app.post("/browseai/webhook", async (req, res) => {
   }
 });
 
+// ---------- SSE: Live events for a conversation ----------
+app.get("/events/conversation/:phone", async (req, res) => {
+  const phone = normalizePhone(req.params.phone || "");
+  if (!phone) return res.status(400).end("Missing phone");
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", DASHBOARD_ORIGIN);
+  res.flushHeaders?.();
+
+  // Heartbeat to keep connections alive through proxies
+  const heartbeat = setInterval(() => {
+    res.write("event: ping\n");
+    res.write("data: {}\n\n");
+  }, 25000);
+
+  // Initial snapshot
+  try {
+    const [mode, reason, owner] = await redis.mget(
+      convModeKey(phone),
+      convHandoffReasonKey(phone),
+      convOwnerKey(phone)
+    );
+    const snapshot = {
+      type: "snapshot",
+      mode: mode || "auto",
+      handoffReason: reason || "",
+      owner: owner || ""
+    };
+    res.write(`data: ${JSON.stringify(snapshot)}\n\n`);
+  } catch (_) {}
+
+  // Subscribe to Pub/Sub for this lead
+  const sub = new Redis(REDIS_URL);
+  const channel = `events:lead:${phone}`;
+  await sub.subscribe(channel);
+
+  sub.on("message", (_ch, msg) => {
+    res.write(`data: ${msg}\n\n`);
+  });
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    try { sub.disconnect(); } catch {}
+  });
+});
+
 // ---------- DEBUG + HEALTH ----------
 app.get("/debug/lead", async (req, res) => {
   const phone = normalizePhone(req.query.phone || "");
@@ -563,5 +627,5 @@ app.get("/health", async (_req, res) => {
 
 // ---------- START ----------
 app.listen(PORT, () => {
-  console.log(`🚀 V3+Handoff on :${PORT} (${NODE_ENV}) — V1 plumbing intact, human handoff ready`);
+  console.log(`🚀 V3+Handoff+SSE on :${PORT} (${NODE_ENV})`);
 });
