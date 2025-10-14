@@ -91,20 +91,20 @@ export default function ConversationPage({ params }) {
   }, [id, aiBackendBase]);
 
   // 🔹 Send human message (switches to human mode)
-  async function onSend(text) {
-    if (!text?.trim()) return;
-    setSending(true);
-    try {
-      const r = await fetch(`/api/conversations/${encodeURIComponent(id)}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      await r.json().catch(() => ({}));
-    } finally {
-      setSending(false);
-    }
+async function onSend(text) {
+  if (!text?.trim()) return;
+  setSending(true);
+  try {
+    const r = await fetch(`/api/conversations/${encodeURIComponent(id)}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    await r.json().catch(() => ({}));
+  } finally {
+    setSending(false);
   }
+}
 
   // 🧱 If still loading
   if (!data) {
