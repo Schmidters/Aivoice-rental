@@ -1,36 +1,38 @@
-import { NextResponse } from "next/server";
-import { redis } from "@/lib/redis";
+// /app/api/conversations/[id]/route.js
+export async function GET(req, { params }) {
+  const id = decodeURIComponent(params.id);
+  const aiBackendBase = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
+  const url = `${aiBackendBase}/history/${encodeURIComponent(id)}`;
 
-export async function GET(_req, { params }) {
-  const phone = decodeURIComponent(params.id);
   try {
-    const [raw, properties, intent, summary, lastRead] = await Promise.all([
-      redis.lrange(`lead:${phone}:history`, 0, -1),
-      redis.smembers(`lead:${phone}:properties`),
-      redis.get(`lead:${phone}:intent`).catch(() => null),
-      redis.get(`lead:${phone}:summary`).catch(() => null),
-      redis.get(`conv:${phone}:last_read`).catch(() => null),
-    ]);
+    const r = await fetch(url, { cache: 'no-store' });
+    const j = await r.json();
 
-    const messages = raw.map((s) => {
-      try {
-        const j = JSON.parse(s);
-        return { t: j.t || null, role: j.role || "assistant", content: j.content || String(s) };
-      } catch {
-        return { t: null, role: "assistant", content: String(s) };
-      }
-    });
+    // 🔄 Normalize backend format → dashboard format
+    const messages = (j.messages || []).map((m) => ({
+      t: m.ts,
+      role:
+        m.sender === 'lead'
+          ? 'user'
+          : m.sender === 'ai'
+          ? 'assistant'
+          : 'agent',
+      content: m.text,
+      meta: m.meta,
+    }));
 
-    return NextResponse.json({
+    return Response.json({
       ok: true,
-      phone,
-      properties,
-      intent,
-      summary,
-      lastRead,
+      id,
+      lead: j.phone || id,
+      mode: j.mode || 'auto',
+      handoffReason: j.handoffReason || '',
+      owner: j.owner || '',
       messages,
+      properties: [],
     });
   } catch (err) {
-    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
+    console.error('Error fetching history:', err);
+    return Response.json({ ok: false, error: err.message });
   }
 }

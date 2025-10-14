@@ -31,7 +31,7 @@ export default function ConversationPage({ params }) {
   async function load() {
     try {
       console.log("AI backend base:", aiBackendBase);
-      const url = `${aiBackendBase}/history/${encodeURIComponent(id)}`;
+      const url = `/api/conversations/${encodeURIComponent(id)}`;
       console.log("Fetching history from:", url);
 
       const r = await fetch(url, { cache: 'no-store' });
