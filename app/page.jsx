@@ -5,6 +5,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } f
 import ThemeToggle from '@/components/ThemeToggle';
 import Button from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import PropertyDrawer from '@/components/PropertyDrawer';
 
 export default function Page() {
   // dashboard metric cards (live from APIs)
@@ -148,7 +149,10 @@ export default function Page() {
                       </span>
                     </div>
                     {c.property && (
-                      <p className="text-sm text-gray-600 dark:text-gray-300">{c.property}</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-300">
+                        <span className="mr-1">Property:</span>
+                        <PropertyDrawer slug={c.property} />
+                      </p>
                     )}
                     {c.lastMessage && (
                       <p className="text-sm mt-1 text-gray-500 dark:text-gray-400 italic">
