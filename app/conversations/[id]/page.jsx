@@ -6,84 +6,54 @@ import ChatInput from '@/components/ChatInput';
 
 export default function ConversationPage({ params }) {
   const id = decodeURIComponent(params.id); // phone in E.164
-  const [data, setData] = useState({
-    ok: true,
-    id,
-    lead: id,
-    mode: 'auto',
-    handoffReason: '',
-    owner: '',
-    messages: [],
-    properties: []
-  });
+  const [data, setData] = useState(null);
   const [sending, setSending] = useState(false);
   const listRef = useRef(null);
 
-  // Convenience computed flags
-  const isHuman = data.mode === 'human';
   const aiBackendBase = useMemo(() => {
     const b = process.env.NEXT_PUBLIC_AI_BACKEND_URL || '';
-    const clean = b.replace(/\/$/, '');
-    return clean;
+    return b.replace(/\/$/, '');
   }, []);
 
-  // Initial load (fetch real history from backend)
+  // 🔹 Load initial conversation history
   async function load() {
     try {
-      console.log("AI backend base:", aiBackendBase);
       const url = `/api/conversations/${encodeURIComponent(id)}`;
-      console.log("Fetching history from:", url);
-
+      console.log('Fetching from:', url);
       const r = await fetch(url, { cache: 'no-store' });
       const j = await r.json();
+      console.log('📦 Conversation data received:', j);
 
       if (j?.ok) {
-        setData((d) => ({
-          ...d,
+        setData({
+          ok: true,
           id,
-          lead: j.phone,
+          lead: j.lead,
           mode: j.mode || 'auto',
           handoffReason: j.handoffReason || '',
           owner: j.owner || '',
-          messages: (j.messages || []).map((m) => ({
-            t: m.ts,
-            role:
-              m.sender === 'lead'
-                ? 'user'
-                : m.sender === 'ai'
-                ? 'assistant'
-                : 'agent',
-            content: m.text,
-            meta: m.meta,
-          })),
-          properties: d.properties || [],
-        }));
-      } else {
-        console.warn("No history found or response invalid:", j);
+          messages: j.messages || [],
+          properties: j.properties || [],
+        });
       }
     } catch (err) {
       console.error('Failed to load conversation history:', err);
     }
   }
 
-  // Smooth scroll on new messages
+  // 🔹 Scroll to bottom when messages update
   useEffect(() => {
-    if (!listRef.current) return;
-    listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [data.messages?.length]);
-
-  // SSE live updates
-  useEffect(() => {
-    load(); // initial snapshot via backend
-
-    if (!aiBackendBase) {
-      console.warn("Missing NEXT_PUBLIC_AI_BACKEND_URL — SSE disabled");
-      return;
+    if (listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight;
     }
+  }, [data?.messages?.length]);
 
+  // 🔹 SSE live updates
+  useEffect(() => {
+    load(); // Initial fetch
+
+    if (!aiBackendBase) return;
     const url = `${aiBackendBase}/events/conversation/${encodeURIComponent(id)}`;
-    console.log("Connecting to SSE:", url);
-
     const es = new EventSource(url, { withCredentials: false });
 
     es.onmessage = (e) => {
@@ -94,35 +64,33 @@ export default function ConversationPage({ params }) {
             ...d,
             mode: evt.mode || 'auto',
             handoffReason: evt.handoffReason || '',
-            owner: evt.owner || d.owner,
+            owner: evt.owner || d?.owner || '',
           }));
         } else if (evt.type === 'message' && evt.item) {
           setData((d) => ({
             ...d,
-            messages: [...(d.messages || []), evt.item],
+            messages: [...(d?.messages || []), evt.item],
           }));
         } else if (evt.type === 'mode') {
           setData((d) => ({
             ...d,
-            mode: evt.mode || d.mode,
+            mode: evt.mode || d?.mode,
             handoffReason: evt.handoffReason || '',
-            owner: evt.owner || d.owner,
+            owner: evt.owner || d?.owner || '',
           }));
         }
-      } catch {
-        // ignore malformed/ping events
+      } catch (err) {
+        console.warn('SSE parse error:', err);
       }
     };
 
-    es.addEventListener('ping', () => { /* heartbeat */ });
-    es.onerror = (err) => {
-      console.warn("SSE connection lost:", err);
-    };
+    es.addEventListener('ping', () => {}); // heartbeat
+    es.onerror = (e) => console.warn('SSE error:', e);
 
     return () => es.close();
   }, [id, aiBackendBase]);
 
-  // Send a human message (keeps convo in human mode on backend)
+  // 🔹 Send human message (switches to human mode)
   async function onSend(text) {
     if (!text?.trim()) return;
     setSending(true);
@@ -130,15 +98,26 @@ export default function ConversationPage({ params }) {
       const r = await fetch(`/api/conversations/${encodeURIComponent(id)}/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text }),
       });
       await r.json().catch(() => ({}));
-      // SSE will update UI automatically
     } finally {
       setSending(false);
     }
   }
 
+  // 🧱 If still loading
+  if (!data) {
+    return (
+      <div className="flex h-[calc(100vh-64px)] items-center justify-center text-gray-500">
+        Loading conversation...
+      </div>
+    );
+  }
+
+  const isHuman = data.mode === 'human';
+
+  // 🔹 Render
   return (
     <div className="flex h-[calc(100vh-64px)] flex-col">
       {/* Header */}
@@ -156,27 +135,21 @@ export default function ConversationPage({ params }) {
         </div>
       </div>
 
-{/* Messages */}
-<div
-  ref={listRef}
-  className="flex-1 overflow-y-auto bg-white p-4 dark:bg-gray-900"
->
-  {(data.messages || []).map((m, idx) => (
-    <ChatBubble
-      key={idx}
-      role={
-        m.sender === 'lead'
-          ? 'user'
-          : m.sender === 'ai'
-          ? 'assistant'
-          : 'agent'
-      }
-      text={m.text}
-      time={m.ts}
-      meta={m.meta}
-    />
-  ))}
-</div>
+      {/* Messages */}
+      <div
+        ref={listRef}
+        className="flex-1 overflow-y-auto bg-white p-4 dark:bg-gray-900"
+      >
+        {(data.messages || []).map((m, idx) => (
+          <ChatBubble
+            key={idx}
+            role={m.role} // 'user' | 'assistant' | 'agent'
+            text={m.content}
+            time={m.t}
+            meta={m.meta}
+          />
+        ))}
+      </div>
 
       {/* Composer */}
       <div className="border-t p-3">
