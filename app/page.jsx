@@ -7,25 +7,42 @@ import Button from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
 export default function Page() {
-  // top metrics (can be wired later)
-  const [m, setM] = useState({ leads: 58, conversations: 12, bookings: 9, rate: 15.5 });
+  // dashboard metric cards (now fed from live API)
+  const [m, setM] = useState({ leads: 0, conversations: 0, bookings: 0, rate: 0 });
 
-  // recent conversations (home widget)
-  const [rows, setRows] = useState([]);      // array only
+  // recent conversations list on home
+  const [rows, setRows] = useState([]); // always an array
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch('/api/conversations');
-        const data = await res.json();
-        const list = Array.isArray(data?.conversations) ? data.conversations : [];
-        setRows(list);
-        // optionally reflect count in the header metrics
-        setM((prev) => ({ ...prev, conversations: list.length }));
+        const [convRes, leadRes] = await Promise.all([
+          fetch('/api/conversations', { cache: 'no-store' }),
+          fetch('/api/leads', { cache: 'no-store' }),
+        ]);
+        const [convData, leadData] = await Promise.all([convRes.json(), leadRes.json()]);
+
+        const convs = Array.isArray(convData?.conversations) ? convData.conversations : [];
+        const leadsCount = Number.isFinite(leadData?.count) ? leadData.count : 0;
+
+        setRows(convs);
+
+        // bookings are TODO until /api/bookings exists
+        const bookings = 0;
+        const rate =
+          leadsCount > 0 ? Math.round(((bookings / leadsCount) * 100 + Number.EPSILON) * 10) / 10 : 0;
+
+        setM({
+          leads: leadsCount,
+          conversations: convs.length,
+          bookings,
+          rate,
+        });
       } catch (e) {
-        console.error('Failed to load /api/conversations:', e);
+        console.error('Failed to load dashboard data:', e);
         setRows([]);
+        setM((prev) => ({ ...prev, leads: 0, conversations: 0 }));
       } finally {
         setLoading(false);
       }
@@ -33,6 +50,7 @@ export default function Page() {
     load();
   }, []);
 
+  // placeholder chart data (can wire real analytics later)
   const d = [
     { label: 'Mon', leads: 3, bookings: 1 },
     { label: 'Tue', leads: 5, bookings: 2 },
