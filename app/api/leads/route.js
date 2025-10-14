@@ -4,35 +4,41 @@ import { redis } from "@/lib/redis";
 export async function GET() {
   try {
     const keys = await redis.keys("lead:*");
+    const leads = [];
 
-    const leads = await Promise.all(
-      keys.map(async (key) => {
-        const raw = await redis.get(key);
-        let data = {};
+    for (const key of keys) {
+      const type = await redis.type(key);
+      let data;
+
+      // Handle each Redis type safely
+      if (type === "string") {
+        const val = await redis.get(key);
         try {
-          data = JSON.parse(raw || "{}");
+          data = JSON.parse(val);
         } catch {
-          // fallback if not valid JSON
-          data = { raw };
+          data = val;
         }
+      } else if (type === "hash") {
+        data = await redis.hgetall(key);
+      } else if (type === "list") {
+        data = await redis.lrange(key, 0, -1);
+      } else if (type === "set") {
+        data = await redis.smembers(key);
+      } else {
+        // Unsupported types or empty values
+        data = null;
+      }
 
-        // extract phone number from key (e.g. lead:+18258631111:summary)
-        const phone = key.split(":")[1]?.replace("+1", "") || "unknown";
+      leads.push({ key, type, data });
+    }
 
-        return {
-          id: key,
-          phone,
-          message: data.message || data.summary || "",
-          intent: data.intent || "",
-          property: data.property || "",
-          timestamp: data.timestamp || null,
-        };
-      })
-    );
-
-    return NextResponse.json({ leads });
+    return NextResponse.json({
+      ok: true,
+      count: leads.length,
+      leads,
+    });
   } catch (err) {
     console.error("Error fetching leads:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ ok: false, error: err.message });
   }
 }
