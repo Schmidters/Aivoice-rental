@@ -4,13 +4,15 @@ import { redis } from "@/lib/redis";
 export async function GET() {
   try {
     const keys = await redis.keys("lead:*");
-    const leads = [];
+    const leadsByPhone = {};
 
     for (const key of keys) {
       const type = await redis.type(key);
-      let data;
+      const phoneMatch = key.match(/lead:\+?\d+/);
+      if (!phoneMatch) continue;
+      const phone = phoneMatch[0].replace("lead:", "");
 
-      // Handle each Redis type safely
+      let data;
       if (type === "string") {
         const val = await redis.get(key);
         try {
@@ -21,22 +23,28 @@ export async function GET() {
       } else if (type === "hash") {
         data = await redis.hgetall(key);
       } else if (type === "list") {
-        data = await redis.lrange(key, 0, -1);
+        data = await redis.lrange(key, -1, -1); // last message only
+        if (data?.length && typeof data[0] === "string") {
+          try {
+            const msg = JSON.parse(data[0]);
+            data = msg.content;
+          } catch {
+            data = data[0];
+          }
+        }
       } else if (type === "set") {
         data = await redis.smembers(key);
-      } else {
-        // Unsupported types or empty values
-        data = null;
       }
 
-      leads.push({ key, type, data });
+      if (!leadsByPhone[phone]) leadsByPhone[phone] = { phone };
+      if (key.includes(":intent")) leadsByPhone[phone].intent = data;
+      if (key.includes(":properties")) leadsByPhone[phone].property = data?.[0];
+      if (key.includes(":summary")) leadsByPhone[phone].summary = data;
+      if (key.includes(":history")) leadsByPhone[phone].lastMessage = data;
     }
 
-    return NextResponse.json({
-      ok: true,
-      count: leads.length,
-      leads,
-    });
+    const leads = Object.values(leadsByPhone);
+    return NextResponse.json({ ok: true, count: leads.length, leads });
   } catch (err) {
     console.error("Error fetching leads:", err);
     return NextResponse.json({ ok: false, error: err.message });
