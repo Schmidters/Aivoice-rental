@@ -28,43 +28,41 @@ export default function LeadsPage() {
     <div className="p-8">
       <h1 className="text-2xl font-bold mb-6 text-gray-800 dark:text-gray-100">Leads</h1>
       <div className="grid gap-4">
-        {leads.map((lead, i) => {
-          const phone = lead.key.match(/\+?\d+/)?.[0] || 'Unknown';
-          const intent = lead.type === 'string' && lead.data ? lead.data : '';
-          const summary =
-            lead.key.includes(':summary') && typeof lead.data === 'string'
-              ? lead.data.slice(0, 200) + '...'
-              : '';
-
-          return (
-            <Card key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition">
-              <CardHeader>
-                <CardTitle>{phone}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-gray-600 dark:text-gray-300 mb-2">
-                  <strong>Type:</strong> {lead.type}
+        {leads.map((lead, i) => (
+          <Card key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition">
+            <CardHeader>
+              <CardTitle>{lead.phone || 'Unknown Lead'}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {lead.property && (
+                <p className="text-gray-600 dark:text-gray-300 mb-1">
+                  <strong>Property:</strong> {lead.property}
                 </p>
-                {intent && (
-                  <p className="text-gray-600 dark:text-gray-300 mb-2">
-                    <strong>Intent:</strong> {intent}
-                  </p>
-                )}
-                {summary && (
-                  <p className="text-gray-500 dark:text-gray-400 text-sm mb-2 whitespace-pre-wrap">
-                    {summary}
-                  </p>
-                )}
-                <Link
-                  href={`/conversations/${phone}`}
-                  className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-                >
-                  View Conversation →
-                </Link>
-              </CardContent>
-            </Card>
-          );
-        })}
+              )}
+              {lead.intent && (
+                <p className="text-gray-600 dark:text-gray-300 mb-1">
+                  <strong>Intent:</strong> {lead.intent}
+                </p>
+              )}
+              {lead.lastMessage && (
+                <p className="text-gray-500 dark:text-gray-400 text-sm mb-2 italic">
+                  “{lead.lastMessage}”
+                </p>
+              )}
+              {lead.summary && (
+                <p className="text-gray-500 dark:text-gray-400 text-xs whitespace-pre-wrap mb-2">
+                  {lead.summary}
+                </p>
+              )}
+              <Link
+                href={`/conversations/${lead.phone}`}
+                className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+              >
+                View Conversation →
+              </Link>
+            </CardContent>
+          </Card>
+        ))}
       </div>
     </div>
   );
