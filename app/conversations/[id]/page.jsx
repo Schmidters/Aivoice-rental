@@ -144,7 +144,7 @@ export default function ConversationPage({ params }) {
           <ChatBubble
             key={idx}
             role={m.role} // 'user' | 'assistant' | 'agent'
-            text={m.content}
+            message={m.content}
             time={m.t}
             meta={m.meta}
           />
