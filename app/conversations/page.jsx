@@ -28,19 +28,28 @@ export default function ConversationsPage() {
         {rows.map((c) => (
           <Card key={c.id} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition">
             <CardHeader>
-              <CardTitle>{c.id}</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  {c.id}
+                  {c.unread && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-600 text-white">New</span>
+                  )}
+                </CardTitle>
+                <span className="text-xs text-gray-400">
+                  {c.lastTime ? new Date(c.lastTime).toLocaleString() : ''}
+                </span>
+              </div>
             </CardHeader>
             <CardContent className="text-sm space-y-1">
               {c.property && <p><strong>Property:</strong> {c.property}</p>}
               {c.intent && <p><strong>Intent:</strong> {c.intent}</p>}
               {c.lastMessage && (
-                <p className="italic text-gray-600 dark:text-gray-300">
-                  “{c.lastMessage}”
-                  {c.lastTime && <span className="ml-2 text-xs text-gray-400">({new Date(c.lastTime).toLocaleString()})</span>}
-                </p>
+                <p className="italic text-gray-600 dark:text-gray-300">“{c.lastMessage}”</p>
               )}
-              <Link className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-                    href={`/conversations/${encodeURIComponent(c.id)}`}>
+              <Link
+                className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                href={`/conversations/${encodeURIComponent(c.id)}`}
+              >
                 Open →
               </Link>
             </CardContent>

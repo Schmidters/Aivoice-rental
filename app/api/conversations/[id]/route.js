@@ -4,25 +4,22 @@ import { redis } from "@/lib/redis";
 export async function GET(_req, { params }) {
   const phone = decodeURIComponent(params.id);
   try {
-    const historyKey = `lead:${phone}:history`;
-    const raw = await redis.lrange(historyKey, 0, -1);
+    const [raw, properties, intent, summary, lastRead] = await Promise.all([
+      redis.lrange(`lead:${phone}:history`, 0, -1),
+      redis.smembers(`lead:${phone}:properties`),
+      redis.get(`lead:${phone}:intent`).catch(() => null),
+      redis.get(`lead:${phone}:summary`).catch(() => null),
+      redis.get(`conv:${phone}:last_read`).catch(() => null),
+    ]);
 
     const messages = raw.map((s) => {
       try {
         const j = JSON.parse(s);
-        return {
-          t: j.t || null,
-          role: j.role || "assistant",
-          content: j.content || String(s),
-        };
+        return { t: j.t || null, role: j.role || "assistant", content: j.content || String(s) };
       } catch {
         return { t: null, role: "assistant", content: String(s) };
       }
     });
-
-    const properties = await redis.smembers(`lead:${phone}:properties`);
-    const intent = await redis.get(`lead:${phone}:intent`).catch(() => null);
-    const summary = await redis.get(`lead:${phone}:summary`).catch(() => null);
 
     return NextResponse.json({
       ok: true,
@@ -30,6 +27,7 @@ export async function GET(_req, { params }) {
       properties,
       intent,
       summary,
+      lastRead,
       messages,
     });
   } catch (err) {

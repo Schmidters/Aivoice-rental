@@ -3,42 +3,46 @@ import { redis } from "@/lib/redis";
 
 export async function GET() {
   try {
-    // find all leads that have history
     const keys = await redis.keys("lead:*:history");
     const rows = [];
 
     for (const key of keys) {
       const phone = key.match(/lead:(\+?\d+)/)?.[1] || "unknown";
-      // get property + intent
-      const prop = await redis.smembers(`lead:${phone}:properties`);
-      const intent = await redis.get(`lead:${phone}:intent`).catch(() => null);
 
-      // last message (parse JSON string if needed)
-      const last = await redis.lrange(key, -1, -1);
-      let lastMsg = null, lastTime = null, lastRole = null;
-      if (last?.[0]) {
+      const [prop, intent, lastArr, lastRead] = await Promise.all([
+        redis.smembers(`lead:${phone}:properties`),
+        redis.get(`lead:${phone}:intent`).catch(() => null),
+        redis.lrange(key, -1, -1),
+        redis.get(`conv:${phone}:last_read`).catch(() => null),
+      ]);
+
+      let lastMessage = null, lastTime = null, lastRole = null;
+      if (lastArr?.[0]) {
         try {
-          const parsed = JSON.parse(last[0]);
-          lastMsg = parsed.content || String(last[0]);
+          const parsed = JSON.parse(lastArr[0]);
+          lastMessage = parsed.content || String(lastArr[0]);
           lastTime = parsed.t || null;
           lastRole = parsed.role || null;
         } catch {
-          lastMsg = String(last[0]);
+          lastMessage = String(lastArr[0]);
         }
       }
+
+      const unread =
+        lastTime && lastRead ? new Date(lastTime) > new Date(lastRead) : !!lastTime && !lastRead;
 
       rows.push({
         id: phone,
         property: prop?.[0] || null,
         intent: intent || null,
-        lastMessage: lastMsg,
+        lastMessage,
         lastTime,
         lastRole,
+        unread,
       });
     }
 
-    // newest first
-    rows.sort((a, b) => (b.lastTime || 0).localeCompare(a.lastTime || 0));
+    rows.sort((a, b) => (b.lastTime || "").localeCompare(a.lastTime || ""));
 
     return NextResponse.json({ ok: true, count: rows.length, conversations: rows });
   } catch (err) {
