@@ -93,13 +93,20 @@ const leadPropsKey = (phone) => `lead:${phone}:properties`;
 const perPropLeadIdx = (slug) => `property:${slug}:leads`;
 
 // Conversation state keys (AI vs Human handoff)
-const convModeKey = (phone) => `conv:${phone}:mode`; // "auto" | "human"
-const convHandoffReasonKey = (phone) => `conv:${phone}:handoff_reason`;
-const convHandoffAtKey = (phone) => `conv:${phone}:handoff_at`;
-const convOwnerKey = (phone) => `conv:${phone}:owner`;
-const handoffQueueKey = "queue:handoffs";
-const leadHistoryKey = (phone) => `lead:${phone}:history`; // list of {t, role, content, meta?}
+const convModeKey            = (phone) => `conv:${phone}:mode`;             // "auto" | "human"
+const convHandoffReasonKey   = (phone) => `conv:${phone}:handoff_reason`;
+const convHandoffAtKey       = (phone) => `conv:${phone}:handoff_at`;
+const convOwnerKey           = (phone) => `conv:${phone}:owner`;
+const handoffQueueKey        = "queue:handoffs";
+const leadHistoryKey         = (phone) => `lead:${phone}:history`;          // list of {t, role, content, meta?}
 
+async function publishEvent(phone, payload) {
+  try {
+    await redis.publish(`events:lead:${phone}`, JSON.stringify(payload));
+  } catch (e) {
+    console.error('pub error', e);
+  }
+}
 async function appendHistory(phone, role, content, meta) {
   const item = { t: nowIso(), role, content };
   if (meta && typeof meta === "object") item.meta = meta;
@@ -600,6 +607,55 @@ app.get("/events/conversation/:phone", async (req, res) => {
     clearInterval(heartbeat);
     try { sub.disconnect(); } catch {}
   });
+});
+// ---------- HISTORY SNAPSHOT ----------
+app.get("/history/:phone", async (req, res) => {
+  try {
+    const phone = normalizePhone(req.params.phone || "");
+    if (!phone)
+      return res.status(400).json({ ok: false, error: "Missing phone" });
+
+    const raw = await redis.lrange(leadHistoryKey(phone), 0, -1);
+    const items = raw
+      .map((r) => {
+        try {
+          return JSON.parse(r);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+
+    const messages = items.map((it) => ({
+      ts: it.t,
+      sender:
+        it.role === "user"
+          ? "lead"
+          : it.role === "assistant"
+          ? "ai"
+          : "agent",
+      text: it.content,
+      meta: it.meta || null,
+    }));
+
+    const [mode, reason, owner] = await redis.mget(
+      convModeKey(phone),
+      convHandoffReasonKey(phone),
+      convOwnerKey(phone)
+    );
+
+    res.json({
+      ok: true,
+      phone,
+      mode: mode || "auto",
+      handoffReason: reason || "",
+      owner: owner || "",
+      messages,
+    });
+  } catch (e) {
+    console.error("history error", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // ---------- DEBUG + HEALTH ----------
