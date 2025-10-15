@@ -1,3 +1,4 @@
+// dashboard/app/bookings/page.jsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -19,71 +20,39 @@ export default function BookingsCalendar() {
   const [events, setEvents] = useState([]);
 
   useEffect(() => {
-    // Use env var if set; hard-fallback to your backend so it never 404s
-    const backendBase =
-      process.env.NEXT_PUBLIC_AI_BACKEND_URL || 'https://aivoice-rental.onrender.com';
-
     async function load() {
-      const url = `${backendBase}/bookings`; // ✅ correct backend route (no /api)
-      console.log('➡️ Fetching bookings:', url);
-      try {
-        const r = await fetch(url, { cache: 'no-store' });
-        const j = await r.json();
-        if (!j?.ok) {
-          console.warn('Bookings load failed:', j);
-          return;
-        }
-
-        // Backend returns: { ok: true, bookings: [{ phone, property, datetime }, ...] }
-        const normalized = (j.bookings || [])
-          .map((b) => {
-            if (!b?.datetime) return null;
-            const start = parseISO(b.datetime);
-            return {
-              title: `${b.property || 'Unknown property'} (${b.phone || ''})`,
-              start,
-              end: start, // you can extend to +30min later if you like
-              allDay: false,
-            };
-          })
-          .filter(Boolean);
-
-        console.log(`✅ Loaded ${normalized.length} bookings`);
-        setEvents(normalized);
-      } catch (err) {
-        console.error('Error loading bookings:', err);
-      }
+      const r = await fetch('/api/bookings', { cache: 'no-store' });
+      const j = await r.json();
+      if (!j?.ok) return;
+      const normalized = (j.items || []).map((b) => ({
+        id: b.id,
+        title: `${b.property} (${b.phone})`,
+        start: parseISO(b.datetime),
+        end: parseISO(b.datetime),
+        allDay: false,
+      }));
+      setEvents(normalized);
     }
-
     load();
 
-    // Live updates via SSE from backend
-    const esUrl = `${backendBase}/events/bookings`; // ✅ correct SSE route (no /api)
-    console.log('🔗 Connecting to SSE:', esUrl);
-    const es = new EventSource(esUrl);
+    // Optional live updates from backend SSE
+    const base = (process.env.NEXT_PUBLIC_AI_BACKEND_URL || '').replace(/\/$/, '');
+    if (!base) return;
 
+    const es = new EventSource(`${base}/api/bookings/events`);
     es.onmessage = (e) => {
       try {
-        const b = JSON.parse(e.data); // { phone, property, datetime }
-        if (!b?.datetime) return;
-        const start = parseISO(b.datetime);
+        const b = JSON.parse(e.data);
         const evt = {
-          title: `${b.property || 'Unknown property'} (${b.phone || ''})`,
-          start,
-          end: start,
+          id: b.id,
+          title: `${b.property} (${b.phone})`,
+          start: parseISO(b.datetime),
+          end: parseISO(b.datetime),
           allDay: false,
         };
-        console.log('📩 Live booking received:', evt);
         setEvents((prev) => [evt, ...prev]);
-      } catch (err) {
-        console.error('Error parsing SSE message:', err);
-      }
+      } catch {}
     };
-
-    es.onerror = (err) => {
-      console.warn('⚠️ SSE connection error:', err);
-    };
-
     return () => es.close();
   }, []);
 
