@@ -681,6 +681,83 @@ app.get("/health", async (_req, res) => {
   }
 });
 
+// ---------- BOOKINGS LOGIC ----------
+
+// When the AI confirms a showing, call this helper to log it
+async function logBooking({ phone, property, datetime }) {
+  const payload = {
+    phone,
+    property,
+    datetime,
+    source: "ai",
+    createdAt: Date.now(),
+  };
+  await redis.lpush("bookings", JSON.stringify(payload));
+  await redis.publish("bookings:new", JSON.stringify(payload));
+}
+
+// TEMP test route (you can delete once AI flow calls logBooking)
+app.post("/debug/book", async (req, res) => {
+  try {
+    const { phone, property, datetime } = req.body || {};
+    if (!phone || !property || !datetime)
+      return res.status(400).json({ ok: false, error: "Missing fields" });
+
+    await logBooking({ phone, property, datetime });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("❌ booking error:", err);
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+// SSE endpoint for live bookings
+app.get("/events/bookings", async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  const heartbeat = setInterval(() => {
+    res.write("event: ping\n");
+    res.write("data: {}\n\n");
+  }, 25000);
+
+  const sub = new Redis(REDIS_URL);
+  await sub.subscribe("bookings:new");
+  sub.on("message", (_ch, msg) => {
+    res.write(`data: ${msg}\n\n`);
+  });
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    sub.disconnect();
+  });
+});
+
+// Fetch recent bookings (for dashboard initial load)
+app.get("/bookings", async (_req, res) => {
+  try {
+    const list = await redis.lrange("bookings", 0, 99);
+    const bookings = list.map(JSON.parse);
+    res.json({ ok: true, bookings });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+async function logBooking({ phone, property, datetime }) {
+  const payload = {
+    phone,
+    property,
+    datetime,
+    source: "ai",
+    createdAt: Date.now(),
+  };
+  await redis.lpush("bookings", JSON.stringify(payload));
+  await redis.publish("bookings:new", JSON.stringify(payload));
+}
+
 // ---------- START ----------
 app.listen(PORT, () => {
   console.log(`🚀 V3+Handoff+SSE on :${PORT} (${NODE_ENV})`);

@@ -1,67 +1,54 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
 export default function BookingsPage() {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [bookings, setBookings] = useState([]);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch('/api/bookings', { cache: 'no-store' });
-        const j = await r.json();
-        if (j.ok) setRows(j.items || []);
-      } finally {
-        setLoading(false);
-      }
-    })();
+    // Initial load
+    fetch('/api/bookings')
+      .then(r => r.json())
+      .then(j => j.ok && setBookings(j.bookings || []));
+
+    // Live updates via SSE
+    const es = new EventSource('/api/bookings/events');
+    es.onmessage = (e) => {
+      const b = JSON.parse(e.data);
+      setBookings((prev) => [b, ...prev]);
+    };
+    es.addEventListener('ping', () => {});
+    es.onerror = () => {};
+    return () => es.close();
   }, []);
 
-  if (loading) return <div className="p-6 text-gray-500">Loading bookings…</div>;
-
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Bookings</h1>
-      <Card>
-        <CardHeader>
-          <CardTitle>All Bookings ({rows.length})</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {rows.length === 0 ? (
-            <div className="text-gray-500">No bookings found.</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-left border-b border-gray-200 dark:border-gray-800">
-                  <tr>
-                    <th className="py-2 pr-4">Key</th>
-                    <th className="py-2 pr-4">Phone</th>
-                    <th className="py-2 pr-4">Property</th>
-                    <th className="py-2 pr-4">Type</th>
-                    <th className="py-2">Preview</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={i} className="border-b border-gray-100 dark:border-gray-800">
-                      <td className="py-2 pr-4">{r.key}</td>
-                      <td className="py-2 pr-4">{r.phone || ''}</td>
-                      <td className="py-2 pr-4">{r.property || ''}</td>
-                      <td className="py-2 pr-4">{r.type}</td>
-                      <td className="py-2 break-all">
-                        <pre className="text-xs whitespace-pre-wrap">
-                          {typeof r.data === 'string' ? r.data : JSON.stringify(r.data, null, 2)}
-                        </pre>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+    <div className="p-6">
+      <h1 className="text-2xl font-semibold mb-4">Booked Showings</h1>
+      <table className="min-w-full text-sm border">
+        <thead className="bg-gray-100">
+          <tr>
+            <th className="p-2 text-left border-b">Date / Time</th>
+            <th className="p-2 text-left border-b">Property</th>
+            <th className="p-2 text-left border-b">Lead Phone</th>
+          </tr>
+        </thead>
+        <tbody>
+          {bookings.map((b, i) => (
+            <tr key={i} className="border-b">
+              <td className="p-2">{new Date(b.datetime).toLocaleString()}</td>
+              <td className="p-2">{b.property}</td>
+              <td className="p-2">{b.phone}</td>
+            </tr>
+          ))}
+          {!bookings.length && (
+            <tr>
+              <td colSpan={3} className="p-4 text-center text-gray-500">
+                No bookings yet.
+              </td>
+            </tr>
           )}
-        </CardContent>
-      </Card>
+        </tbody>
+      </table>
     </div>
   );
 }
