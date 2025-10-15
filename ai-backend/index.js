@@ -380,6 +380,8 @@ app.post("/twilio/sms", async (req, res) => {
 
     await incCounter("inbound_sms");
     await appendHistory(from, "user", body);
+    await redis.set(convModeKey(from), "auto");
+
 
     // Auto-link lead -> property
     const possibleSlug = extractSlugFromText(body);
@@ -413,16 +415,9 @@ app.post("/twilio/sms", async (req, res) => {
     const intent = await detectIntent(body);
     console.log("🎯 Detected intent:", intent);
 
-    const reason = await shouldHandoff({ phone: from, text: body, intent, property });
-    if (reason) {
-      console.log("🧭 Handoff triggered:", reason);
-      await handoffToHuman(from, reason);
-      const msg = "Thanks! I’m looping in a leasing specialist to help with that.";
-      await appendHistory(from, "assistant", msg, { handoff: reason });
-      await sendSms(from, msg);
-      await incCounter("replied_sms");
-      return res.status(200).send("");
-    }
+    // Always stay in AI mode — skip handoff
+    console.log("🤖 AI-only mode active — skipping handoff checks");
+
 
     // AI reply (booking-first)
     const reply = await aiReply({ incomingText: body, property, intent });
