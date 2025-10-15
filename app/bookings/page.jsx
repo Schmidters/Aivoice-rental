@@ -18,41 +18,70 @@ const localizer = dateFnsLocalizer({
 export default function BookingsCalendar() {
   const [events, setEvents] = useState([]);
 
-  // Load existing bookings from Redis
+  // Load existing bookings from backend (Redis)
   useEffect(() => {
+    const backendBase =
+      process.env.NEXT_PUBLIC_AI_BACKEND_URL || 'https://aivoice-rental.onrender.com';
+
     async function load() {
-      const r = await fetch('/api/bookings', { cache: 'no-store' });
-      const j = await r.json();
-      if (!j?.ok) return;
-      const normalized = (j.items || []).map((b) => {
-        const dt = b.data?.datetime || b.data?._list?.[0] || null;
-        return dt
-          ? {
-              title: `${b.property || 'Unknown property'} (${b.phone || ''})`,
-              start: parseISO(dt),
-              end: parseISO(dt),
-              allDay: false,
-            }
-          : null;
-      }).filter(Boolean);
-      setEvents(normalized);
+      console.log('➡️ Fetching bookings from backend:', `${backendBase}/api/bookings`);
+      try {
+        const r = await fetch(`${backendBase}/api/bookings`, { cache: 'no-store' });
+        const j = await r.json();
+        if (!j?.ok) {
+          console.warn('Failed to load bookings:', j);
+          return;
+        }
+
+        // Normalize data
+        const normalized = (j.items || [])
+          .map((b) => {
+            const dt = b.data?.datetime || b.data?._list?.[0] || null;
+            return dt
+              ? {
+                  title: `${b.property || 'Unknown property'} (${b.phone || ''})`,
+                  start: parseISO(dt),
+                  end: parseISO(dt),
+                  allDay: false,
+                }
+              : null;
+          })
+          .filter(Boolean);
+
+        console.log(`✅ Loaded ${normalized.length} bookings`);
+        setEvents(normalized);
+      } catch (err) {
+        console.error('Error loading bookings:', err);
+      }
     }
+
     load();
 
-    // Live SSE updates
-    const es = new EventSource('/api/bookings/events');
+    // Live SSE updates from backend
+    const esUrl = `${backendBase}/api/bookings/events`;
+    console.log('🔗 Connecting to SSE:', esUrl);
+
+    const es = new EventSource(esUrl);
     es.onmessage = (e) => {
       try {
         const b = JSON.parse(e.data);
+        console.log('📩 Live booking received:', b);
         const evt = {
-          title: `${b.property} (${b.phone})`,
+          title: `${b.property || 'Unknown property'} (${b.phone})`,
           start: parseISO(b.datetime),
           end: parseISO(b.datetime),
           allDay: false,
         };
         setEvents((prev) => [evt, ...prev]);
-      } catch {}
+      } catch (err) {
+        console.error('Error parsing SSE message:', err);
+      }
     };
+
+    es.onerror = (err) => {
+      console.warn('⚠️ SSE connection error:', err);
+    };
+
     return () => es.close();
   }, []);
 
@@ -66,6 +95,7 @@ export default function BookingsCalendar() {
           Total: {events.length} bookings
         </span>
       </div>
+
       <Calendar
         localizer={localizer}
         events={events}
