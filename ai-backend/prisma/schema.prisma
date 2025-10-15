@@ -1,4 +1,9 @@
 // ai-backend/prisma/schema.prisma
+// ========================================
+// V4 schema for AI Voice Rental backend
+// Tables: Lead, Property, Message, Booking, LeadProperty
+// ========================================
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,74 +13,84 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ========================
+// LEADS
+// ========================
 model Lead {
-  id        Int       @id @default(autoincrement())
-  phone     String    @unique
-  name      String?   // optional (we can fill later)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id          Int            @id @default(autoincrement())
+  phone       String         @unique
+  name        String?
+  email       String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
-  messages  Message[]
-  bookings  Booking[]
-  // simple many-to-many via LeadProperty
-  properties LeadProperty[]
+  // Relationships
+  messages    Message[]
+  bookings    Booking[]
+  properties  LeadProperty[]
 }
 
+// ========================
+// PROPERTIES
+// ========================
 model Property {
-  id        Int       @id @default(autoincrement())
-  slug      String    @unique
-  address   String?   // optional extra
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id          Int            @id @default(autoincrement())
+  slug        String         @unique
+  address     String?
+  city        String?        @default("Calgary")
+  province    String?        @default("AB")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
-  messages   Message[]
-  bookings   Booking[]
-  leads      LeadProperty[]
+  // Relationships
+  messages    Message[]
+  bookings    Booking[]
+  leads       LeadProperty[]
 }
 
-model Booking {
-  id         Int       @id @default(autoincrement())
-  datetime   DateTime
-  source     String    // "ai" | "agent" | etc
-  createdAt  DateTime  @default(now())
-
-  lead       Lead      @relation(fields: [leadId], references: [id])
-  leadId     Int
-
-  property   Property  @relation(fields: [propertyId], references: [id])
-  propertyId Int
-}
-
+// ========================
+// MESSAGES
+// ========================
 model Message {
-  id         Int       @id @default(autoincrement())
-  t          DateTime  @default(now()) // timestamp
-  role       String    // "user" | "assistant" | "agent"
-  content    String
-  meta       Json?
+  id          Int            @id @default(autoincrement())
+  leadId      Int
+  propertyId  Int?
+  role        String
+  content     String
+  meta        Json?
+  createdAt   DateTime       @default(now())
 
-  lead       Lead      @relation(fields: [leadId], references: [id])
-  leadId     Int
-
-  property   Property? @relation(fields: [propertyId], references: [id])
-  propertyId Int?
+  // Relationships
+  lead        Lead           @relation(fields: [leadId], references: [id])
+  property    Property?      @relation(fields: [propertyId], references: [id])
 }
 
-// simple M2M join table
-model LeadProperty {
-  id         Int      @id @default(autoincrement())
-  lead       Lead     @relation(fields: [leadId], references: [id])
-  leadId     Int
-  property   Property @relation(fields: [propertyId], references: [id])
-  propertyId Int
-
-  @@unique([leadId, propertyId])
-}
-
+// ========================
+// BOOKINGS
+// ========================
 model Booking {
-  id        Int      @id @default(autoincrement())
-  phone     String
-  property  String
-  datetime  DateTime
-  source    String   @default("ai")
-  createdAt DateTime @default(now())
+  id          Int            @id @default(autoincrement())
+  leadId      Int
+  propertyId  Int
+  datetime    DateTime
+  source      String          @default("ai")
+  createdAt   DateTime        @default(now())
+
+  // Relationships
+  lead        Lead            @relation(fields: [leadId], references: [id])
+  property    Property        @relation(fields: [propertyId], references: [id])
+}
+
+// ========================
+// LINK TABLE (Lead ↔ Property)
+// ========================
+model LeadProperty {
+  leadId      Int
+  propertyId  Int
+  createdAt   DateTime       @default(now())
+
+  lead        Lead           @relation(fields: [leadId], references: [id])
+  property    Property       @relation(fields: [propertyId], references: [id])
+
+  @@id([leadId, propertyId])
 }
