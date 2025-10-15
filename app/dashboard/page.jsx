@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 export default function DashboardPage() {
-  const [bookings, setBookings] = useState<any[]>([]);
+  const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // --- Fetch initial bookings from backend ---
@@ -33,7 +33,6 @@ export default function DashboardPage() {
     evtSource.onmessage = (e) => {
       try {
         const b = JSON.parse(e.data);
-        // Prepend new booking
         setBookings((prev) => [b, ...prev]);
       } catch (err) {
         console.warn("SSE parse error:", err);
