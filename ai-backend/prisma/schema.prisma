@@ -70,3 +70,12 @@ model LeadProperty {
 
   @@unique([leadId, propertyId])
 }
+
+model Booking {
+  id        Int      @id @default(autoincrement())
+  phone     String
+  property  String
+  datetime  DateTime
+  source    String   @default("ai")
+  createdAt DateTime @default(now())
+}
