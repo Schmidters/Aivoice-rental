@@ -430,12 +430,11 @@ app.post("/twilio/sms", async (req, res) => {
     // ------------------------------------------------------
 // 🗓️ Simple booking intent detector (temporary MVP)
 // ------------------------------------------------------
+// 🗓️ Unified booking logger (feeds both Redis list + SSE)
 if (/\b(book|schedule|showing|tour|appointment)\b/i.test(body)) {
   try {
     const dt = new Date();
-    // crude parse — if "tomorrow" mentioned, add one day
     if (/\btomorrow\b/i.test(body)) dt.setDate(dt.getDate() + 1);
-    // if there's a time mentioned (e.g. "9am", "14:00"), capture it
     const timeMatch = body.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
     if (timeMatch) {
       let h = parseInt(timeMatch[1]);
@@ -445,19 +444,21 @@ if (/\b(book|schedule|showing|tour|appointment)\b/i.test(body)) {
       if (mer === "am" && h === 12) h = 0;
       dt.setHours(h, m, 0, 0);
     }
+
     const iso = dt.toISOString();
-
     const property = (await findBestPropertyForLead(from))?.slug || "unknown";
+    const booking = { phone: from, property, datetime: iso, source: "ai" };
 
-    const booking = { phone: from, property, datetime: iso };
-    await redis.set(`booking:${from}:${iso}`, JSON.stringify(booking), "EX", 7 * 24 * 3600);
-    await redis.publish("events:bookings", JSON.stringify(booking));
+    // Unified write: push to "bookings" list + publish live event
+    await redis.lpush("bookings", JSON.stringify(booking));
+    await redis.publish("bookings:new", JSON.stringify(booking));
 
     console.log("📅 Logged booking:", booking);
   } catch (e) {
     console.error("Booking parse error:", e);
   }
 }
+
 
 
     res.status(200).send("");
