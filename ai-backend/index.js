@@ -391,19 +391,43 @@ app.post("/twilio/sms", async (req, res) => {
       console.log(`🏷️ Linked lead ${from} → property ${possibleSlug} (from SMS text)`);
     }
 
-    // Resolve property
-    let property = await findBestPropertyForLead(from);
-    if (!property) {
-      const keys = (await redis.keys("property:*")).filter(
-        (k) => !k.endsWith(":leads")
-      );
-      if (keys.length) {
-        const recent = keys.sort().reverse()[0];
-        const raw = await redis.get(recent);
-        try { property = JSON.parse(raw); } catch {}
-      }
+    // 🧠 Property Resolution: smarter recall across conversation
+let property = await findBestPropertyForLead(from);
+
+// If not found, try last referenced property from chat history
+if (!property) {
+  try {
+    const rawHist = await redis.lrange(leadHistoryKey(from), -10, -1);
+    for (const h of rawHist.reverse()) {
+      const m = JSON.parse(h);
+      // Check if AI mentioned a known address or slug before
+if (slugGuess) {
+  property = await getProperty(slugGuess);
+  if (property) {
+    console.log(`💡 Recalled last-mentioned property from history: ${slugGuess}`);
+    // Auto re-link so next messages instantly resolve
+    await redis.sadd(leadPropsKey(from), slugGuess);
+    await redis.sadd(perPropLeadIdx(slugGuess), from);
+    break;
+  }
+}
     }
-    console.log("🏠 Property resolved:", property ? property.slug : "none");
+  } catch (e) {
+    console.warn("⚠️ Property recall failed:", e);
+  }
+}
+
+// Fallback: most recent property in Redis (legacy V1 behavior)
+if (!property) {
+  const keys = (await redis.keys("property:*")).filter((k) => !k.endsWith(":leads"));
+  if (keys.length) {
+    const recent = keys.sort().reverse()[0];
+    const raw = await redis.get(recent);
+    try { property = JSON.parse(raw); } catch {}
+  }
+}
+console.log("🏠 Property resolved:", property ? property.slug : "none");
+
 
     // Human mode → AI muted
     if (!(await aiPermitted(from))) {
