@@ -1,54 +1,87 @@
 'use client';
+
 import { useEffect, useState } from 'react';
+import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
+import { format, parse, startOfWeek, getDay, parseISO } from 'date-fns';
+import enUS from 'date-fns/locale/en-US';
+import 'react-big-calendar/lib/css/react-big-calendar.css';
 
-export default function BookingsPage() {
-  const [bookings, setBookings] = useState([]);
+const locales = { 'en-US': enUS };
+const localizer = dateFnsLocalizer({
+  format,
+  parse,
+  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 0 }),
+  getDay,
+  locales,
+});
 
+export default function BookingsCalendar() {
+  const [events, setEvents] = useState([]);
+
+  // Load existing bookings from Redis
   useEffect(() => {
-    // Initial load
-    fetch('/api/bookings')
-      .then(r => r.json())
-      .then(j => j.ok && setBookings(j.bookings || []));
+    async function load() {
+      const r = await fetch('/api/bookings', { cache: 'no-store' });
+      const j = await r.json();
+      if (!j?.ok) return;
+      const normalized = (j.items || []).map((b) => {
+        const dt = b.data?.datetime || b.data?._list?.[0] || null;
+        return dt
+          ? {
+              title: `${b.property || 'Unknown property'} (${b.phone || ''})`,
+              start: parseISO(dt),
+              end: parseISO(dt),
+              allDay: false,
+            }
+          : null;
+      }).filter(Boolean);
+      setEvents(normalized);
+    }
+    load();
 
-    // Live updates via SSE
+    // Live SSE updates
     const es = new EventSource('/api/bookings/events');
     es.onmessage = (e) => {
-      const b = JSON.parse(e.data);
-      setBookings((prev) => [b, ...prev]);
+      try {
+        const b = JSON.parse(e.data);
+        const evt = {
+          title: `${b.property} (${b.phone})`,
+          start: parseISO(b.datetime),
+          end: parseISO(b.datetime),
+          allDay: false,
+        };
+        setEvents((prev) => [evt, ...prev]);
+      } catch {}
     };
-    es.addEventListener('ping', () => {});
-    es.onerror = () => {};
     return () => es.close();
   }, []);
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-semibold mb-4">Booked Showings</h1>
-      <table className="min-w-full text-sm border">
-        <thead className="bg-gray-100">
-          <tr>
-            <th className="p-2 text-left border-b">Date / Time</th>
-            <th className="p-2 text-left border-b">Property</th>
-            <th className="p-2 text-left border-b">Lead Phone</th>
-          </tr>
-        </thead>
-        <tbody>
-          {bookings.map((b, i) => (
-            <tr key={i} className="border-b">
-              <td className="p-2">{new Date(b.datetime).toLocaleString()}</td>
-              <td className="p-2">{b.property}</td>
-              <td className="p-2">{b.phone}</td>
-            </tr>
-          ))}
-          {!bookings.length && (
-            <tr>
-              <td colSpan={3} className="p-4 text-center text-gray-500">
-                No bookings yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+    <div className="p-6 h-[calc(100vh-80px)] bg-gray-50 dark:bg-gray-900">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
+          📅 Showings Calendar
+        </h1>
+        <span className="text-sm text-gray-500">
+          Total: {events.length} bookings
+        </span>
+      </div>
+      <Calendar
+        localizer={localizer}
+        events={events}
+        startAccessor="start"
+        endAccessor="end"
+        style={{ height: 'calc(100vh - 160px)' }}
+        eventPropGetter={() => ({
+          style: {
+            backgroundColor: '#4F46E5',
+            borderRadius: '6px',
+            color: 'white',
+            border: 'none',
+            padding: '2px 4px',
+          },
+        })}
+      />
     </div>
   );
 }
