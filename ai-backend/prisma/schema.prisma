@@ -1,0 +1,45 @@
+// prisma/schema.prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ---------- TABLES ----------
+model Property {
+  id         Int       @id @default(autoincrement())
+  slug       String    @unique
+  address    String?
+  rent       Int?
+  parking    String?
+  pets       String?
+  utilities  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  bookings   Booking[]
+}
+
+model Lead {
+  id         Int       @id @default(autoincrement())
+  phone      String    @unique
+  name       String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  bookings   Booking[]
+}
+
+model Booking {
+  id          Int       @id @default(autoincrement())
+  datetime    DateTime
+  source      String?   @default("ai")
+  createdAt   DateTime  @default(now())
+
+  // Relations
+  propertyId  Int
+  leadId      Int
+  property    Property  @relation(fields: [propertyId], references: [id])
+  lead        Lead      @relation(fields: [leadId], references: [id])
+}

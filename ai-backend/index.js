@@ -14,7 +14,9 @@ import Redis from "ioredis";
 import OpenAI from "openai";
 import twilio from "twilio";
 import dotenv from "dotenv";
+import { PrismaClient } from "@prisma/client";
 dotenv.config();
+const prisma = new PrismaClient(); // ✅ ADD THIS
 
 // ---------- ENV ----------
 const {
@@ -400,7 +402,9 @@ if (!property) {
     const rawHist = await redis.lrange(leadHistoryKey(from), -10, -1);
     for (const h of rawHist.reverse()) {
       const m = JSON.parse(h);
-      // Check if AI mentioned a known address or slug before
+     
+// Check if AI mentioned a known address or slug before
+const slugGuess = extractSlugFromText(m.content);
 if (slugGuess) {
   property = await getProperty(slugGuess);
   if (property) {
@@ -411,6 +415,7 @@ if (slugGuess) {
     break;
   }
 }
+
     }
   } catch (e) {
     console.warn("⚠️ Property recall failed:", e);
@@ -452,13 +457,11 @@ console.log("🏠 Property resolved:", property ? property.slug : "none");
     console.log("✅ SMS sent to lead:", from);
 
     // ------------------------------------------------------
-// 🗓️ Simple booking intent detector (temporary MVP)
-// ------------------------------------------------------
-// 🗓️ Unified booking logger (feeds both Redis list + SSE)
 if (/\b(book|schedule|showing|tour|appointment)\b/i.test(body)) {
   try {
     const dt = new Date();
     if (/\btomorrow\b/i.test(body)) dt.setDate(dt.getDate() + 1);
+
     const timeMatch = body.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
     if (timeMatch) {
       let h = parseInt(timeMatch[1]);
@@ -470,18 +473,44 @@ if (/\b(book|schedule|showing|tour|appointment)\b/i.test(body)) {
     }
 
     const iso = dt.toISOString();
-    const property = (await findBestPropertyForLead(from))?.slug || "unknown";
-    const booking = { phone: from, property, datetime: iso, source: "ai" };
+    const propertySlug = (await findBestPropertyForLead(from))?.slug || "unknown";
 
-    // Unified write: push to "bookings" list + publish live event
+    // ✅ Redis (for live updates)
+    const booking = { phone: from, property: propertySlug, datetime: iso, source: "ai" };
     await redis.lpush("bookings", JSON.stringify(booking));
     await redis.publish("bookings:new", JSON.stringify(booking));
 
     console.log("📅 Logged booking:", booking);
+
+    // ✅ Postgres mirror (permanent record)
+    const lead = await prisma.lead.upsert({
+      where: { phone: from },
+      update: {},
+      create: { phone: from },
+    });
+
+    const property = await prisma.property.upsert({
+      where: { slug: propertySlug },
+      update: {},
+      create: { slug: propertySlug },
+    });
+
+    await prisma.booking.create({
+      data: {
+        datetime: new Date(iso),
+        source: "ai",
+        propertyId: property.id,
+        leadId: lead.id,
+      },
+    });
+
+    console.log("🗄️ Saved booking to Postgres ✅");
+
   } catch (e) {
     console.error("Booking parse error:", e);
   }
 }
+
 
 
 
