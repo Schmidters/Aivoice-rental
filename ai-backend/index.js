@@ -746,17 +746,6 @@ app.get("/bookings", async (_req, res) => {
   }
 });
 
-async function logBooking({ phone, property, datetime }) {
-  const payload = {
-    phone,
-    property,
-    datetime,
-    source: "ai",
-    createdAt: Date.now(),
-  };
-  await redis.lpush("bookings", JSON.stringify(payload));
-  await redis.publish("bookings:new", JSON.stringify(payload));
-}
 
 // ---------- START ----------
 app.listen(PORT, () => {
