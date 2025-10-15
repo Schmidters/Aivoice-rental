@@ -1,5 +1,9 @@
 import Redis from "ioredis";
 
+// Disable static optimization
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET() {
   const redis = new Redis(process.env.REDIS_URL);
 
