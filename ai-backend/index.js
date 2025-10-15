@@ -774,6 +774,17 @@ app.get("/bookings", async (_req, res) => {
   }
 });
 
+// Debug helper to inspect saved bookings directly
+app.get("/debug/bookings", async (_req, res) => {
+  try {
+    const list = await redis.lrange("bookings", 0, 99);
+    const bookings = list.map(JSON.parse);
+    res.json({ ok: true, count: bookings.length, bookings });
+  } catch (err) {
+    console.error("❌ /debug/bookings error:", err);
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
 
 // ---------- START ----------
 app.listen(PORT, () => {
