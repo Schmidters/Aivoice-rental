@@ -325,26 +325,61 @@ app.post("/twilio/sms", async (req, res) => {
   }
 });
 
-// --- BrowseAI/Zapier hooks keep writing into Property table ---
+// --- Zapier → /init/facts (property facts + lead link) ---
 app.post("/init/facts", async (req, res) => {
   try {
-    const { leadPhone, property, unit, finalUrl } = req.body || {};
-    const slug = slugify(finalUrl?.split("/").pop() || property || "");
-    if (!slug) return res.status(400).json({ ok: false, error: "Missing slug" });
+    const { leadPhone, leadName, property, unit, link, slug } = req.body || {};
 
-    const prop = await upsertPropertyBySlug(slug, property || null);
-    if (leadPhone) {
-      const phone = normalizePhone(leadPhone);
-      const lead = await upsertLeadByPhone(phone);
-      await linkLeadToProperty(lead.id, prop.id);
+    if (!leadPhone || !property) {
+      return res.status(400).json({ ok: false, error: "Missing leadPhone or property" });
     }
+
+    console.log("📦 Received property facts:", req.body);
+
+    // Normalize phone
+    const phone = normalizePhone(leadPhone);
+
+    // 1️⃣ Ensure lead exists
+    const lead = await upsertLeadByPhone(phone);
+
+    // 2️⃣ Ensure property exists (use slug if provided)
+    const prop = await upsertPropertyBySlug(slug || slugify(property), property);
+
+    // 3️⃣ Link lead ↔ property
+    await linkLeadToProperty(lead.id, prop.id);
+
+    // 4️⃣ Save facts to Redis for quick lookups
+    await redis.hset(`facts:${prop.slug}`, {
+      leadPhone: phone,
+      leadName: leadName || "",
+      property,
+      unit: unit || "",
+      link: link || "",
+      slug: prop.slug,
+      createdAt: new Date().toISOString(),
+    });
+
+    // 5️⃣ Persist facts in Postgres (optional dedicated table)
+    if (prisma.propertyFacts) {
+      await prisma.propertyFacts.create({
+        data: {
+          slug: prop.slug,
+          leadPhone: phone,
+          leadName: leadName || null,
+          property,
+          unit: unit || null,
+          link: link || null,
+        },
+      });
+    }
+
+    console.log(`💾 Stored property facts for ${prop.slug}`);
     res.json({ ok: true, slug: prop.slug });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
-    res.status(500).json({ ok: false });
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
-
 // ---------- READ APIs FOR DASHBOARD ----------
 
 // Bookings list (for calendar)

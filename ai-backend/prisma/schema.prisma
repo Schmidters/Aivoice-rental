@@ -1,7 +1,6 @@
-// ai-backend/prisma/schema.prisma
 // ========================================
 // V4 schema for AI Voice Rental backend
-// Tables: Lead, Property, Message, Booking, LeadProperty
+// Tables: Lead, Property, Message, Booking, LeadProperty, PropertyFacts
 // ========================================
 
 generator client {
@@ -93,4 +92,18 @@ model LeadProperty {
   property    Property       @relation(fields: [propertyId], references: [id])
 
   @@id([leadId, propertyId])
+}
+
+// ========================
+// PROPERTY FACTS (Zapier/BrowseAI ingest)
+// ========================
+model PropertyFacts {
+  id         Int      @id @default(autoincrement())
+  slug       String   @unique
+  leadPhone  String
+  leadName   String?
+  property   String
+  unit       String?
+  link       String
+  createdAt  DateTime @default(now())
 }
