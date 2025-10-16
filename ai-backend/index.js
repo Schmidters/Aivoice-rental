@@ -323,8 +323,13 @@ await prisma.propertyFacts.upsert({
   },
 });
 
-console.log("💾 Saved PropertyFacts in DB and Redis:", resolvedSlug);
-res.json({ ok: true, slug: resolvedSlug });
+    console.log("💾 Saved PropertyFacts in DB and Redis:", resolvedSlug);
+    res.json({ ok: true, slug: resolvedSlug });
+  } catch (err) {
+    console.error("❌ /init/facts error:", err);
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
 
 // ---------- READ APIs FOR DASHBOARD ----------
 app.get("/api/bookings", async (_req, res) => {
