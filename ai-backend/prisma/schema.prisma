@@ -83,5 +83,5 @@ model PropertyFacts {
   petsAllowed      Boolean?  @map("pets_allowed")
 
   createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  updatedAt        DateTime? @updatedAt
 }
