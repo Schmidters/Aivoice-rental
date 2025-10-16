@@ -1,5 +1,5 @@
 // --- ai-backend/index.js ---
-// Version: V5 — Ava (Context-Aware Leasing Assistant)
+// Version: V5.3 — Ava (Timezone-Aware Leasing Assistant)
 
 import express from "express";
 import bodyParser from "body-parser";
@@ -51,7 +51,20 @@ const normalizePhone = (num) => {
 };
 const slugify = (s) =>
   (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
-const nowIso = () => new Date().toISOString();
+
+// --- Timezone helpers ---
+function resolveTimezoneFromAddress(address = "") {
+  const a = address.toLowerCase();
+  if (a.includes("calgary") || a.includes("edmonton") || a.includes("alberta")) return "America/Edmonton";
+  if (a.includes("vancouver") || a.includes("british columbia")) return "America/Vancouver";
+  if (a.includes("toronto") || a.includes("ontario")) return "America/Toronto";
+  if (a.includes("montreal") || a.includes("quebec")) return "America/Toronto";
+  return "America/Edmonton"; // default
+}
+
+function nowIso(zone = "America/Edmonton") {
+  return DateTime.now().setZone(zone).toISO();
+}
 
 // DB helpers
 async function upsertLeadByPhone(phone) {
@@ -153,7 +166,7 @@ async function extractDateTime(text) {
     });
     const iso = resp.choices?.[0]?.message?.content?.trim();
     if (!iso || iso.toLowerCase().includes("null")) return null;
-    const dt = DateTime.fromISO(iso);
+    const dt = DateTime.fromISO(iso, { zone: "America/Edmonton" });
     return dt.isValid ? dt.toJSDate() : null;
   } catch {
     return null;
@@ -254,6 +267,7 @@ app.post("/init/facts", async (req, res) => {
 
     const phone = normalizePhone(leadPhone);
     const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
+    const timezone = resolveTimezoneFromAddress(property);
     const lead = await upsertLeadByPhone(phone);
     const prop = await upsertPropertyBySlug(resolvedSlug, property);
     await linkLeadToProperty(lead.id, prop.id);
@@ -265,7 +279,8 @@ app.post("/init/facts", async (req, res) => {
       unit: unit || "",
       link: link || "",
       slug: resolvedSlug,
-      createdAt: new Date().toISOString(),
+      timezone,
+      createdAt: nowIso(timezone),
     });
 
     await prisma.propertyFacts.upsert({
@@ -274,7 +289,7 @@ app.post("/init/facts", async (req, res) => {
       create: { slug: resolvedSlug, leadPhone: phone, leadName, property, unit, link },
     });
 
-    console.log("💾 Saved PropertyFacts:", resolvedSlug);
+    console.log(`💾 Saved PropertyFacts: ${resolvedSlug} [${timezone}]`);
     res.json({ ok: true, slug: resolvedSlug });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
@@ -308,11 +323,13 @@ app.post("/twilio/sms", async (req, res) => {
     if (intent === "book_showing") {
       const when = await extractDateTime(incomingText);
       if (when) {
+        const tz = resolveTimezoneFromAddress(property?.address || "");
+        const localized = DateTime.fromJSDate(when).setZone(tz);
         const booking = await prisma.booking.create({
           data: {
             leadId: lead.id,
             propertyId: property?.id ?? null,
-            datetime: when,
+            datetime: localized.toJSDate(),
             source: "ai",
           },
         });
@@ -320,15 +337,13 @@ app.post("/twilio/sms", async (req, res) => {
           id: booking.id,
           phone: lead.phone,
           property: property?.slug ?? "unknown",
-          datetime: booking.datetime,
+          datetime: localized.toISO(),
+          timezone: tz,
           source: booking.source,
-          createdAt: booking.createdAt,
+          createdAt: nowIso(tz),
         }));
 
-        const pretty = new Date(when).toLocaleString("en-US", {
-          weekday: "long", month: "short", day: "numeric",
-          hour: "numeric", minute: "2-digit",
-        });
+        const pretty = localized.toFormat("cccc, LLL d 'at' h:mm a");
         reply = `Perfect — you're booked for ${pretty} at ${property?.address || "the property"}. See you then!`;
         await saveMessage({ phone: from, role: "assistant", content: reply, propertySlug: property?.slug });
       }
@@ -355,5 +370,5 @@ app.get("/health", async (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Ava V5 running on :${PORT} (${NODE_ENV})`);
+  console.log(`🚀 Ava V5.3 running on :${PORT} (${NODE_ENV})`);
 });
