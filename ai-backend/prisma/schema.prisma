@@ -73,6 +73,15 @@ model PropertyFacts {
   property   String
   unit       String?
   link       String
-  createdAt  DateTime @default(now())
-}
+  
+  // New fields from BrowseAI
+  rent             String?
+  bedrooms         String?
+  bathrooms        String?
+  parking          String?
+  utilitiesIncluded Boolean? @map("utilities_included")
+  petsAllowed      Boolean?  @map("pets_allowed")
 
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}

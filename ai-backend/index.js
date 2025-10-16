@@ -191,18 +191,36 @@ async function detectIntent(text) {
     return "general_info";
   }
 }
+
 function buildContextFromProperty(property) {
   if (!property) return "";
+
   const lines = [];
   if (property.address) lines.push(`- address: ${property.address}`);
-  if (!lines.length) lines.push(`- slug: ${property.slug}`);
+  if (property.property) lines.push(`- property: ${property.property}`);
+  if (property.unit) lines.push(`- unit: ${property.unit}`);
+  if (property.rent) lines.push(`- rent: ${property.rent}`);
+  if (property.bedrooms) lines.push(`- bedrooms: ${property.bedrooms}`);
+  if (property.bathrooms) lines.push(`- bathrooms: ${property.bathrooms}`);
+  if (property.parking) lines.push(`- parking: ${property.parking}`);
+  if (property.utilitiesIncluded !== undefined)
+    lines.push(`- utilities included: ${property.utilitiesIncluded ? "yes" : "no"}`);
+  if (property.petsAllowed !== undefined)
+    lines.push(`- pets allowed: ${property.petsAllowed ? "yes" : "no"}`);
+  if (property.link) lines.push(`- listing link: ${property.link}`);
+
   return `Property Info:\n${lines.join("\n")}`;
 }
+
+
 async function aiReply({ incomingText, property, intent }) {
   const context = buildContextFromProperty(property);
   const system = `
-You are a warm, human-sounding leasing assistant for a property management company.
-Never say you're an AI. Be concise (1–2 sentences) and proactive. Use any property facts verbatim.`;
+You are a friendly, professional leasing assistant.
+Use the provided property facts exactly as written when answering questions.
+If the answer is not in the facts, respond naturally and politely but never invent details.
+Keep replies short (1–2 sentences).
+Never say you're an AI.`;
   try {
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
@@ -246,7 +264,7 @@ app.post("/init/facts", async (req, res) => {
     const prop = await upsertPropertyBySlug(resolvedSlug, property);
     await linkLeadToProperty(lead.id, prop.id);
 
-    // --- Ensure Redis key is a hash (delete if wrong type) ---
+// --- Ensure Redis key is a hash (delete if wrong type) ---
 const key = `facts:${resolvedSlug}`;
 const type = await redis.type(key);
 if (type !== "hash" && type !== "none") {
@@ -254,29 +272,59 @@ if (type !== "hash" && type !== "none") {
   await redis.del(key);
 }
 
-    await redis.hset(`facts:${resolvedSlug}`, {
-      leadPhone: phone,
-      leadName: leadName || "",
-      property,
-      unit: unit || "",
-      link: link || "",
-      slug: resolvedSlug,
-      createdAt: new Date().toISOString(),
-    });
-
-    await prisma.propertyFacts.upsert({
-      where: { slug: resolvedSlug },
-      update: { leadPhone: phone, leadName, property, unit, link },
-      create: { slug: resolvedSlug, leadPhone: phone, leadName, property, unit, link },
-    });
-
-    console.log("💾 Saved PropertyFacts in DB and Redis:", resolvedSlug);
-    res.json({ ok: true, slug: resolvedSlug });
-  } catch (err) {
-    console.error("❌ /init/facts error:", err);
-    res.status(500).json({ ok: false, error: String(err) });
-  }
+await redis.hset(`facts:${resolvedSlug}`, {
+  leadPhone: phone,
+  leadName: leadName || "",
+  property,
+  unit: unit || "",
+  link: link || "",
+  slug: resolvedSlug,
+  createdAt: new Date().toISOString(),
 });
+
+// --- Save to DB (with BrowseAI fields) ---
+const {
+  rent,
+  bedrooms,
+  bathrooms,
+  parking,
+  utilities_included,
+  pets_allowed,
+} = req.body;
+
+await prisma.propertyFacts.upsert({
+  where: { slug: resolvedSlug },
+  update: {
+    leadPhone: phone,
+    leadName,
+    property,
+    unit,
+    link,
+    rent,
+    bedrooms,
+    bathrooms,
+    parking,
+    utilitiesIncluded: utilities_included ?? undefined,
+    petsAllowed: pets_allowed ?? undefined,
+  },
+  create: {
+    slug: resolvedSlug,
+    leadPhone: phone,
+    leadName,
+    property,
+    unit,
+    link,
+    rent,
+    bedrooms,
+    bathrooms,
+    parking,
+    utilitiesIncluded: utilities_included ?? undefined,
+    petsAllowed: pets_allowed ?? undefined,
+  },
+});
+
+console.log("💾 Saved PropertyFacts in DB and Redis:", resolvedSlug);
+res.json({ ok: true, slug: resolvedSlug });
 
 // ---------- READ APIs FOR DASHBOARD ----------
 app.get("/api/bookings", async (_req, res) => {
