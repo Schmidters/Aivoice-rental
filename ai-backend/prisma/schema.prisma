@@ -1,87 +1,100 @@
-generator client {
-  provider = "prisma-client-js"
-}
+// --- prisma/schema.prisma ---
+// Ava V6.1 — DB-only (Browse AI + Twilio + OpenAI)
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ---------- MODELS ----------
+
+// Leads (people texting in)
 model Lead {
-  id         Int            @id @default(autoincrement())
-  phone      String         @unique
+  id         Int           @id @default(autoincrement())
+  phone      String        @unique
   name       String?
-  email      String?
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  // Relations
+  messages   Message[]
   bookings   Booking[]
   properties LeadProperty[]
-  messages   Message[]
 }
 
+// Properties (physical listings)
 model Property {
-  id        Int            @id @default(autoincrement())
-  slug      String         @unique
-  address   String?
-  city      String?        @default("Calgary")
-  province  String?        @default("AB")
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-  bookings  Booking[]
-  leads     LeadProperty[]
-  messages  Message[]
+  id         Int           @id @default(autoincrement())
+  slug       String        @unique
+  address    String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  // Relations
+  facts      PropertyFacts?
+  messages   Message[]
+  bookings   Booking[]
+  leads      LeadProperty[]
 }
 
+// Facts scraped by Browse AI or Zapier init
+model PropertyFacts {
+  id         Int        @id @default(autoincrement())
+  slug       String     @unique
+  property   String?    // Full property title / address
+  unit       String?
+  rent       String?
+  bedrooms   String?
+  bathrooms  String?
+  parking    String?
+  utilities  String?
+  summary    String?
+  link       String?
+  leadPhone  String?
+  leadName   String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+}
+
+// Messages between Ava and the lead
 model Message {
   id         Int       @id @default(autoincrement())
+  role       String    // 'user' or 'assistant'
+  content    String
+  createdAt  DateTime  @default(now())
   leadId     Int
   propertyId Int?
-  role       String
-  content    String
-  meta       Json?
-  createdAt  DateTime  @default(now())
+
+  // Relations
   lead       Lead      @relation(fields: [leadId], references: [id])
   property   Property? @relation(fields: [propertyId], references: [id])
 }
 
+// Bookings / showings
 model Booking {
-  id         Int      @id @default(autoincrement())
+  id         Int       @id @default(autoincrement())
+  datetime   DateTime
+  source     String?   // 'ai' | 'human'
+  createdAt  DateTime  @default(now())
   leadId     Int
   propertyId Int?
-  datetime   DateTime
-  source     String   @default("ai")
-  createdAt  DateTime @default(now())
-  lead       Lead     @relation(fields: [leadId], references: [id])
+
+  // Relations
+  lead       Lead      @relation(fields: [leadId], references: [id])
   property   Property? @relation(fields: [propertyId], references: [id])
 }
 
+// Many-to-many (Lead ↔ Property)
 model LeadProperty {
   leadId     Int
   propertyId Int
-  createdAt  DateTime @default(now())
-  lead       Lead     @relation(fields: [leadId], references: [id])
-  property   Property @relation(fields: [propertyId], references: [id])
+
+  lead       Lead      @relation(fields: [leadId], references: [id])
+  property   Property  @relation(fields: [propertyId], references: [id])
 
   @@id([leadId, propertyId])
-}
-
-model PropertyFacts {
-  id         Int      @id @default(autoincrement())
-  slug       String   @unique
-  leadPhone  String
-  leadName   String?
-  property   String
-  unit       String?
-  link       String
-  
-  // New fields from BrowseAI
-  rent             String?
-  bedrooms         String?
-  bathrooms        String?
-  parking          String?
-  utilitiesIncluded Boolean? @map("utilities_included")
-  petsAllowed      Boolean?  @map("pets_allowed")
-
-  createdAt DateTime  @default(now())
-  updatedAt DateTime? @updatedAt   // 👈 NOTE: The "?" here is critical
 }

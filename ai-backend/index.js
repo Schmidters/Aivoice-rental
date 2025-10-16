@@ -1,9 +1,8 @@
 // --- ai-backend/index.js ---
-// Version: V6.0 — Ava (Reasoning + Memory, Smart Rescheduling)
+// Version: V6.1 — Ava (DB-only: No Redis)
 
 import express from "express";
 import bodyParser from "body-parser";
-import Redis from "ioredis";
 import OpenAI from "openai";
 import twilio from "twilio";
 import dotenv from "dotenv";
@@ -17,7 +16,6 @@ const prisma = new PrismaClient();
 const {
   PORT = 3000,
   NODE_ENV = "production",
-  REDIS_URL,
   OPENAI_API_KEY,
   OPENAI_MODEL = "gpt-4o-mini",
   TWILIO_ACCOUNT_SID,
@@ -30,15 +28,12 @@ const {
 
 const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
 
-// ---------- CORE ----------
 if (!process.env.DATABASE_URL) throw new Error("Missing DATABASE_URL");
-if (!REDIS_URL) throw new Error("Missing REDIS_URL");
 if (!OPENAI_API_KEY) throw new Error("Missing OPENAI_API_KEY");
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
-const redis = new Redis(REDIS_URL, { lazyConnect: false });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
@@ -55,22 +50,21 @@ const slugify = (s) =>
 // --- Timezone helpers ---
 function resolveTimezoneFromAddress(address = "") {
   const a = address?.toLowerCase?.() || "";
-  if (a.includes("calgary") || a.includes("edmonton") || a.includes("alberta")) return "America/Edmonton";
-  if (a.includes("vancouver") || a.includes("british columbia")) return "America/Vancouver";
-  if (a.includes("toronto") || a.includes("ontario")) return "America/Toronto";
-  if (a.includes("montreal") || a.includes("quebec")) return "America/Toronto";
+  if (a.includes("calgary") || a.includes("edmonton") || a.includes("alberta"))
+    return "America/Edmonton";
+  if (a.includes("vancouver") || a.includes("british columbia"))
+    return "America/Vancouver";
+  if (a.includes("toronto") || a.includes("ontario"))
+    return "America/Toronto";
+  if (a.includes("montreal") || a.includes("quebec"))
+    return "America/Toronto";
   return "America/Edmonton"; // sensible default
 }
 function nowIso(zone = "America/Edmonton") {
   return DateTime.now().setZone(zone).toISO();
 }
 
-// Redis keys
-const kConvList = (phone) => `conv:${phone}:messages`;    // RPUSH {ts}|{role}|{content}
-const kConvFacts = (phone) => `conv:${phone}:facts`;       // HSET lastBookingDateISO, lastBookingISO, tz, propertySlug
-const kFacts = (slug) => `facts:${slug}`;                  // HSET property facts
-
-// DB helpers
+// ---------- DATABASE HELPERS ----------
 async function upsertLeadByPhone(phone) {
   return prisma.lead.upsert({
     where: { phone },
@@ -97,7 +91,7 @@ async function linkLeadToProperty(leadId, propertyId) {
 async function saveMessage({ phone, role, content, propertySlug }) {
   const lead = await upsertLeadByPhone(phone);
   const prop = propertySlug ? await upsertPropertyBySlug(propertySlug) : null;
-  const saved = await prisma.message.create({
+  return prisma.message.create({
     data: {
       role,
       content,
@@ -105,29 +99,9 @@ async function saveMessage({ phone, role, content, propertySlug }) {
       propertyId: prop?.id ?? null,
     },
   });
-  // also push into Redis short-term memory (keep last 30)
-  const ts = DateTime.now().toISO();
-  await redis.rpush(kConvList(phone), `${ts}|${role}|${content}`);
-  await redis.ltrim(kConvList(phone), -30, -1);
-  return saved;
-}
-
-// --- Context helpers ---
-async function loadRecentRedisHistory(phone, limit = 10) {
-  const items = await redis.lrange(kConvList(phone), -limit, -1);
-  if (!items?.length) return [];
-  return items.map((row) => {
-    const [ts, role, content] = row.split("|");
-    return { ts, role, content };
-  });
 }
 
 async function buildConversationContext(phone, limit = 10) {
-  // Prefer Redis short-term memory; if empty, fall back to DB
-  const mem = await loadRecentRedisHistory(phone, limit);
-  if (mem.length) {
-    return mem.map((m) => `${m.role === "user" ? "Lead" : "Assistant"}: ${m.content}`).join("\n");
-  }
   const messages = await prisma.message.findMany({
     where: { lead: { phone } },
     orderBy: { createdAt: "desc" },
@@ -135,7 +109,11 @@ async function buildConversationContext(phone, limit = 10) {
   });
   if (!messages.length) return "";
   const history = messages.reverse();
-  return history.map((m) => `${m.role === "user" ? "Lead" : "Assistant"}: ${m.content}`).join("\n");
+  return history
+    .map(
+      (m) => `${m.role === "user" ? "Lead" : "Assistant"}: ${m.content}`
+    )
+    .join("\n");
 }
 
 async function findBestPropertyForLeadFromDB(phone) {
@@ -154,76 +132,61 @@ async function findBestPropertyForLeadFromDB(phone) {
   return null;
 }
 
-// --- Heuristic: booking/time detection ---
+// ---------- BOOKING + TIME HELPERS ----------
 function maybeContainsTimeOrBooking(text = "") {
   const t = text.toLowerCase();
   const keywords = [
-    "book","booking","schedule","showing","tour","view","viewing",
-    "see the place","come by","visit","reschedule","change the time","move it"
+    "book", "booking", "schedule", "showing", "tour", "view", "viewing",
+    "see the place", "come by", "visit", "reschedule", "change the time", "move it"
   ];
   const dayWords = [
     "today","tomorrow","tonight","morning","afternoon","evening",
     "monday","tuesday","wednesday","thursday","friday","saturday","sunday"
   ];
-  const hasKeyword = keywords.some(k => t.includes(k)) || dayWords.some(d => t.includes(d));
+  const hasKeyword =
+    keywords.some((k) => t.includes(k)) || dayWords.some((d) => t.includes(d));
   const timeLike = /\b(\d{1,2})(?::?(\d{2}))?\s?(am|pm)\b/i.test(text);
   return hasKeyword || timeLike;
 }
 
-/** ---------- Deterministic relative-time parser ----------
- * Handles: "today", "tomorrow", "tonight", and explicit hh[:mm] am/pm
- * Accepts "930am", "9:30 am", "9 30 am"
- * Anchored to tz local date; optional baseDate keeps existing booked day.
- */
 function parseQuickDateTime(text = "", tz = "America/Edmonton", baseDate = null) {
   const t = text.trim().toLowerCase();
-  // anchor to the property’s *local* calendar day
   const now = DateTime.now().setZone(tz);
   let date = baseDate
     ? DateTime.local(baseDate.year, baseDate.month, baseDate.day, 0, 0, 0, { zone: tz })
     : DateTime.local(now.year, now.month, now.day, 0, 0, 0, { zone: tz });
 
   let matchedRelative = false;
-
   if (!baseDate) {
     if (/\btomorrow\b/.test(t)) {
       date = date.plus({ days: 1 });
       matchedRelative = true;
-    } else if (/\btoday\b/.test(t)) {
-      matchedRelative = true;
-    } else if (/\btonight\b/.test(t)) {
-      // default 7:00 PM if no explicit time
-      date = now.set({ hour: 19, minute: 0, second: 0, millisecond: 0 });
+    } else if (/\btoday\b/.test(t)) matchedRelative = true;
+    else if (/\btonight\b/.test(t)) {
+      date = now.set({ hour: 19, minute: 0 });
       matchedRelative = true;
     }
   }
 
-  // time extraction: "930am", "9:30am", "9 30 am"
   const m = t.match(/\b(\d{1,2})[:\s]?(\d{2})?\s?(am|pm)\b/);
   if (m) {
-    let hour = parseInt(m[1], 10);
-    const minute = m[2] ? parseInt(m[2], 10) : 0;
+    let hour = parseInt(m[1]);
+    const minute = m[2] ? parseInt(m[2]) : 0;
     const meridiem = m[3].toLowerCase();
     if (meridiem === "pm" && hour < 12) hour += 12;
     if (meridiem === "am" && hour === 12) hour = 0;
-
     if (baseDate) {
-      // stick to baseDate’s day
-      date = date.set({ hour, minute, second: 0, millisecond: 0 });
+      date = date.set({ hour, minute });
     } else if (matchedRelative) {
-      date = date.set({ hour, minute, second: 0, millisecond: 0 });
+      date = date.set({ hour, minute });
     } else {
-      // No explicit day → choose next occurrence today/next day
-      const candidate = now.set({ hour, minute, second: 0, millisecond: 0 });
+      const candidate = now.set({ hour, minute });
       date = candidate < now ? candidate.plus({ days: 1 }) : candidate;
     }
   } else if ((matchedRelative || baseDate) && !/\btonight\b/.test(t)) {
-    // relative/base day but no explicit time -> default to 10:00 AM
-    date = date.set({ hour: 10, minute: 0, second: 0, millisecond: 0 });
+    date = date.set({ hour: 10, minute: 0 });
   }
-
-  // if we matched anything meaningful, return JS Date
-  const used = (matchedRelative || m || baseDate);
+  const used = matchedRelative || m || baseDate;
   if (used) {
     const dt = DateTime.fromISO(date.toISO(), { zone: tz });
     return dt.isValid ? dt.toJSDate() : null;
@@ -231,10 +194,9 @@ function parseQuickDateTime(text = "", tz = "America/Edmonton", baseDate = null)
   return null;
 }
 
-// --- LLM Extract date/time (fallback) ---
 async function extractDateTimeLLM(text, tz = "America/Edmonton", baseDate = null) {
   try {
-    const nowLocal = DateTime.now().setZone(tz).toISO(); // anchor
+    const nowLocal = DateTime.now().setZone(tz).toISO();
     const base = baseDate ? baseDate.toISODate() : "(none)";
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
@@ -242,11 +204,8 @@ async function extractDateTimeLLM(text, tz = "America/Edmonton", baseDate = null
       messages: [
         {
           role: "system",
-          content:
-            `Convert a user message into a single ISO 8601 datetime IN THE ZONE ${tz}.
-Current local datetime: ${nowLocal}.
-If the user only changes the time and a base date is provided (${base}), KEEP THAT DATE and update the time.
-Return ONLY a full ISO (date + time). If impossible, return 'null'.`,
+          content: `Convert user message into a full ISO datetime in zone ${tz}.
+Current: ${nowLocal}. Base date: ${base}. Return only ISO or null.`,
         },
         { role: "user", content: text },
       ],
@@ -260,7 +219,7 @@ Return ONLY a full ISO (date + time). If impossible, return 'null'.`,
   }
 }
 
-// ---------- AI INTENT + REPLY ----------
+// ---------- AI LOGIC ----------
 const INTENT_LABELS = [
   "book_showing","pricing_question","availability","parking","pets",
   "application_process","negotiation","general_info","spam_or_unknown",
@@ -285,27 +244,26 @@ async function detectIntent(text) {
   }
 }
 
-function buildContextFromProperty(property) {
-  if (!property) return "";
+function buildContextFromProperty(propertyFacts) {
+  if (!propertyFacts) return "";
   const lines = [];
-  if (property.address) lines.push(`- address: ${property.address}`);
-  if (property.property) lines.push(`- property: ${property.property}`);
-  if (property.unit) lines.push(`- unit: ${property.unit}`);
-  if (property.rent) lines.push(`- rent: ${property.rent}`);
-  if (property.bedrooms) lines.push(`- bedrooms: ${property.bedrooms}`);
-  if (property.bathrooms) lines.push(`- bathrooms: ${property.bathrooms}`);
-  if (property.parking) lines.push(`- parking: ${property.parking}`);
+  if (propertyFacts.property) lines.push(`- address: ${propertyFacts.property}`);
+  if (propertyFacts.unit) lines.push(`- unit: ${propertyFacts.unit}`);
+  if (propertyFacts.rent) lines.push(`- rent: ${propertyFacts.rent}`);
+  if (propertyFacts.bedrooms) lines.push(`- bedrooms: ${propertyFacts.bedrooms}`);
+  if (propertyFacts.bathrooms) lines.push(`- bathrooms: ${propertyFacts.bathrooms}`);
+  if (propertyFacts.parking) lines.push(`- parking: ${propertyFacts.parking}`);
+  if (propertyFacts.utilities) lines.push(`- utilities: ${propertyFacts.utilities}`);
   return `Property Info:\n${lines.join("\n")}`;
 }
 
-// --- AI Reply (Ava) ---
-async function aiReply({ incomingText, property, intent, history }) {
-  const context = buildContextFromProperty(property);
+async function aiReply({ incomingText, propertyFacts, intent, history }) {
+  const context = buildContextFromProperty(propertyFacts);
   const system = `
 You are Ava, a warm, intelligent leasing assistant for Real Estate Advisors.
 You sound natural, professional, and remember context from prior messages.
 You never mention being an AI.
-You always use available facts or prior context — never make things up.
+Use available facts from the property data.
 Be concise (1–2 sentences) and proactive.
 `;
 
@@ -333,53 +291,43 @@ Lead message: "${incomingText}"
   }
 }
 
-// ---------- TWILIO SEND ----------
+// ---------- TWILIO ----------
 async function sendSms(to, body) {
   const msg = { to, body };
-  if (TWILIO_MESSAGING_SERVICE_SID) msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
+  if (TWILIO_MESSAGING_SERVICE_SID)
+    msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
   else msg.from = TWILIO_FROM_NUMBER;
   return twilioClient.messages.create(msg);
 }
 
 // ---------- ROUTES ----------
 
-// /init/facts (Zapier)
-app.post("/init/facts", async (req, res) => {
+// /browseai/webhook — receives completed BrowseAI data
+app.post("/browseai/webhook", async (req, res) => {
   try {
-    const { leadPhone, leadName, property, unit, link, slug } = req.body || {};
-    if (!leadPhone || !property)
-      return res.status(400).json({ ok: false, error: "Missing leadPhone or property" });
+    console.log("📦 [BrowseAI] Webhook received:", JSON.stringify(req.body, null, 2));
+    const { status, capturedTexts } = req.body;
+    if (status !== "completed" || !capturedTexts)
+      return res.status(200).json({ ok: true, ignored: true });
 
-    console.log("📦 Received property facts:", req.body);
+    const property = capturedTexts["Title Summary"] || "";
+    const parking = capturedTexts["Parking Information"] || "";
+    const utilities = capturedTexts["Utility Information"] || "";
+    const summary = capturedTexts["Summary"] || "";
+    const link = capturedTexts["Input Parameters Origin Url"] || "";
 
-    const phone = normalizePhone(leadPhone);
-    const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
-    const timezone = resolveTimezoneFromAddress(property);
-    const lead = await upsertLeadByPhone(phone);
-    const prop = await upsertPropertyBySlug(resolvedSlug, property);
-    await linkLeadToProperty(lead.id, prop.id);
-
-    await redis.hset(kFacts(resolvedSlug), {
-      leadPhone: phone,
-      leadName: leadName || "",
-      property,
-      unit: unit || "",
-      link: link || "",
-      slug: resolvedSlug,
-      timezone,
-      createdAt: nowIso(timezone),
-    });
+    const slug = slugify(link.split("/").pop() || property);
 
     await prisma.propertyFacts.upsert({
-      where: { slug: resolvedSlug },
-      update: { leadPhone: phone, leadName, property, unit, link },
-      create: { slug: resolvedSlug, leadPhone: phone, leadName, property, unit, link },
+      where: { slug },
+      update: { property, parking, utilities, summary, link, updatedAt: new Date() },
+      create: { slug, property, parking, utilities, summary, link },
     });
 
-    console.log(`💾 Saved PropertyFacts: ${resolvedSlug} [${timezone}]`);
-    res.json({ ok: true, slug: resolvedSlug });
+    console.log(`💾 [BrowseAI] Facts saved for ${slug}`);
+    res.json({ ok: true });
   } catch (err) {
-    console.error("❌ /init/facts error:", err);
+    console.error("❌ [BrowseAI] Webhook error:", err);
     res.status(500).json({ ok: false, error: String(err) });
   }
 });
@@ -387,8 +335,6 @@ app.post("/init/facts", async (req, res) => {
 // /twilio/sms (Inbound)
 app.post("/twilio/sms", async (req, res) => {
   try {
-    console.log("📩 Raw Twilio webhook body:", req.body);
-
     const from = normalizePhone(req.body.From);
     const incomingText = req.body.Body?.trim() || "";
     if (!from || !incomingText) return res.status(400).end();
@@ -397,95 +343,52 @@ app.post("/twilio/sms", async (req, res) => {
 
     const lead = await upsertLeadByPhone(from);
     const property = await findBestPropertyForLeadFromDB(from);
+    const propertyFacts = property
+      ? await prisma.propertyFacts.findUnique({ where: { slug: property.slug } })
+      : null;
+
     const tz = resolveTimezoneFromAddress(property?.address || "");
     const intent = await detectIntent(incomingText);
     const history = await buildConversationContext(from);
 
-    // Save inbound message (memory)
-    await saveMessage({ phone: from, role: "user", content: incomingText, propertySlug: property?.slug });
+    await saveMessage({
+      phone: from,
+      role: "user",
+      content: incomingText,
+      propertySlug: property?.slug,
+    });
 
-    // Try to read conversational facts (last booking)
-    const facts = await redis.hgetall(kConvFacts(from));
-    const baseDate = facts?.lastBookingDateISO
-      ? DateTime.fromISO(facts.lastBookingDateISO, { zone: facts.tz || tz })
-      : null;
+    let reply = await aiReply({ incomingText, propertyFacts, intent, history });
 
-    let reply = await aiReply({ incomingText, property, intent, history });
-
-    // Booking detection & creation / update
     if (intent === "book_showing") {
-      const isTimeChangeOnly =
-        /\b(\d{1,2})[:\s]?(\d{2})?\s?(am|pm)\b/i.test(incomingText) &&
-        !/tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday/i.test(incomingText);
-
-      // 1) deterministic parse (keeps baseDate when changing time)
-      let when = parseQuickDateTime(incomingText, tz, isTimeChangeOnly ? baseDate : null);
-
-      // 2) fallback to LLM with explicit "now" and baseDate
-      if (!when) {
-        when = await extractDateTimeLLM(incomingText, tz, isTimeChangeOnly ? baseDate : null);
-      }
-
+      let when = parseQuickDateTime(incomingText, tz);
+      if (!when)
+        when = await extractDateTimeLLM(incomingText, tz);
       if (when) {
         const localized = DateTime.fromJSDate(when).setZone(tz);
-
-        // If we already have a booking for this lead/property and baseDate matches, update time
-        let booking = null;
-        if (isTimeChangeOnly && facts?.lastBookingISO) {
-          // Optional: try updating the most recent booking for this lead/property
-          const lastBooking = await prisma.booking.findFirst({
-            where: { leadId: lead.id, ...(property?.id ? { propertyId: property.id } : {}) },
-            orderBy: { createdAt: "desc" },
-          });
-          if (lastBooking) {
-            booking = await prisma.booking.update({
-              where: { id: lastBooking.id },
-              data: { datetime: localized.toJSDate(), source: "ai" },
-            });
-          }
-        }
-        if (!booking) {
-          booking = await prisma.booking.create({
-            data: {
-              leadId: lead.id,
-              propertyId: property?.id ?? null,
-              datetime: localized.toJSDate(), // stored as UTC by DB; local source
-              source: "ai",
-            },
-          });
-        }
-
-        // Publish event
-        await redis.publish("bookings:new", JSON.stringify({
-          id: booking.id,
-          phone: lead.phone,
-          property: property?.slug ?? "unknown",
-          datetime: localized.toISO(),
-          timezone: tz,
-          source: booking.source,
-          createdAt: nowIso(tz),
-        }));
-
-        // Update conversation facts (memory)
-        await redis.hset(kConvFacts(from), {
-          lastBookingDateISO: localized.toISODate(),
-          lastBookingISO: localized.toISO(),
-          tz,
-          propertySlug: property?.slug || "",
+        const booking = await prisma.booking.create({
+          data: {
+            leadId: lead.id,
+            propertyId: property?.id ?? null,
+            datetime: localized.toJSDate(),
+            source: "ai",
+          },
         });
-
         const pretty = localized.toFormat("cccc, LLL d 'at' h:mm a");
-        reply = isTimeChangeOnly
-          ? `No problem — updated to ${pretty} at ${property?.address || "the property"}.`
-          : `Perfect — you're booked for ${pretty} at ${property?.address || "the property"}. See you then!`;
-
-        await saveMessage({ phone: from, role: "assistant", content: reply, propertySlug: property?.slug });
+        reply = `Perfect — you're booked for ${pretty} at ${
+          property?.address || "the property"
+        }. See you then!`;
+        await saveMessage({
+          phone: from,
+          role: "assistant",
+          content: reply,
+          propertySlug: property?.slug,
+        });
       }
     }
 
-    // Send reply
     await sendSms(from, reply);
-    console.log("💬 AI reply sent to", from, ":", reply);
+    console.log("💬 AI reply sent:", reply);
     res.status(200).end();
   } catch (err) {
     console.error("❌ /twilio/sms error:", err);
@@ -497,13 +400,12 @@ app.post("/twilio/sms", async (req, res) => {
 app.get("/health", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
-    const pong = await redis.ping();
-    res.json({ ok: true, db: true, redis: pong === "PONG", time: nowIso() });
+    res.json({ ok: true, db: true, time: nowIso() });
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err) });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Ava V6.0 running on :${PORT} (${NODE_ENV})`);
+  console.log(`🚀 Ava V6.1 running (DB-only) on :${PORT} (${NODE_ENV})`);
 });
