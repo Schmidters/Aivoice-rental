@@ -17,7 +17,6 @@ model Lead {
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
 
-  // Relations
   messages   Message[]
   bookings   Booking[]
   properties LeadProperty[]
@@ -30,9 +29,8 @@ model Property {
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
 
-  // Relations
-  facts      PropertyFacts?  @relation(fields: [factsId], references: [id])
-  factsId    Int?
+  // One-to-one relation (no fields/references defined here)
+  facts      PropertyFacts?
   messages   Message[]
   bookings   Booking[]
   leads      LeadProperty[]
@@ -44,7 +42,7 @@ model PropertyFacts {
   propertyId  Int?       @unique
   property    Property?  @relation(fields: [propertyId], references: [id])
 
-  // Browse AI scraped fields
+  // Browse AI scraped data
   propertyName String?
   unit         String?
   rent         String?
@@ -67,7 +65,6 @@ model Message {
   content    String
   createdAt  DateTime   @default(now())
 
-  // Relations
   leadId     Int
   propertyId Int?
   lead       Lead       @relation(fields: [leadId], references: [id])
@@ -80,7 +77,6 @@ model Booking {
   source      String?
   createdAt   DateTime   @default(now())
 
-  // Relations
   leadId      Int
   propertyId  Int?
   lead        Lead       @relation(fields: [leadId], references: [id])
