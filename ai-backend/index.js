@@ -265,7 +265,7 @@ if (type !== "hash" && type !== "none") {
     });
 
     await prisma.propertyFacts.upsert({
-      where: { slug: resolvedSlug 
+      where: { slug: resolvedSlug },
       update: { leadPhone: phone, leadName, property, unit, link },
       create: { slug: resolvedSlug, leadPhone: phone, leadName, property, unit, link },
     });
