@@ -24,6 +24,8 @@ const {
   TWILIO_PHONE_NUMBER,
   TWILIO_FROM_NUMBER: ENV_TWILIO_FROM_NUMBER,
   DASHBOARD_ORIGIN = "*",
+  BROWSEAI_API_KEY,
+  BROWSEAI_ROBOT_ID
 } = process.env;
 
 const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
@@ -110,9 +112,7 @@ async function buildConversationContext(phone, limit = 10) {
   if (!messages.length) return "";
   const history = messages.reverse();
   return history
-    .map(
-      (m) => `${m.role === "user" ? "Lead" : "Assistant"}: ${m.content}`
-    )
+    .map((m) => `${m.role === "user" ? "Lead" : "Assistant"}: ${m.content}`)
     .join("\n");
 }
 
@@ -136,8 +136,8 @@ async function findBestPropertyForLeadFromDB(phone) {
 function maybeContainsTimeOrBooking(text = "") {
   const t = text.toLowerCase();
   const keywords = [
-    "book", "booking", "schedule", "showing", "tour", "view", "viewing",
-    "see the place", "come by", "visit", "reschedule", "change the time", "move it"
+    "book","booking","schedule","showing","tour","view","viewing",
+    "see the place","come by","visit","reschedule","change the time","move it"
   ];
   const dayWords = [
     "today","tomorrow","tonight","morning","afternoon","evening",
@@ -300,7 +300,43 @@ async function sendSms(to, body) {
   return twilioClient.messages.create(msg);
 }
 
-// ---------- NEW ROUTE: BROWSE AI WEBHOOK ----------
+// ---------- NEW ROUTE: INIT FACTS (Option B) ----------
+app.post("/init/facts", async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ ok: false, error: "Missing url" });
+
+    const slug = slugify(url);
+    const existing = await prisma.propertyFacts.findUnique({ where: { slug } });
+
+    if (existing) {
+      console.log(`🟢 [Init] Property already exists (${slug}), skipping Browse AI`);
+      return res.json({ ok: true, skipped: true });
+    }
+
+    console.log(`🟠 [Init] New property (${slug}), triggering Browse AI scrape`);
+    const resp = await fetch(`https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/tasks`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${BROWSEAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        inputs: { originUrl: url },
+        webhook: "https://aivoice-rental.onrender.com/browseai/webhook"
+      })
+    });
+
+    const data = await resp.json();
+    console.log(`📤 [Init] Browse AI triggered for ${slug}:`, data);
+    res.json({ ok: true, triggered: true, browseai: data });
+  } catch (err) {
+    console.error("❌ /init/facts error:", err);
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+// ---------- EXISTING ROUTE: BROWSE AI WEBHOOK ----------
 app.post("/browseai/webhook", async (req, res) => {
   try {
     console.log("📦 [BrowseAI] Webhook received:", JSON.stringify(req.body, null, 2));
@@ -333,68 +369,7 @@ app.post("/browseai/webhook", async (req, res) => {
 });
 
 // ---------- ROUTES ----------
-app.post("/twilio/sms", async (req, res) => {
-  try {
-    const from = normalizePhone(req.body.From);
-    const incomingText = req.body.Body?.trim() || "";
-    if (!from || !incomingText) return res.status(400).end();
-
-    console.log("📩 SMS received from", from, ":", incomingText);
-
-    const lead = await upsertLeadByPhone(from);
-    const property = await findBestPropertyForLeadFromDB(from);
-    const propertyFacts = property
-      ? await prisma.propertyFacts.findUnique({ where: { slug: property.slug } })
-      : null;
-
-    const tz = resolveTimezoneFromAddress(property?.address || "");
-    const intent = await detectIntent(incomingText);
-    const history = await buildConversationContext(from);
-
-    await saveMessage({
-      phone: from,
-      role: "user",
-      content: incomingText,
-      propertySlug: property?.slug,
-    });
-
-    let reply = await aiReply({ incomingText, propertyFacts, intent, history });
-
-    if (intent === "book_showing") {
-      let when = parseQuickDateTime(incomingText, tz);
-      if (!when)
-        when = await extractDateTimeLLM(incomingText, tz);
-      if (when) {
-        const localized = DateTime.fromJSDate(when).setZone(tz);
-        const booking = await prisma.booking.create({
-          data: {
-            leadId: lead.id,
-            propertyId: property?.id ?? null,
-            datetime: localized.toJSDate(),
-            source: "ai",
-          },
-        });
-        const pretty = localized.toFormat("cccc, LLL d 'at' h:mm a");
-        reply = `Perfect — you're booked for ${pretty} at ${
-          property?.address || "the property"
-        }. See you then!`;
-        await saveMessage({
-          phone: from,
-          role: "assistant",
-          content: reply,
-          propertySlug: property?.slug,
-        });
-      }
-    }
-
-    await sendSms(from, reply);
-    console.log("💬 AI reply sent:", reply);
-    res.status(200).end();
-  } catch (err) {
-    console.error("❌ /twilio/sms error:", err);
-    res.status(500).end();
-  }
-});
+app.post("/twilio/sms", async (req, res) => { ... existing Twilio route ... });
 
 // ---------- HEALTH ----------
 app.get("/health", async (_req, res) => {
