@@ -369,7 +369,68 @@ app.post("/browseai/webhook", async (req, res) => {
 });
 
 // ---------- ROUTES ----------
-app.post("/twilio/sms", async (req, res) => { ... existing Twilio route ... });
+app.post("/twilio/sms", async (req, res) => {
+  try {
+    const from = normalizePhone(req.body.From);
+    const incomingText = req.body.Body?.trim() || "";
+    if (!from || !incomingText) return res.status(400).end();
+
+    console.log("📩 SMS received from", from, ":", incomingText);
+
+    const lead = await upsertLeadByPhone(from);
+    const property = await findBestPropertyForLeadFromDB(from);
+    const propertyFacts = property
+      ? await prisma.propertyFacts.findUnique({ where: { slug: property.slug } })
+      : null;
+
+    const tz = resolveTimezoneFromAddress(property?.address || "");
+    const intent = await detectIntent(incomingText);
+    const history = await buildConversationContext(from);
+
+    await saveMessage({
+      phone: from,
+      role: "user",
+      content: incomingText,
+      propertySlug: property?.slug,
+    });
+
+    let reply = await aiReply({ incomingText, propertyFacts, intent, history });
+
+    if (intent === "book_showing") {
+      let when = parseQuickDateTime(incomingText, tz);
+      if (!when)
+        when = await extractDateTimeLLM(incomingText, tz);
+      if (when) {
+        const localized = DateTime.fromJSDate(when).setZone(tz);
+        const booking = await prisma.booking.create({
+          data: {
+            leadId: lead.id,
+            propertyId: property?.id ?? null,
+            datetime: localized.toJSDate(),
+            source: "ai",
+          },
+        });
+        const pretty = localized.toFormat("cccc, LLL d 'at' h:mm a");
+        reply = `Perfect — you're booked for ${pretty} at ${
+          property?.address || "the property"
+        }. See you then!`;
+        await saveMessage({
+          phone: from,
+          role: "assistant",
+          content: reply,
+          propertySlug: property?.slug,
+        });
+      }
+    }
+
+    await sendSms(from, reply);
+    console.log("💬 AI reply sent:", reply);
+    res.status(200).end();
+  } catch (err) {
+    console.error("❌ /twilio/sms error:", err);
+    res.status(500).end();
+  }
+});
 
 // ---------- HEALTH ----------
 app.get("/health", async (_req, res) => {
