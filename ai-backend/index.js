@@ -1,5 +1,5 @@
 // --- ai-backend/index.js ---
-// Version: V6.2 — Ava (DB-only + BrowseAI Facts Integration)
+// Version: V6.1 — Ava (DB-only: No Redis)
 
 import express from "express";
 import bodyParser from "body-parser";
@@ -58,7 +58,7 @@ function resolveTimezoneFromAddress(address = "") {
     return "America/Toronto";
   if (a.includes("montreal") || a.includes("quebec"))
     return "America/Toronto";
-  return "America/Edmonton";
+  return "America/Edmonton"; // sensible default
 }
 function nowIso(zone = "America/Edmonton") {
   return DateTime.now().setZone(zone).toISO();
@@ -244,33 +244,27 @@ async function detectIntent(text) {
   }
 }
 
-async function buildContextFromProperty(property) {
-  if (!property) return "";
-  const facts = await prisma.propertyFacts.findUnique({
-    where: { propertyId: property.id },
-  });
-
+function buildContextFromProperty(propertyFacts) {
+  if (!propertyFacts) return "";
   const lines = [];
-  if (property.address) lines.push(`- address: ${property.address}`);
-  if (facts?.unit) lines.push(`- unit: ${facts.unit}`);
-  if (facts?.rent) lines.push(`- rent: ${facts.rent}`);
-  if (facts?.bedrooms) lines.push(`- bedrooms: ${facts.bedrooms}`);
-  if (facts?.bathrooms) lines.push(`- bathrooms: ${facts.bathrooms}`);
-  if (facts?.parking) lines.push(`- parking: ${facts.parking}`);
-  if (facts?.utilities) lines.push(`- utilities: ${facts.utilities}`);
-  if (facts?.summary) lines.push(`- summary: ${facts.summary}`);
-  if (facts?.link) lines.push(`- listing link: ${facts.link}`);
-
-  return lines.length ? `Property Info:\n${lines.join("\n")}` : "";
+  if (propertyFacts.property) lines.push(`- address: ${propertyFacts.property}`);
+  if (propertyFacts.unit) lines.push(`- unit: ${propertyFacts.unit}`);
+  if (propertyFacts.rent) lines.push(`- rent: ${propertyFacts.rent}`);
+  if (propertyFacts.bedrooms) lines.push(`- bedrooms: ${propertyFacts.bedrooms}`);
+  if (propertyFacts.bathrooms) lines.push(`- bathrooms: ${propertyFacts.bathrooms}`);
+  if (propertyFacts.parking) lines.push(`- parking: ${propertyFacts.parking}`);
+  if (propertyFacts.utilities) lines.push(`- utilities: ${propertyFacts.utilities}`);
+  return `Property Info:\n${lines.join("\n")}`;
 }
 
-async function aiReply({ incomingText, property, intent, history }) {
-  const context = await buildContextFromProperty(property);
+async function aiReply({ incomingText, propertyFacts, intent, history }) {
+  const context = buildContextFromProperty(propertyFacts);
   const system = `
 You are Ava, a warm, intelligent leasing assistant for Real Estate Advisors.
-Use only verified facts from the property database.
 You sound natural, professional, and remember context from prior messages.
-Never mention being an AI. Be concise (1–2 sentences) and proactive.
+You never mention being an AI.
+Use available facts from the property data.
+Be concise (1–2 sentences) and proactive.
 `;
 
   const userPrompt = `
@@ -297,80 +291,48 @@ Lead message: "${incomingText}"
   }
 }
 
-// ---------- ROUTES ----------
+// ---------- TWILIO ----------
+async function sendSms(to, body) {
+  const msg = { to, body };
+  if (TWILIO_MESSAGING_SERVICE_SID)
+    msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
+  else msg.from = TWILIO_FROM_NUMBER;
+  return twilioClient.messages.create(msg);
+}
 
-// /init/facts — BrowseAI data ingestion
-app.post("/init/facts", async (req, res) => {
+// ---------- NEW ROUTE: BROWSE AI WEBHOOK ----------
+app.post("/browseai/webhook", async (req, res) => {
   try {
-    const {
-      leadPhone,
-      leadName,
-      property,
-      unit,
-      link,
-      slug,
-      rent,
-      bedrooms,
-      bathrooms,
-      parking,
-      utilities,
-      summary,
-    } = req.body || {};
+    console.log("📦 [BrowseAI] Webhook received:", JSON.stringify(req.body, null, 2));
+    const { status, capturedTexts } = req.body;
+    if (status !== "completed" || !capturedTexts)
+      return res.status(200).json({ ok: true, ignored: true });
 
-    if (!leadPhone || !property)
-      return res.status(400).json({ ok: false, error: "Missing leadPhone or property" });
-
-    console.log("📦 [Init] Received property facts:", req.body);
-
-    const phone = normalizePhone(leadPhone);
-    const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
-
-    const lead = await upsertLeadByPhone(phone);
-    const prop = await upsertPropertyBySlug(resolvedSlug, property);
-    await linkLeadToProperty(lead.id, prop.id);
+    const property  = capturedTexts["Title Summary"] || "";
+    const rent      = capturedTexts["Rent"] || "";
+    const bedrooms  = capturedTexts["Bedrooms"] || "";
+    const bathrooms = capturedTexts["Bathrooms"] || "";
+    const parking   = capturedTexts["Parking Information"] || "";
+    const utilities = capturedTexts["Utility Information"] || "";
+    const summary   = capturedTexts["Summary"] || "";
+    const link      = capturedTexts["Input Parameters Origin Url"] || "";
+    const slug      = slugify(link.split("/").pop() || property);
 
     await prisma.propertyFacts.upsert({
-      where: { slug: resolvedSlug },
-      update: {
-        propertyName: property,
-        unit,
-        link,
-        rent,
-        bedrooms,
-        bathrooms,
-        parking,
-        utilities,
-        summary,
-        leadPhone: phone,
-        leadName,
-        propertyId: prop.id,
-      },
-      create: {
-        slug: resolvedSlug,
-        propertyName: property,
-        unit,
-        link,
-        rent,
-        bedrooms,
-        bathrooms,
-        parking,
-        utilities,
-        summary,
-        leadPhone: phone,
-        leadName,
-        propertyId: prop.id,
-      },
+      where: { slug },
+      update: { property, rent, bedrooms, bathrooms, parking, utilities, summary, link, updatedAt: new Date() },
+      create: { slug, property, rent, bedrooms, bathrooms, parking, utilities, summary, link },
     });
 
-    console.log(`💾 [Init] Saved property facts for ${resolvedSlug}`);
-    res.json({ ok: true, slug: resolvedSlug });
+    console.log(`💾 [BrowseAI] Facts saved for ${slug}`);
+    res.json({ ok: true });
   } catch (err) {
-    console.error("❌ /init/facts error:", err);
+    console.error("❌ [BrowseAI] Webhook error:", err);
     res.status(500).json({ ok: false, error: String(err) });
   }
 });
 
-// /twilio/sms (Inbound)
+// ---------- ROUTES ----------
 app.post("/twilio/sms", async (req, res) => {
   try {
     const from = normalizePhone(req.body.From);
@@ -381,18 +343,27 @@ app.post("/twilio/sms", async (req, res) => {
 
     const lead = await upsertLeadByPhone(from);
     const property = await findBestPropertyForLeadFromDB(from);
+    const propertyFacts = property
+      ? await prisma.propertyFacts.findUnique({ where: { slug: property.slug } })
+      : null;
 
     const tz = resolveTimezoneFromAddress(property?.address || "");
     const intent = await detectIntent(incomingText);
     const history = await buildConversationContext(from);
 
-    await saveMessage({ phone: from, role: "user", content: incomingText, propertySlug: property?.slug });
+    await saveMessage({
+      phone: from,
+      role: "user",
+      content: incomingText,
+      propertySlug: property?.slug,
+    });
 
-    let reply = await aiReply({ incomingText, property, intent, history });
+    let reply = await aiReply({ incomingText, propertyFacts, intent, history });
 
     if (intent === "book_showing") {
       let when = parseQuickDateTime(incomingText, tz);
-      if (!when) when = await extractDateTimeLLM(incomingText, tz);
+      if (!when)
+        when = await extractDateTimeLLM(incomingText, tz);
       if (when) {
         const localized = DateTime.fromJSDate(when).setZone(tz);
         const booking = await prisma.booking.create({
@@ -436,5 +407,5 @@ app.get("/health", async (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Ava V6.2 running (DB-only + BrowseAI Facts) on :${PORT} (${NODE_ENV})`);
+  console.log(`🚀 Ava V6.1 running (DB-only) on :${PORT} (${NODE_ENV})`);
 });
