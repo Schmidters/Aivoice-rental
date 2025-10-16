@@ -52,7 +52,7 @@ model Booking {
   source     String   @default("ai")
   createdAt  DateTime @default(now())
   lead       Lead     @relation(fields: [leadId], references: [id])
-  property   Property @relation(fields: [propertyId], references: [id])
+  property   Property? @relation(fields: [propertyId], references: [id])
 }
 
 model LeadProperty {
