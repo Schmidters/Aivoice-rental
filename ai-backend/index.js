@@ -325,7 +325,7 @@ app.post("/twilio/sms", async (req, res) => {
   }
 });
 
-// --- Zapier → /init/facts (property facts + lead link) ---
+// --- Zapier → /init/facts (store PropertyFacts + lead link + Redis cache) ---
 app.post("/init/facts", async (req, res) => {
   try {
     const { leadPhone, leadName, property, unit, link, slug } = req.body || {};
@@ -338,26 +338,57 @@ app.post("/init/facts", async (req, res) => {
 
     // Normalize phone
     const phone = normalizePhone(leadPhone);
+    const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
 
     // 1️⃣ Ensure lead exists
     const lead = await upsertLeadByPhone(phone);
 
-    // 2️⃣ Ensure property exists (use slug if provided)
-    const prop = await upsertPropertyBySlug(slug || slugify(property), property);
+    // 2️⃣ Ensure property exists
+    const prop = await upsertPropertyBySlug(resolvedSlug, property);
 
     // 3️⃣ Link lead ↔ property
     await linkLeadToProperty(lead.id, prop.id);
 
-    // 4️⃣ Save facts to Redis for quick lookups
-    await redis.hset(`facts:${prop.slug}`, {
+    // 4️⃣ Save facts in Redis for fast lookup
+    await redis.hset(`facts:${resolvedSlug}`, {
       leadPhone: phone,
       leadName: leadName || "",
       property,
       unit: unit || "",
       link: link || "",
-      slug: prop.slug,
+      slug: resolvedSlug,
       createdAt: new Date().toISOString(),
     });
+
+    // 5️⃣ Persist into Postgres PropertyFacts table
+    await prisma.propertyFacts.upsert({
+      where: { slug: resolvedSlug },
+      update: {
+        leadPhone: phone,
+        leadName,
+        property,
+        unit,
+        link,
+      },
+      create: {
+        slug: resolvedSlug,
+        leadPhone: phone,
+        leadName,
+        property,
+        unit,
+        link,
+      },
+    });
+
+    console.log("💾 Saved PropertyFacts in DB and Redis:", resolvedSlug);
+
+    res.json({ ok: true, slug: resolvedSlug });
+  } catch (err) {
+    console.error("❌ /init/facts error:", err);
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
 
     // 5️⃣ Persist facts in Postgres (optional dedicated table)
     if (prisma.propertyFacts) {

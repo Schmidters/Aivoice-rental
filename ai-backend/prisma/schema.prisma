@@ -64,3 +64,15 @@ model LeadProperty {
 
   @@id([leadId, propertyId])
 }
+
+model PropertyFacts {
+  id         Int      @id @default(autoincrement())
+  slug       String   @unique
+  leadPhone  String
+  leadName   String?
+  property   String
+  unit       String?
+  link       String
+  createdAt  DateTime @default(now())
+}
+
