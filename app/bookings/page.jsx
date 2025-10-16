@@ -1,12 +1,13 @@
-// dashboard/app/bookings/page.jsx
 'use client';
 
 import { useEffect, useState } from 'react';
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
-import { format, parse, startOfWeek, getDay, parseISO } from 'date-fns';
+import { format, parse, startOfWeek, getDay } from 'date-fns';
 import enUS from 'date-fns/locale/en-US';
+import { parseISO } from 'date-fns';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 
+// --- Calendar localization setup ---
 const locales = { 'en-US': enUS };
 const localizer = dateFnsLocalizer({
   format,
@@ -21,39 +22,57 @@ export default function BookingsCalendar() {
 
   useEffect(() => {
     async function load() {
-      const r = await fetch('/api/bookings', { cache: 'no-store' });
-      const j = await r.json();
-      if (!j?.ok) return;
-      const normalized = (j.items || []).map((b) => ({
-        id: b.id,
-        title: `${b.property} (${b.phone})`,
-        start: parseISO(b.datetime),
-        end: parseISO(b.datetime),
-        allDay: false,
-      }));
-      setEvents(normalized);
-    }
-    load();
-
-    // Optional live updates from backend SSE
-    const base = (process.env.NEXT_PUBLIC_AI_BACKEND_URL || '').replace(/\/$/, '');
-    if (!base) return;
-
-    const es = new EventSource(`${base}/api/bookings/events`);
-    es.onmessage = (e) => {
       try {
-        const b = JSON.parse(e.data);
-        const evt = {
+        const base = (process.env.NEXT_PUBLIC_AI_BACKEND_URL || '').replace(/\/$/, '');
+        if (!base) {
+          console.warn('Missing NEXT_PUBLIC_AI_BACKEND_URL');
+          return;
+        }
+
+        // Fetch initial bookings
+        const r = await fetch(`${base}/api/bookings`, { cache: 'no-store' });
+        const j = await r.json();
+        if (!j?.ok) return;
+
+        const normalized = (j.items || []).map((b) => ({
           id: b.id,
           title: `${b.property} (${b.phone})`,
-          start: parseISO(b.datetime),
-          end: parseISO(b.datetime),
+          // Use Date() to preserve local timezone
+          start: new Date(b.datetime),
+          end: new Date(b.datetime),
           allDay: false,
+        }));
+
+        setEvents(normalized);
+
+        // --- Subscribe to live updates from backend SSE ---
+        const es = new EventSource(`${base}/api/bookings/events`);
+        es.onmessage = (e) => {
+          try {
+            const b = JSON.parse(e.data);
+            const evt = {
+              id: b.id,
+              title: `${b.property} (${b.phone})`,
+              start: new Date(b.datetime),
+              end: new Date(b.datetime),
+              allDay: false,
+            };
+            setEvents((prev) => [evt, ...prev]);
+          } catch (err) {
+            console.warn('Bad SSE message', err);
+          }
         };
-        setEvents((prev) => [evt, ...prev]);
-      } catch {}
-    };
-    return () => es.close();
+
+        es.onerror = (err) => console.error('SSE connection error', err);
+
+        // Cleanup on unmount
+        return () => es.close();
+      } catch (err) {
+        console.error('Failed to load bookings:', err);
+      }
+    }
+
+    load();
   }, []);
 
   return (
@@ -66,6 +85,7 @@ export default function BookingsCalendar() {
           Total: {events.length} bookings
         </span>
       </div>
+
       <Calendar
         localizer={localizer}
         events={events}
