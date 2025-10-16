@@ -82,6 +82,6 @@ model PropertyFacts {
   utilitiesIncluded Boolean? @map("utilities_included")
   petsAllowed      Boolean?  @map("pets_allowed")
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime? @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt   // 👈 NOTE: The "?" here is critical
 }
