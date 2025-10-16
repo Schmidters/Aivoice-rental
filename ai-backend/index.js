@@ -390,19 +390,6 @@ app.post("/init/facts", async (req, res) => {
 });
 
 
-    // 5️⃣ Persist facts in Postgres (optional dedicated table)
-    if (prisma.propertyFacts) {
-      await prisma.propertyFacts.create({
-        data: {
-          slug: prop.slug,
-          leadPhone: phone,
-          leadName: leadName || null,
-          property,
-          unit: unit || null,
-          link: link || null,
-        },
-      });
-    }
 
     console.log(`💾 Stored property facts for ${prop.slug}`);
     res.json({ ok: true, slug: prop.slug });
