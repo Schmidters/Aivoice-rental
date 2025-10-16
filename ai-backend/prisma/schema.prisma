@@ -1,8 +1,3 @@
-// ========================================
-// V4 schema for AI Voice Rental backend
-// Tables: Lead, Property, Message, Booking, LeadProperty, PropertyFacts
-// ========================================
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -12,98 +7,60 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ========================
-// LEADS
-// ========================
 model Lead {
-  id          Int            @id @default(autoincrement())
-  phone       String         @unique
-  name        String?
-  email       String?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-
-  // Relationships
-  messages    Message[]
-  bookings    Booking[]
-  properties  LeadProperty[]
+  id         Int            @id @default(autoincrement())
+  phone      String         @unique
+  name       String?
+  email      String?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  bookings   Booking[]
+  properties LeadProperty[]
+  messages   Message[]
 }
 
-// ========================
-// PROPERTIES
-// ========================
 model Property {
-  id          Int            @id @default(autoincrement())
-  slug        String         @unique
-  address     String?
-  city        String?        @default("Calgary")
-  province    String?        @default("AB")
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-
-  // Relationships
-  messages    Message[]
-  bookings    Booking[]
-  leads       LeadProperty[]
+  id        Int            @id @default(autoincrement())
+  slug      String         @unique
+  address   String?
+  city      String?        @default("Calgary")
+  province  String?        @default("AB")
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  bookings  Booking[]
+  leads     LeadProperty[]
+  messages  Message[]
 }
 
-// ========================
-// MESSAGES
-// ========================
 model Message {
-  id          Int            @id @default(autoincrement())
-  leadId      Int
-  propertyId  Int?
-  role        String
-  content     String
-  meta        Json?
-  createdAt   DateTime       @default(now())
-
-  // Relationships
-  lead        Lead           @relation(fields: [leadId], references: [id])
-  property    Property?      @relation(fields: [propertyId], references: [id])
+  id         Int       @id @default(autoincrement())
+  leadId     Int
+  propertyId Int?
+  role       String
+  content    String
+  meta       Json?
+  createdAt  DateTime  @default(now())
+  lead       Lead      @relation(fields: [leadId], references: [id])
+  property   Property? @relation(fields: [propertyId], references: [id])
 }
 
-// ========================
-// BOOKINGS
-// ========================
 model Booking {
-  id          Int            @id @default(autoincrement())
-  leadId      Int
-  propertyId  Int
-  datetime    DateTime
-  source      String          @default("ai")
-  createdAt   DateTime        @default(now())
-
-  // Relationships
-  lead        Lead            @relation(fields: [leadId], references: [id])
-  property    Property        @relation(fields: [propertyId], references: [id])
+  id         Int      @id @default(autoincrement())
+  leadId     Int
+  propertyId Int
+  datetime   DateTime
+  source     String   @default("ai")
+  createdAt  DateTime @default(now())
+  lead       Lead     @relation(fields: [leadId], references: [id])
+  property   Property @relation(fields: [propertyId], references: [id])
 }
 
-// ========================
-// LINK TABLE (Lead ↔ Property)
-// ========================
 model LeadProperty {
-  leadId      Int
-  propertyId  Int
-  createdAt   DateTime       @default(now())
-
-  lead        Lead           @relation(fields: [leadId], references: [id])
-  property    Property       @relation(fields: [propertyId], references: [id])
+  leadId     Int
+  propertyId Int
+  createdAt  DateTime @default(now())
+  lead       Lead     @relation(fields: [leadId], references: [id])
+  property   Property @relation(fields: [propertyId], references: [id])
 
   @@id([leadId, propertyId])
-}
-
-// ========================
-// PROPERTY FACTS (Zapier/BrowseAI ingest)
-// ========================
-model PropertyFacts {
-  id         Int      @id @default(autoincrement())
-  slug       String   @unique
-  leadPhone  String
-  leadName   String?
-  property   String
-  unit       String?
-  link       String
-  createdAt  DateTime @default(now())
 }
