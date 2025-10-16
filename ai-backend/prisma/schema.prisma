@@ -1,24 +1,21 @@
-// --- prisma/schema.prisma ---
-// Ava V6.1 — DB-only (Browse AI + Twilio + OpenAI)
+// prisma/schema.prisma
+// Version: Ava V6 — DB-first (no Redis)
+
+generator client {
+  provider = "prisma-client-js"
+}
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-generator client {
-  provider = "prisma-client-js"
-}
-
-// ---------- MODELS ----------
-
-// Leads (people texting in)
 model Lead {
-  id         Int           @id @default(autoincrement())
-  phone      String        @unique
+  id         Int             @id @default(autoincrement())
+  phone      String          @unique
   name       String?
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
 
   // Relations
   messages   Message[]
@@ -26,75 +23,76 @@ model Lead {
   properties LeadProperty[]
 }
 
-// Properties (physical listings)
 model Property {
-  id         Int           @id @default(autoincrement())
-  slug       String        @unique
+  id         Int             @id @default(autoincrement())
+  slug       String          @unique
   address    String?
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
 
   // Relations
-  facts      PropertyFacts?
+  facts      PropertyFacts?  @relation(fields: [factsId], references: [id])
+  factsId    Int?
   messages   Message[]
   bookings   Booking[]
   leads      LeadProperty[]
 }
 
-// Facts scraped by Browse AI or Zapier init
 model PropertyFacts {
-  id         Int        @id @default(autoincrement())
-  slug       String     @unique
-  property   String?    // Full property title / address
-  unit       String?
-  rent       String?
-  bedrooms   String?
-  bathrooms  String?
-  parking    String?
-  utilities  String?
-  summary    String?
-  link       String?
-  leadPhone  String?
-  leadName   String?
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
+  id          Int        @id @default(autoincrement())
+  slug        String     @unique
+  propertyId  Int?       @unique
+  property    Property?  @relation(fields: [propertyId], references: [id])
+
+  // Browse AI scraped fields
+  propertyName String?
+  unit         String?
+  rent         String?
+  bedrooms     String?
+  bathrooms    String?
+  parking      String?
+  utilities    String?
+  summary      String?
+  link         String?
+  leadPhone    String?
+  leadName     String?
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 }
 
-// Messages between Ava and the lead
 model Message {
-  id         Int       @id @default(autoincrement())
-  role       String    // 'user' or 'assistant'
+  id         Int        @id @default(autoincrement())
+  role       String
   content    String
-  createdAt  DateTime  @default(now())
-  leadId     Int
-  propertyId Int?
+  createdAt  DateTime   @default(now())
 
   // Relations
-  lead       Lead      @relation(fields: [leadId], references: [id])
-  property   Property? @relation(fields: [propertyId], references: [id])
+  leadId     Int
+  propertyId Int?
+  lead       Lead       @relation(fields: [leadId], references: [id])
+  property   Property?  @relation(fields: [propertyId], references: [id])
 }
 
-// Bookings / showings
 model Booking {
-  id         Int       @id @default(autoincrement())
-  datetime   DateTime
-  source     String?   // 'ai' | 'human'
-  createdAt  DateTime  @default(now())
-  leadId     Int
-  propertyId Int?
+  id          Int        @id @default(autoincrement())
+  datetime    DateTime
+  source      String?
+  createdAt   DateTime   @default(now())
 
   // Relations
-  lead       Lead      @relation(fields: [leadId], references: [id])
-  property   Property? @relation(fields: [propertyId], references: [id])
+  leadId      Int
+  propertyId  Int?
+  lead        Lead       @relation(fields: [leadId], references: [id])
+  property    Property?  @relation(fields: [propertyId], references: [id])
 }
 
-// Many-to-many (Lead ↔ Property)
 model LeadProperty {
-  leadId     Int
-  propertyId Int
+  leadId      Int
+  propertyId  Int
 
-  lead       Lead      @relation(fields: [leadId], references: [id])
-  property   Property  @relation(fields: [propertyId], references: [id])
+  lead        Lead       @relation(fields: [leadId], references: [id])
+  property    Property   @relation(fields: [propertyId], references: [id])
 
   @@id([leadId, propertyId])
 }
