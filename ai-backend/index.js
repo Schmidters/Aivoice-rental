@@ -172,7 +172,7 @@ function parseQuickDateTime(text = "", tz = "America/Edmonton") {
   }
 
   // time extraction
-  const m = t.match(/\b(\d{1,2})(?::(\d{2}))?\s?(am|pm)\b/);
+const m = t.match(/\b(\d{1,2})[:\s]?(\d{2})?\s?(am|pm)\b/);
   if (m) {
     let hour = parseInt(m[1], 10);
     const minute = m[2] ? parseInt(m[2], 10) : 0;
