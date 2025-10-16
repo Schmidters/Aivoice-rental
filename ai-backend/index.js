@@ -1,5 +1,5 @@
 // --- ai-backend/index.js ---
-// Version: V5.3 — Ava (Timezone-Aware Leasing Assistant)
+// Version: V5.4 — Ava (Timezone-anchored datetime parsing)
 
 import express from "express";
 import bodyParser from "body-parser";
@@ -54,14 +54,13 @@ const slugify = (s) =>
 
 // --- Timezone helpers ---
 function resolveTimezoneFromAddress(address = "") {
-  const a = address.toLowerCase();
+  const a = address?.toLowerCase?.() || "";
   if (a.includes("calgary") || a.includes("edmonton") || a.includes("alberta")) return "America/Edmonton";
   if (a.includes("vancouver") || a.includes("british columbia")) return "America/Vancouver";
   if (a.includes("toronto") || a.includes("ontario")) return "America/Toronto";
   if (a.includes("montreal") || a.includes("quebec")) return "America/Toronto";
-  return "America/Edmonton"; // default
+  return "America/Edmonton"; // sensible default for you
 }
-
 function nowIso(zone = "America/Edmonton") {
   return DateTime.now().setZone(zone).toISO();
 }
@@ -137,8 +136,8 @@ async function findBestPropertyForLeadFromDB(phone) {
 function maybeContainsTimeOrBooking(text = "") {
   const t = text.toLowerCase();
   const keywords = [
-    "book", "booking", "schedule", "showing", "tour", "view", "viewing",
-    "see the place", "come by", "visit"
+    "book","booking","schedule","showing","tour","view","viewing",
+    "see the place","come by","visit"
   ];
   const dayWords = [
     "today","tomorrow","tonight","morning","afternoon","evening",
@@ -149,9 +148,61 @@ function maybeContainsTimeOrBooking(text = "") {
   return hasKeyword || timeLike;
 }
 
-// --- Extract date/time ---
-async function extractDateTime(text) {
+/** ---------- Deterministic relative-time parser ----------
+ * Handles: "today", "tomorrow", "tonight", and explicit hh[:mm] am/pm
+ * Anchored to property timezone 'now'.
+ */
+function parseQuickDateTime(text = "", tz = "America/Edmonton") {
+  const t = text.trim().toLowerCase();
+  const now = DateTime.now().setZone(tz);
+
+  // baseline date
+  let date = now.startOf("day");
+  let matchedRelative = false;
+
+  if (/\btomorrow\b/.test(t)) {
+    date = date.plus({ days: 1 });
+    matchedRelative = true;
+  } else if (/\btoday\b/.test(t)) {
+    matchedRelative = true;
+  } else if (/\btonight\b/.test(t)) {
+    // "tonight" defaults to 7:00 PM local if no explicit time
+    date = now.set({ hour: 19, minute: 0, second: 0, millisecond: 0 });
+    matchedRelative = true;
+  }
+
+  // time extraction
+  const m = t.match(/\b(\d{1,2})(?::(\d{2}))?\s?(am|pm)\b/);
+  if (m) {
+    let hour = parseInt(m[1], 10);
+    const minute = m[2] ? parseInt(m[2], 10) : 0;
+    const meridiem = m[3].toLowerCase();
+    if (meridiem === "pm" && hour < 12) hour += 12;
+    if (meridiem === "am" && hour === 12) hour = 0;
+    // if "tonight" already set an hour, overwrite with explicit time
+    date = date.set({ hour, minute, second: 0, millisecond: 0 });
+    if (!matchedRelative) {
+      // if user only said "9am" with no day word, choose next occurrence today/next day
+      const candidate = now.set({ hour, minute, second: 0, millisecond: 0 });
+      date = candidate < now ? candidate.plus({ days: 1 }) : candidate;
+    }
+  } else if (matchedRelative && /\btonight\b/.test(t) === false) {
+    // relative day but no explicit time -> default to 10:00 AM
+    date = date.set({ hour: 10, minute: 0, second: 0, millisecond: 0 });
+  }
+
+  // if we matched anything meaningful, return JS Date
+  if (matchedRelative || m) {
+    const dt = DateTime.fromISO(date.toISO(), { zone: tz });
+    return dt.isValid ? dt.toJSDate() : null;
+  }
+  return null;
+}
+
+// --- LLM Extract date/time (fallback) ---
+async function extractDateTimeLLM(text, tz = "America/Edmonton") {
   try {
+    const nowLocal = DateTime.now().setZone(tz).toISO(); // anchor for "tomorrow"
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       temperature: 0,
@@ -159,14 +210,17 @@ async function extractDateTime(text) {
         {
           role: "system",
           content:
-            "Extract a single datetime from the user's text and return ONLY an ISO 8601 string. Assume the user's timezone is America/Edmonton. If unclear, return 'null'.",
+            `You convert a user message into a single ISO 8601 datetime IN THE ZONE ${tz}. 
+Current local datetime is ${nowLocal}. 
+Interpret relative phrases (e.g., "tomorrow") relative to this now. 
+Return ONLY a full ISO (date + time). If impossible, return 'null'.`,
         },
         { role: "user", content: text },
       ],
     });
     const iso = resp.choices?.[0]?.message?.content?.trim();
     if (!iso || iso.toLowerCase().includes("null")) return null;
-    const dt = DateTime.fromISO(iso, { zone: "America/Edmonton" });
+    const dt = DateTime.fromISO(iso, { zone: tz });
     return dt.isValid ? dt.toJSDate() : null;
   } catch {
     return null;
@@ -175,8 +229,8 @@ async function extractDateTime(text) {
 
 // ---------- AI INTENT + REPLY ----------
 const INTENT_LABELS = [
-  "book_showing", "pricing_question", "availability", "parking", "pets",
-  "application_process", "negotiation", "general_info", "spam_or_unknown",
+  "book_showing","pricing_question","availability","parking","pets",
+  "application_process","negotiation","general_info","spam_or_unknown",
 ];
 
 async function detectIntent(text) {
@@ -310,6 +364,7 @@ app.post("/twilio/sms", async (req, res) => {
 
     const lead = await upsertLeadByPhone(from);
     const property = await findBestPropertyForLeadFromDB(from);
+    const tz = resolveTimezoneFromAddress(property?.address || "");
     const intent = await detectIntent(incomingText);
     const history = await buildConversationContext(from);
 
@@ -321,18 +376,26 @@ app.post("/twilio/sms", async (req, res) => {
 
     // Booking detection
     if (intent === "book_showing") {
-      const when = await extractDateTime(incomingText);
+      // 1) try deterministic parse
+      let when = parseQuickDateTime(incomingText, tz);
+
+      // 2) fallback to LLM with explicit "now" in tz
+      if (!when) {
+        when = await extractDateTimeLLM(incomingText, tz);
+      }
+
+      // 3) if still null, skip booking creation
       if (when) {
-        const tz = resolveTimezoneFromAddress(property?.address || "");
         const localized = DateTime.fromJSDate(when).setZone(tz);
         const booking = await prisma.booking.create({
           data: {
             leadId: lead.id,
             propertyId: property?.id ?? null,
-            datetime: localized.toJSDate(),
+            datetime: localized.toJSDate(), // Prisma stores as UTC; source is local tz
             source: "ai",
           },
         });
+
         await redis.publish("bookings:new", JSON.stringify({
           id: booking.id,
           phone: lead.phone,
@@ -370,5 +433,5 @@ app.get("/health", async (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Ava V5.3 running on :${PORT} (${NODE_ENV})`);
+  console.log(`🚀 Ava V5.4 running on :${PORT} (${NODE_ENV})`);
 });
