@@ -246,6 +246,14 @@ app.post("/init/facts", async (req, res) => {
     const prop = await upsertPropertyBySlug(resolvedSlug, property);
     await linkLeadToProperty(lead.id, prop.id);
 
+    // --- Ensure Redis key is a hash (delete if wrong type) ---
+const key = `facts:${resolvedSlug}`;
+const type = await redis.type(key);
+if (type !== "hash" && type !== "none") {
+  console.warn(`⚠️ Redis key ${key} was type ${type}, deleting before HSET`);
+  await redis.del(key);
+}
+
     await redis.hset(`facts:${resolvedSlug}`, {
       leadPhone: phone,
       leadName: leadName || "",
