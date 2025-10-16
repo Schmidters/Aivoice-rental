@@ -10,6 +10,36 @@ import { PrismaClient } from "@prisma/client";
 import { DateTime } from "luxon";
 dotenv.config();
 
+// --- Browse AI Integration Helper ---
+import fetch from "node-fetch";
+
+async function runBrowseAIRobot(originUrl) {
+  const robotId = process.env.BROWSEAI_ROBOT_ID || "0199d95d-9af8-74a9-8168-ce7240551c24";
+  const apiKey = process.env.BROWSEAI_API_KEY;
+
+  try {
+    const response = await fetch(`https://api.browse.ai/v2/robots/${robotId}/tasks`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,   // ✅ correct header from Postman
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        recordVideo: false,
+        inputParameters: { originUrl },        // ✅ matches API spec
+      }),
+    });
+
+    const data = await response.json();
+    console.log("📦 [BrowseAI] Task created:", data);
+    return data;
+  } catch (err) {
+    console.error("❌ [BrowseAI] API Error:", err);
+    return null;
+  }
+}
+
+
 const prisma = new PrismaClient();
 
 // ---------- ENV ----------
@@ -315,21 +345,10 @@ app.post("/init/facts", async (req, res) => {
     }
 
     console.log(`🟠 [Init] New property (${slug}), triggering Browse AI scrape`);
-    const resp = await fetch(`https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/tasks`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${BROWSEAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        inputs: { originUrl: url },
-        webhook: "https://aivoice-rental.onrender.com/browseai/webhook"
-      })
-    });
+const browseResult = await runBrowseAIRobot(url);
+console.log(`📤 [Init] Browse AI triggered for ${slug}:`, browseResult);
+res.json({ ok: true, triggered: true, browseai: browseResult });
 
-    const data = await resp.json();
-    console.log(`📤 [Init] Browse AI triggered for ${slug}:`, data);
-    res.json({ ok: true, triggered: true, browseai: data });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
     res.status(500).json({ ok: false, error: String(err) });
