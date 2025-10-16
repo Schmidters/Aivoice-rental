@@ -451,6 +451,20 @@ app.post("/twilio/sms", async (req, res) => {
   }
 });
 
+// ---------- DEBUG ROUTE (temporary) ----------
+app.get("/debug/facts", async (_req, res) => {
+  try {
+    const facts = await prisma.propertyFacts.findMany({
+      orderBy: { updatedAt: "desc" },
+      take: 10,
+    });
+    res.json(facts);
+  } catch (err) {
+    console.error("❌ /debug/facts error:", err);
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
 // ---------- HEALTH ----------
 app.get("/health", async (_req, res) => {
   try {
