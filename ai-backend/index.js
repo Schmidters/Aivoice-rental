@@ -1,6 +1,8 @@
 // ai-backend/index.js
 /**
- * AI Voice Rental — V4.1 (DB as source of truth + Booking Sync)
+ * AI Voice Rental — V4.1 (DB-first + Auto Bookings)
+ * - Redis only for SSE/live pings
+ * - Postgres (Prisma) is canonical storage for leads, properties, messages, bookings, property facts
  */
 
 import express from "express";
@@ -10,6 +12,7 @@ import OpenAI from "openai";
 import twilio from "twilio";
 import dotenv from "dotenv";
 import { PrismaClient } from "@prisma/client";
+import { DateTime } from "luxon";
 dotenv.config();
 
 const prisma = new PrismaClient();
@@ -44,7 +47,7 @@ if (!TWILIO_MESSAGING_SERVICE_SID && !TWILIO_FROM_NUMBER)
 
 // ---------- CORE ----------
 const app = express();
-app.use(bodyParser.urlencoded({ extended: true })); // Twilio posts form-encoded
+app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
 // Simple logs
@@ -66,6 +69,12 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 // ---------- HELPERS ----------
+const ANALYTICS_KEY = "analytics:counters";
+const incCounter = async (field) => {
+  try {
+    await redis.hincrby(ANALYTICS_KEY, field, 1);
+  } catch {}
+};
 const normalizePhone = (num) => {
   if (!num) return "";
   let s = String(num).trim();
@@ -76,6 +85,17 @@ const slugify = (s) =>
   (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
 const nowIso = () => new Date().toISOString();
 
+// Redis keys
+const convModeKey = (phone) => `conv:${phone}:mode`;
+const publishLeadEvent = async (phone, payload) => {
+  try {
+    await redis.publish(`events:lead:${phone}`, JSON.stringify(payload));
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+// DB helpers
 async function upsertLeadByPhone(phone) {
   return prisma.lead.upsert({
     where: { phone },
@@ -102,7 +122,9 @@ async function linkLeadToProperty(leadId, propertyId) {
 async function saveMessage({ phone, role, content, meta, propertySlug }) {
   const lead = await upsertLeadByPhone(phone);
   let prop = null;
-  if (propertySlug) prop = await upsertPropertyBySlug(propertySlug);
+  if (propertySlug) {
+    prop = await upsertPropertyBySlug(propertySlug);
+  }
   return prisma.message.create({
     data: {
       role,
@@ -114,10 +136,32 @@ async function saveMessage({ phone, role, content, meta, propertySlug }) {
   });
 }
 
-// ---------- INTENT + AI ----------
+async function findBestPropertyForLeadFromDB(phone) {
+  const lead = await prisma.lead.findUnique({
+    where: { phone },
+    include: { properties: { include: { property: true } } },
+  });
+  if (lead?.properties?.length) {
+    const propIds = lead.properties.map((lp) => lp.propertyId);
+    return prisma.property.findFirst({
+      where: { id: { in: propIds } },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+    });
+  }
+  return null;
+}
+
+// ---------- AI INTENT + REPLY ----------
 const INTENT_LABELS = [
-  "book_showing", "pricing_question", "availability", "parking", "pets",
-  "application_process", "negotiation", "general_info", "spam_or_unknown",
+  "book_showing",
+  "pricing_question",
+  "availability",
+  "parking",
+  "pets",
+  "application_process",
+  "negotiation",
+  "general_info",
+  "spam_or_unknown",
 ];
 
 async function detectIntent(text) {
@@ -126,7 +170,10 @@ async function detectIntent(text) {
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       temperature: 0,
-      messages: [{ role: "system", content: sys }, { role: "user", content: text || "" }],
+      messages: [
+        { role: "system", content: sys },
+        { role: "user", content: text || "" },
+      ],
     });
     const label = resp.choices?.[0]?.message?.content?.trim();
     return INTENT_LABELS.includes(label) ? label : "general_info";
@@ -146,7 +193,9 @@ function buildContextFromProperty(property) {
   if (property.bathrooms) lines.push(`- bathrooms: ${property.bathrooms}`);
   if (property.parking) lines.push(`- parking: ${property.parking}`);
   if (property.utilitiesIncluded !== undefined)
-    lines.push(`- utilities included: ${property.utilitiesIncluded ? "yes" : "no"}`);
+    lines.push(
+      `- utilities included: ${property.utilitiesIncluded ? "yes" : "no"}`
+    );
   if (property.petsAllowed !== undefined)
     lines.push(`- pets allowed: ${property.petsAllowed ? "yes" : "no"}`);
   if (property.link) lines.push(`- listing link: ${property.link}`);
@@ -167,7 +216,10 @@ Never say you're an AI.`;
       temperature: 0.4,
       messages: [
         { role: "system", content: system },
-        { role: "user", content: `${context}\n\nLead intent: ${intent}\nLead message: ${incomingText}` },
+        {
+          role: "user",
+          content: `${context}\n\nLead intent: ${intent}\nLead message: ${incomingText}`,
+        },
       ],
     });
     return resp.choices?.[0]?.message?.content?.trim() || "Thanks for reaching out!";
@@ -176,8 +228,8 @@ Never say you're an AI.`;
   }
 }
 
-// ---------- BOOKING DATETIME EXTRACTION ----------
-async function extractDatetimeFromText(text) {
+// --- Helper: Extract natural-language time for booking ---
+async function extractDateTime(text) {
   try {
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
@@ -185,16 +237,18 @@ async function extractDatetimeFromText(text) {
       messages: [
         {
           role: "system",
-          content: `Extract the datetime the person wants to book a showing for. 
-Return only an ISO 8601 datetime in UTC (e.g. 2025-10-17T21:00:00Z) or "null" if unclear.`,
+          content:
+            "Extract a date/time from the user's text. Return ONLY an ISO 8601 datetime (e.g., 2025-10-17T09:00:00-06:00), or 'null' if none found.",
         },
         { role: "user", content: text },
       ],
     });
-    const val = resp.choices?.[0]?.message?.content?.trim();
-    return val && val !== "null" ? new Date(val) : null;
+    const iso = resp.choices?.[0]?.message?.content?.trim();
+    if (!iso || iso.toLowerCase().includes("null")) return null;
+    const dt = DateTime.fromISO(iso);
+    return dt.isValid ? dt.toJSDate() : null;
   } catch (err) {
-    console.warn("⚠️ datetime extraction failed:", err);
+    console.error("extractDateTime error:", err);
     return null;
   }
 }
@@ -202,7 +256,8 @@ Return only an ISO 8601 datetime in UTC (e.g. 2025-10-17T21:00:00Z) or "null" if
 // ---------- TWILIO SEND ----------
 async function sendSms(to, body) {
   const msg = { to, body };
-  if (TWILIO_MESSAGING_SERVICE_SID) msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
+  if (TWILIO_MESSAGING_SERVICE_SID)
+    msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
   else msg.from = TWILIO_FROM_NUMBER;
   return twilioClient.messages.create(msg);
 }
@@ -217,14 +272,21 @@ app.post("/init/facts", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Missing leadPhone or property" });
 
     console.log("📦 Received property facts:", req.body);
-
     const phone = normalizePhone(leadPhone);
     const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
+
     const lead = await upsertLeadByPhone(phone);
     const prop = await upsertPropertyBySlug(resolvedSlug, property);
     await linkLeadToProperty(lead.id, prop.id);
 
-    await redis.hset(`facts:${resolvedSlug}`, {
+    const key = `facts:${resolvedSlug}`;
+    const type = await redis.type(key);
+    if (type !== "hash" && type !== "none") {
+      console.warn(`⚠️ Redis key ${key} was type ${type}, deleting before HSET`);
+      await redis.del(key);
+    }
+
+    await redis.hset(key, {
       leadPhone: phone,
       leadName: leadName || "",
       property,
@@ -234,10 +296,44 @@ app.post("/init/facts", async (req, res) => {
       createdAt: new Date().toISOString(),
     });
 
+    const {
+      rent,
+      bedrooms,
+      bathrooms,
+      parking,
+      utilities_included,
+      pets_allowed,
+    } = req.body;
+
     await prisma.propertyFacts.upsert({
       where: { slug: resolvedSlug },
-      update: { leadPhone: phone, leadName, property, unit, link },
-      create: { slug: resolvedSlug, leadPhone: phone, leadName, property, unit, link },
+      update: {
+        leadPhone: phone,
+        leadName,
+        property,
+        unit,
+        link,
+        rent,
+        bedrooms,
+        bathrooms,
+        parking,
+        utilitiesIncluded: utilities_included ?? undefined,
+        petsAllowed: pets_allowed ?? undefined,
+      },
+      create: {
+        slug: resolvedSlug,
+        leadPhone: phone,
+        leadName,
+        property,
+        unit,
+        link,
+        rent,
+        bedrooms,
+        bathrooms,
+        parking,
+        utilitiesIncluded: utilities_included ?? undefined,
+        petsAllowed: pets_allowed ?? undefined,
+      },
     });
 
     console.log("💾 Saved PropertyFacts in DB and Redis:", resolvedSlug);
@@ -252,44 +348,50 @@ app.post("/init/facts", async (req, res) => {
 app.post("/twilio/sms", async (req, res) => {
   try {
     console.log("📩 Raw Twilio webhook body:", req.body);
+
     const from = normalizePhone(req.body.From);
     const incomingText = req.body.Body?.trim() || "";
     if (!from || !incomingText) return res.status(400).end();
 
     console.log("📩 SMS received from", from, ":", incomingText);
 
-    const property = await prisma.property.findFirst();
+    const lead = await upsertLeadByPhone(from);
+    const property = await findBestPropertyForLeadFromDB(from);
     const intent = await detectIntent(incomingText);
-    let reply = await aiReply({ incomingText, property, intent });
-
-    // --- Booking detection ---
-    if (intent === "book_showing") {
-      const datetime = await extractDatetimeFromText(incomingText);
-      if (datetime && property) {
-        const lead = await upsertLeadByPhone(from);
-        const booking = await prisma.booking.create({
-          data: {
-            leadId: lead.id,
-            propertyId: property.id,
-            datetime,
-            source: "ai",
-          },
-        });
-        await redis.publish("bookings:new", JSON.stringify({
-          id: booking.id,
-          phone: from,
-          property: property.slug,
-          datetime: booking.datetime.toISOString(),
-        }));
-        reply = `Perfect — I’ve booked you for ${datetime.toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" })} at ${property.address || property.slug}. See you then!`;
-      }
-    }
+    const reply = await aiReply({ incomingText, property, intent });
 
     await saveMessage({ phone: from, role: "user", content: incomingText, propertySlug: property?.slug });
     await saveMessage({ phone: from, role: "assistant", content: reply, propertySlug: property?.slug });
+
+    // --- NEW: Create booking if intent is book_showing ---
+    if (intent === "book_showing") {
+      const when = await extractDateTime(incomingText);
+      if (when) {
+        const booking = await prisma.booking.create({
+          data: {
+            leadId: lead.id,
+            propertyId: property?.id ?? null,
+            datetime: when,
+            source: "ai",
+          },
+        });
+
+        // Push live to dashboard
+        await redis.publish("bookings:new", JSON.stringify({
+          id: booking.id,
+          phone: lead.phone,
+          property: property?.slug ?? "unknown",
+          datetime: booking.datetime,
+          source: booking.source,
+          createdAt: booking.createdAt,
+        }));
+
+        console.log("📆 Booking created:", when.toISOString());
+      }
+    }
+
     await sendSms(from, reply);
     console.log("💬 AI reply sent to", from, ":", reply);
-
     res.status(200).end();
   } catch (err) {
     console.error("❌ /twilio/sms error:", err);
@@ -297,7 +399,54 @@ app.post("/twilio/sms", async (req, res) => {
   }
 });
 
-app.get("/", (_req, res) => res.json({ ok: true, message: "AI Voice Rental backend running" }));
+// --- Dashboard read APIs ---
+app.get("/api/bookings", async (_req, res) => {
+  try {
+    const rows = await prisma.booking.findMany({
+      orderBy: { datetime: "desc" },
+      take: 500,
+      include: { lead: true, property: true },
+    });
+    const items = rows.map((b) => ({
+      id: b.id,
+      phone: b.lead.phone,
+      property: b.property?.slug,
+      datetime: b.datetime.toISOString(),
+      source: b.source,
+      createdAt: b.createdAt.toISOString(),
+    }));
+    res.json({ ok: true, items });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+app.get("/api/bookings/events", async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", DASHBOARD_ORIGIN);
+  res.flushHeaders?.();
+
+  const heartbeat = setInterval(() => {
+    res.write("event: ping\n");
+    res.write("data: {}\n\n");
+  }, 25000);
+
+  const sub = new Redis(REDIS_URL);
+  await sub.subscribe("bookings:new");
+  sub.on("message", (_ch, msg) => {
+    res.write(`data: ${msg}\n\n`);
+  });
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    try {
+      sub.disconnect();
+    } catch {}
+  });
+});
+
 app.get("/health", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
@@ -309,5 +458,5 @@ app.get("/health", async (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 V4.1 backend with booking sync on :${PORT} (${NODE_ENV})`);
+  console.log(`🚀 V4.1 backend on :${PORT} (${NODE_ENV})`);
 });
