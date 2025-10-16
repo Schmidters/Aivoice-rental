@@ -162,7 +162,6 @@ async function findBestPropertyForLeadFromDB(phone) {
     include: { properties: { include: { property: true } } },
   });
   if (lead?.properties?.length) {
-    // simple "last updated" heuristic via messages/bookings
     const propIds = lead.properties.map((lp) => lp.propertyId);
     const prop = await prisma.property.findFirst({
       where: { id: { in: propIds } },
@@ -173,10 +172,10 @@ async function findBestPropertyForLeadFromDB(phone) {
   return null;
 }
 
-// ---- Intent + AI reply (unchanged behavior) ----
+// ---- Intent + AI reply ----
 const INTENT_LABELS = [
-  "book_showing","pricing_question","availability","parking","pets",
-  "application_process","negotiation","general_info","spam_or_unknown",
+  "book_showing", "pricing_question", "availability", "parking", "pets",
+  "application_process", "negotiation", "general_info", "spam_or_unknown",
 ];
 async function detectIntent(text) {
   try {
@@ -229,102 +228,6 @@ async function sendSms(to, body) {
 
 // ---------- ROUTES ----------
 
-// Inbound SMS
-app.post("/twilio/sms", async (req, res) => {
-  try {
-    const from = normalizePhone(req.body.From);
-    const body = (req.body.Body || "").trim();
-    console.log("📩 Inbound SMS:", from, body);
-    if (!from || !body) return res.status(200).send("");
-
-    await incCounter("inbound_sms");
-
-    // 1) Upsert lead + save inbound message to DB
-    const lead = await upsertLeadByPhone(from);
-    let property = await findBestPropertyForLeadFromDB(from);
-
-    // 2) Try linking property from the incoming text (URL or address)
-    const possibleSlug = extractSlugFromText(body);
-    if (possibleSlug) {
-      const prop = await upsertPropertyBySlug(possibleSlug);
-      await linkLeadToProperty(lead.id, prop.id);
-      property = prop; // becomes current context
-      console.log(`🏷️ Linked lead ${from} → property ${possibleSlug}`);
-    }
-
-    // 3) Persist message (role=user)
-    await saveMessage({ phone: from, role: "user", content: body, meta: null, propertySlug: property?.slug });
-
-    // 4) Intent (handoff disabled for now by design choice)
-    const intent = await detectIntent(body);
-    console.log("🎯 Detected intent:", intent);
-
-    // 5) AI reply
-    const reply = await aiReply({ incomingText: body, property, intent });
-    await saveMessage({ phone: from, role: "assistant", content: reply, meta: null, propertySlug: property?.slug });
-    await sendSms(from, reply);
-    await incCounter("replied_sms");
-    console.log("✅ SMS sent to lead:", from);
-
-    // 6) Simple booking parser → persist to DB (+ optional SSE)
-    if (/\b(book|schedule|showing|tour|appointment)\b/i.test(body)) {
-      try {
-        const dt = new Date();
-        if (/\btomorrow\b/i.test(body)) dt.setDate(dt.getDate() + 1);
-        const timeMatch = body.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
-        if (timeMatch) {
-          let h = parseInt(timeMatch[1]);
-          const m = parseInt(timeMatch[2] || "0");
-          const mer = timeMatch[3]?.toLowerCase();
-          if (mer === "pm" && h < 12) h += 12;
-          if (mer === "am" && h === 12) h = 0;
-          dt.setHours(h, m, 0, 0);
-        }
-        const iso = dt.toISOString();
-
-        // ensure property context exists (fallback to slug=unknown)
-        const propertySlug = property?.slug || "unknown";
-        const prop = await upsertPropertyBySlug(propertySlug);
-        await linkLeadToProperty(lead.id, prop.id);
-
-        const booking = await prisma.booking.create({
-          data: {
-            datetime: new Date(iso),
-            source: "ai",
-            leadId: lead.id,
-            propertyId: prop.id,
-          },
-          include: { lead: true, property: true },
-        });
-
-        // Optional: Redis pub for live calendar SSE
-        await redis.publish("bookings:new", JSON.stringify({
-          id: booking.id,
-          phone: booking.lead.phone,
-          property: booking.property.slug,
-          datetime: booking.datetime.toISOString(),
-          source: booking.source,
-        }));
-
-        console.log("📅 Logged booking (DB):", {
-          id: booking.id,
-          phone: booking.lead.phone,
-          property: booking.property.slug,
-          datetime: booking.datetime.toISOString(),
-        });
-      } catch (e) {
-        console.error("Booking parse error:", e);
-      }
-    }
-
-    res.status(200).send("");
-  } catch (err) {
-    console.error("❌ SMS webhook error:", err);
-    await incCounter("errors_sms");
-    res.status(200).send("");
-  }
-});
-
 // --- Zapier → /init/facts (store PropertyFacts + lead link + Redis cache) ---
 app.post("/init/facts", async (req, res) => {
   try {
@@ -336,20 +239,13 @@ app.post("/init/facts", async (req, res) => {
 
     console.log("📦 Received property facts:", req.body);
 
-    // Normalize phone
     const phone = normalizePhone(leadPhone);
     const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
 
-    // 1️⃣ Ensure lead exists
     const lead = await upsertLeadByPhone(phone);
-
-    // 2️⃣ Ensure property exists
     const prop = await upsertPropertyBySlug(resolvedSlug, property);
-
-    // 3️⃣ Link lead ↔ property
     await linkLeadToProperty(lead.id, prop.id);
 
-    // 4️⃣ Save facts in Redis for fast lookup
     await redis.hset(`facts:${resolvedSlug}`, {
       leadPhone: phone,
       leadName: leadName || "",
@@ -360,28 +256,13 @@ app.post("/init/facts", async (req, res) => {
       createdAt: new Date().toISOString(),
     });
 
-    // 5️⃣ Persist into Postgres PropertyFacts table
     await prisma.propertyFacts.upsert({
       where: { slug: resolvedSlug },
-      update: {
-        leadPhone: phone,
-        leadName,
-        property,
-        unit,
-        link,
-      },
-      create: {
-        slug: resolvedSlug,
-        leadPhone: phone,
-        leadName,
-        property,
-        unit,
-        link,
-      },
+      update: { leadPhone: phone, leadName, property, unit, link },
+      create: { slug: resolvedSlug, leadPhone: phone, leadName, property, unit, link },
     });
 
     console.log("💾 Saved PropertyFacts in DB and Redis:", resolvedSlug);
-
     res.json({ ok: true, slug: resolvedSlug });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
@@ -389,18 +270,7 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-
-
-    console.log(`💾 Stored property facts for ${prop.slug}`);
-    res.json({ ok: true, slug: prop.slug });
-  } catch (err) {
-    console.error("❌ /init/facts error:", err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
 // ---------- READ APIs FOR DASHBOARD ----------
-
-// Bookings list (for calendar)
 app.get("/api/bookings", async (_req, res) => {
   try {
     const rows = await prisma.booking.findMany({
@@ -422,7 +292,6 @@ app.get("/api/bookings", async (_req, res) => {
   }
 });
 
-// Live bookings SSE (optional)
 app.get("/api/bookings/events", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -447,7 +316,6 @@ app.get("/api/bookings/events", async (req, res) => {
   });
 });
 
-// Health
 app.get("/health", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
