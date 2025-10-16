@@ -265,7 +265,7 @@ if (type !== "hash" && type !== "none") {
     });
 
     await prisma.propertyFacts.upsert({
-      where: { slug: resolvedSlug },
+      where: { slug: resolvedSlug 
       update: { leadPhone: phone, leadName, property, unit, link },
       create: { slug: resolvedSlug, leadPhone: phone, leadName, property, unit, link },
     });
@@ -335,6 +335,52 @@ app.get("/health", async (_req, res) => {
     res.json({ ok: true, db: true, redis: pong === "PONG", time: nowIso(), env: NODE_ENV });
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+// --- Twilio → /twilio/sms (inbound messages from leads) ---
+app.post("/twilio/sms", async (req, res) => {
+  try {
+    console.log("📩 Raw Twilio webhook body:", req.body);
+
+    const from = normalizePhone(req.body.From);
+    const incomingText = req.body.Body?.trim() || "";
+    if (!from || !incomingText) {
+      console.warn("⚠️ Missing From or Body in Twilio webhook");
+      return res.status(400).end();
+    }
+
+    console.log("📩 SMS received from", from, ":", incomingText);
+
+    // Find related property from DB
+    const property = await findBestPropertyForLeadFromDB(from);
+
+    // Detect intent + generate AI reply
+    const intent = await detectIntent(incomingText);
+    const reply = await aiReply({ incomingText, property, intent });
+
+    // Save both messages in DB
+    await saveMessage({
+      phone: from,
+      role: "user",
+      content: incomingText,
+      propertySlug: property?.slug,
+    });
+    await saveMessage({
+      phone: from,
+      role: "assistant",
+      content: reply,
+      propertySlug: property?.slug,
+    });
+
+    // Send reply via Twilio
+    await sendSms(from, reply);
+
+    console.log("💬 AI reply sent to", from, ":", reply);
+    res.status(200).end();
+  } catch (err) {
+    console.error("❌ /twilio/sms error:", err);
+    res.status(500).end();
   }
 });
 
