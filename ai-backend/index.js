@@ -316,6 +316,10 @@ app.get("/api/bookings/events", async (req, res) => {
   });
 });
 
+app.get("/", (_req, res) => {
+  res.json({ ok: true, message: "AI Voice Rental backend running" });
+});
+
 app.get("/health", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
