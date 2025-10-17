@@ -255,9 +255,9 @@ app.get("/debug/browseai", async (req, res) => {
   }
 
   try {
-    const resp = await fetch("https://api.browse.ai/v2/robots", {
-      headers: { Authorization: `Bearer ${BROWSEAI_API_KEY}` },
-    });
+   const resp = await fetch("https://api.browse.ai/v2/robots", {
+  headers: { Authorization: `Bearer ${apiKey}` },
+});
     const data = await resp.json();
     console.log("🤖 BrowseAI /robots test:", data);
     res.json(data);
@@ -285,21 +285,24 @@ app.post("/init/facts", async (req, res) => {
       return res.status(500).json({ ok: false, error: "Missing BrowseAI credentials" });
     }
 
-    // ✅ Trigger BrowseAI scrape (async)
-    if (propertyUrl) {
-      console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
-      try {
-        const triggerResp = await fetch(`https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            inputParameters: { originUrl: propertyUrl },
-            webhook: "https://aivoice-rental.onrender.com/browseai/webhook",
-          }),
-        });
+// ✅ Trigger BrowseAI scrape (async)
+if (propertyUrl) {
+  console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
+  try {
+    const triggerResp = await fetch(
+      `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${BROWSEAI_API_KEY}`, // ✅ fixed variable name
+        },
+        body: JSON.stringify({
+          inputParameters: { originUrl: propertyUrl },
+          webhook: "https://aivoice-rental.onrender.com/browseai/webhook",
+        }),
+      }
+    );
 
         const triggerJson = await triggerResp.json();
         const runId = triggerJson?.result?.id || triggerJson?.robotRun?.id || triggerJson?.id;
