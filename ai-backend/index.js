@@ -297,7 +297,6 @@ await prisma.propertyFacts.upsert({
   update: {
     leadPhone: phone,
     leadName,
-    property,
     unit,
     link,
     rent,
@@ -306,12 +305,12 @@ await prisma.propertyFacts.upsert({
     parking,
     utilitiesIncluded: utilities_included ?? undefined,
     petsAllowed: pets_allowed ?? undefined,
+    property: { connect: { id: prop.id } },
   },
   create: {
     slug: resolvedSlug,
     leadPhone: phone,
     leadName,
-    property,
     unit,
     link,
     rent,
@@ -320,8 +319,10 @@ await prisma.propertyFacts.upsert({
     parking,
     utilitiesIncluded: utilities_included ?? undefined,
     petsAllowed: pets_allowed ?? undefined,
+    property: { connect: { id: prop.id } },
   },
 });
+
 
     console.log("💾 Saved PropertyFacts in DB and Redis:", resolvedSlug);
     res.json({ ok: true, slug: resolvedSlug });
