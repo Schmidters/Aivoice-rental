@@ -256,7 +256,7 @@ app.get("/debug/browseai", async (req, res) => {
 
   try {
     const resp = await fetch("https://api.browse.ai/v2/robots", {
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: { Authorization: `Bearer ${BROWSEAI_API_KEY}` },
     });
     const data = await resp.json();
     console.log("🤖 BrowseAI /robots test:", data);
