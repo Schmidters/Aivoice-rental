@@ -511,9 +511,7 @@ if (intent === "book_showing" || /\b(?:am|pm|tomorrow|today|\b\d{1,2}[: ]?\d{0,2
 
   console.log(`✅ Booking created at ${startAt.toISO()} (${tz}) for ${from}`);
   return res.status(200).end();
-}
-
-}
+} // ✅ closes the booking-intent if()
 
     const reply = await aiReply({ incomingText, property, intent });
 
