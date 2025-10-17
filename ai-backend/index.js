@@ -240,6 +240,12 @@ async function sendSms(to, body) {
   else msg.from = TWILIO_FROM_NUMBER;
   return twilioClient.messages.create(msg);
 }
+
+console.log("🔑 BrowseAI config:", {
+  key: process.env.BROWSEAI_API_KEY?.slice(0, 10) + "...",
+  robot: process.env.BROWSEAI_ROBOT_ID,
+});
+
 // --- Zapier → /init/facts (enhanced full merge) ---
 app.post("/init/facts", async (req, res) => {
   try {
