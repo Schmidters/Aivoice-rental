@@ -272,7 +272,15 @@ app.post("/init/facts", async (req, res) => {
       );
 
       const triggerJson = await triggerResp.json();
-      const runId = triggerJson?.result?.id;
+      const runId =
+  triggerJson?.result?.id ||
+  triggerJson?.robotRun?.id ||
+  triggerJson?.id ||
+  null;
+  if (!runId) {
+  console.error("❌ Failed to get BrowseAI run ID. Full response:", triggerJson);
+}
+
       console.log("✅ BrowseAI triggered run ID:", runId);
 
       // --- Poll for completion ---
