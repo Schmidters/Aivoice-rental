@@ -113,14 +113,25 @@ async function saveMessage({ phone, role, content, meta, propertySlug }) {
 async function findBestPropertyForLeadFromDB(phone) {
   const lead = await prisma.lead.findUnique({
     where: { phone },
-    include: { properties: { include: { property: true } } },
+    include: {
+      properties: {
+        include: {
+          property: {
+            include: { facts: true }, // ✅ also load BrowseAI facts
+          },
+        },
+      },
+    },
   });
+
   if (lead?.properties?.length) {
     const propIds = lead.properties.map((lp) => lp.propertyId);
-    return prisma.property.findFirst({
+    const prop = await prisma.property.findFirst({
       where: { id: { in: propIds } },
+      include: { facts: true }, // ✅ include full facts object
       orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
     });
+    return prop;
   }
   return null;
 }
@@ -157,22 +168,34 @@ async function detectIntent(text) {
 
 function buildContextFromProperty(property) {
   if (!property) return "";
+
+  const facts = property.facts || {};
   const lines = [];
-  if (property.address) lines.push(`- address: ${property.address}`);
-  if (property.unit) lines.push(`- unit: ${property.unit}`);
-  if (property.rent) lines.push(`- rent: ${property.rent}`);
-  if (property.bedrooms) lines.push(`- bedrooms: ${property.bedrooms}`);
-  if (property.bathrooms) lines.push(`- bathrooms: ${property.bathrooms}`);
-  if (property.parking) lines.push(`- parking: ${property.parking}`);
-  if (property.utilitiesIncluded !== undefined)
-    lines.push(
-      `- utilities included: ${property.utilitiesIncluded ? "yes" : "no"}`
-    );
-  if (property.petsAllowed !== undefined)
-    lines.push(`- pets allowed: ${property.petsAllowed ? "yes" : "no"}`);
-  if (property.link) lines.push(`- listing link: ${property.link}`);
-  return `Property Info:\n${lines.join("\n")}`;
+
+  // --- Basic info ---
+  if (property.address) lines.push(`Address: ${property.address}`);
+  if (facts.propertyName) lines.push(`Property name: ${facts.propertyName}`);
+  if (facts.unit) lines.push(`Unit: ${facts.unit}`);
+  if (facts.rent) lines.push(`Rent: $${facts.rent}`);
+  if (facts.bedrooms) lines.push(`Bedrooms: ${facts.bedrooms}`);
+  if (facts.bathrooms) lines.push(`Bathrooms: ${facts.bathrooms}`);
+  if (facts.sqft) lines.push(`Size: ${facts.sqft} sq ft`);
+  if (facts.parking) lines.push(`Parking: ${facts.parking}`);
+  if (facts.utilitiesIncluded !== undefined)
+    lines.push(`Utilities included: ${facts.utilitiesIncluded ? "yes" : "no"}`);
+  else if (facts.utilities)
+    lines.push(`Utilities: ${facts.utilities}`);
+  if (facts.petsAllowed !== undefined)
+    lines.push(`Pets allowed: ${facts.petsAllowed ? "yes" : "no"}`);
+  if (facts.availability) lines.push(`Availability: ${facts.availability}`);
+  if (facts.amenities) lines.push(`Amenities: ${facts.amenities}`);
+  if (facts.neighbourhood) lines.push(`Neighbourhood: ${facts.neighbourhood}`);
+  if (facts.summary) lines.push(`Summary: ${facts.summary}`);
+  if (facts.link) lines.push(`Listing link: ${facts.link}`);
+
+  return `Property Facts:\n${lines.join("\n")}`;
 }
+
 
 async function aiReply({ incomingText, property, intent }) {
   const context = buildContextFromProperty(property);
