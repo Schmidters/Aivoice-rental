@@ -296,8 +296,8 @@ if (propertyUrl && BROWSEAI_API_KEY && BROWSEAI_ROBOT_ID) {
         Authorization: `Basic ${Buffer.from(BROWSEAI_API_KEY).toString("base64")}`, // ✅ use Basic auth here too
       },
       body: JSON.stringify({
-        inputParameters: { url: propertyUrl },
-      }),
+  inputParameters: { originUrl: propertyUrl },
+}),
     }
   );
 
