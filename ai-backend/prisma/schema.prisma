@@ -37,39 +37,16 @@ model Property {
 }
 
 model PropertyFacts {
-  id             Int        @id @default(autoincrement())
-  slug           String     @unique
-  propertyId     Int?       @unique
-  property       Property?  @relation(fields: [propertyId], references: [id])
+  id          Int       @id @default(autoincrement())
+  slug        String    @unique
+  propertyId  Int?      @unique
+  property    Property? @relation(fields: [propertyId], references: [id])
 
-  // BrowseAI scraped data
-  propertyName   String?
-  unit           String?
-  rent           Float?
-  bedrooms       Int?
-  bathrooms      Int?
-  sqft           Int?            // ✅ optional size/sqft
-  parking        String?
-  utilities      String?
-  utilitiesIncluded Boolean?
-  petsAllowed    Boolean?
-  availability   String?         // ✅ e.g. "Available Nov 1"
-  amenities      String?         // ✅ CSV or plain text
-  summary        String?         // ✅ listing description
-  neighbourhood  String?
-  latitude       Float?
-  longitude      Float?
-  link           String?
+  summary     String?   // full merged text summary for AI
+  rawJson     Json?     // full original BrowseAI payload
 
-  // Owner/lead info
-  leadPhone      String?
-  leadName       String?
-
-  // Catch-all for future BrowseAI payloads
-  rawJson        Json?           // ✅ store entire raw payload safely
-
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }
 
 
