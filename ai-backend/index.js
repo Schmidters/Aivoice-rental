@@ -264,9 +264,10 @@ app.post("/init/facts", async (req, res) => {
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${BROWSEAI_API_KEY}`,
-          },
+  "Content-Type": "application/json",
+  Authorization: BROWSEAI_API_KEY, // 🔧 Remove "Bearer" prefix
+},
+
           body: JSON.stringify({ inputParameters: { url: propertyUrl } }),
         }
       );
