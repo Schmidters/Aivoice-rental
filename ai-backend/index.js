@@ -242,15 +242,18 @@ async function sendSms(to, body) {
 
 // ---------- ROUTES ----------
 // --- Zapier → /init/facts ---
+// --- Zapier → /init/facts ---
 app.post("/init/facts", async (req, res) => {
   try {
-    const { leadPhone, leadName, property, unit, link, slug } = req.body || {};
+    const { leadPhone, property, link, slug } = req.body || {};
     if (!leadPhone || !property)
       return res.status(400).json({ ok: false, error: "Missing leadPhone or property" });
 
     console.log("📦 Received property facts:", req.body);
+
     const phone = normalizePhone(leadPhone);
     const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
+
     const lead = await upsertLeadByPhone(phone);
     const prop = await upsertPropertyBySlug(resolvedSlug, property);
     await linkLeadToProperty(lead.id, prop.id);
@@ -264,20 +267,16 @@ app.post("/init/facts", async (req, res) => {
       )
       .join("\n");
 
-    // --- Save to DB (simplified model) ---
+    // --- Save to DB (only valid schema fields) ---
     await prisma.propertyFacts.upsert({
       where: { slug: resolvedSlug },
       update: {
-        unit,
-        link,
-        summary: mergedSummary,   // combined text for AI
-        rawJson: req.body,        // full original BrowseAI payload
+        summary: mergedSummary,
+        rawJson: req.body,
         property: { connect: { id: prop.id } },
       },
       create: {
         slug: resolvedSlug,
-        unit,
-        link,
         summary: mergedSummary,
         rawJson: req.body,
         property: { connect: { id: prop.id } },
@@ -292,15 +291,6 @@ app.post("/init/facts", async (req, res) => {
   }
 });
 
-
-app.get("/health", async (_req, res) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.json({ ok: true, db: true, time: nowIso(), env: NODE_ENV });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: String(err) });
-  }
-});
 
 // ---------- Twilio inbound ----------
 app.post("/twilio/sms", async (req, res) => {
