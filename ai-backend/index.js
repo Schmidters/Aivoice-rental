@@ -284,8 +284,6 @@ app.get("/debug/browseai", async (req, res) => {
 
 // --- Zapier → /init/facts (enhanced full merge with BrowseAI webhook) ---
 app.post("/init/facts", async (req, res) => {
-    delete req.headers.authorization; // 🛡️ ensures clean request
-
   try {
     const { leadPhone, property, link, slug } = req.body || {};
     if (!leadPhone || !property)
@@ -307,40 +305,81 @@ app.post("/init/facts", async (req, res) => {
       return res.status(500).json({ ok: false, error: "Missing BrowseAI credentials" });
     }
 
-// ✅ Trigger BrowseAI scrape (async)
-if (propertyUrl) {
-  console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
-  try {
-    const triggerResp = await fetch(
-      `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${BROWSEAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          inputParameters: { originUrl: propertyUrl },
-          webhook: "https://aivoice-rental.onrender.com/browseai/webhook",
-        }),
-      }
+    // 🧩 Auto-detect key format (Bearer vs raw)
+    const useBearer = !BROWSEAI_API_KEY.includes(":");
+    const authHeader = useBearer
+      ? `Bearer ${BROWSEAI_API_KEY}`
+      : BROWSEAI_API_KEY;
+
+    console.log(
+      `🔐 Using ${useBearer ? "Bearer" : "raw"} key mode for BrowseAI (length ${BROWSEAI_API_KEY.length})`
     );
 
-    const triggerJson = await triggerResp.json();
-    const runId =
-      triggerJson?.result?.id ||
-      triggerJson?.robotRun?.id ||
-      triggerJson?.id;
+    // ✅ Trigger BrowseAI scrape (async)
+    if (propertyUrl) {
+      console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
+      try {
+        const triggerResp = await fetch(
+          `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": authHeader,
+            },
+            body: JSON.stringify({
+              inputParameters: { originUrl: propertyUrl },
+              webhook: "https://aivoice-rental.onrender.com/browseai/webhook",
+            }),
+          }
+        );
 
-    if (!runId) {
-      console.error("❌ Failed to start BrowseAI run:", triggerJson);
-    } else {
-      console.log(`✅ BrowseAI run started (ID: ${runId}) — waiting for webhook callback...`);
+        const triggerJson = await triggerResp.json();
+        const runId =
+          triggerJson?.result?.id ||
+          triggerJson?.robotRun?.id ||
+          triggerJson?.id;
+
+        if (!runId) {
+          console.error("❌ Failed to start BrowseAI run:", triggerJson);
+        } else {
+          console.log(`✅ BrowseAI run started (ID: ${runId}) — waiting for webhook callback...`);
+        }
+      } catch (err) {
+        console.error("❌ BrowseAI API error:", err);
+      }
     }
+
+    // 💾 Save initial (Zapier) data while BrowseAI runs
+    const phone = normalizePhone(leadPhone);
+    const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
+
+    const lead = await upsertLeadByPhone(phone);
+    const prop = await upsertPropertyBySlug(resolvedSlug, property);
+    await linkLeadToProperty(lead.id, prop.id);
+
+    await prisma.propertyFacts.upsert({
+      where: { slug: resolvedSlug },
+      update: {
+        summary: `Initial Zapier data received for ${property}`,
+        rawJson: { zapier: req.body },
+        property: { connect: { id: prop.id } },
+      },
+      create: {
+        slug: resolvedSlug,
+        summary: `Initial Zapier data received for ${property}`,
+        rawJson: { zapier: req.body },
+        property: { connect: { id: prop.id } },
+      },
+    });
+
+    console.log(`💾 Saved initial PropertyFacts (Zapier only): ${resolvedSlug}`);
+    res.json({ ok: true, slug: resolvedSlug });
   } catch (err) {
-    console.error("❌ BrowseAI API error:", err);
-  } // ✅ properly closes the try
-}
+    console.error("❌ /init/facts error:", err);
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
 
 
 
