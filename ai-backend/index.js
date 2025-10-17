@@ -305,45 +305,41 @@ app.post("/init/facts", async (req, res) => {
       return res.status(500).json({ ok: false, error: "Missing BrowseAI credentials" });
     }
 
-    // ✅ Trigger BrowseAI scrape (async)
- console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
-
-// 👇 Add these two lines for diagnostics
-console.log("🔐 Raw env var:", process.env.BROWSEAI_API_KEY);
-console.log("🔐 Header being sent:", `Bearer ${process.env.BROWSEAI_API_KEY}`);
-
-try {
-  const triggerResp = await fetch(
-    `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${BROWSEAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        inputParameters: { originUrl: propertyUrl },
-        webhook: "https://aivoice-rental.onrender.com/browseai/webhook",
-      }),
-    }
-  );
-
-
-        const triggerJson = await triggerResp.json();
-        const runId =
-          triggerJson?.result?.id ||
-          triggerJson?.robotRun?.id ||
-          triggerJson?.id;
-
-        if (!runId) {
-          console.error("❌ Failed to start BrowseAI run:", triggerJson);
-        } else {
-          console.log(`✅ BrowseAI run started (ID: ${runId}) — waiting for webhook callback...`);
-        }
-      } catch (err) {
-        console.error("❌ BrowseAI API error:", err);
+    // ✅ Trigger BrowseAI scrape (async)// ✅ Trigger BrowseAI scrape (async)
+if (propertyUrl) {
+  console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
+  try {
+    const triggerResp = await fetch(
+      `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${BROWSEAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          inputParameters: { originUrl: propertyUrl },
+          webhook: "https://aivoice-rental.onrender.com/browseai/webhook",
+        }),
       }
+    );
+
+    const triggerJson = await triggerResp.json();
+    const runId =
+      triggerJson?.result?.id ||
+      triggerJson?.robotRun?.id ||
+      triggerJson?.id;
+
+    if (!runId) {
+      console.error("❌ Failed to start BrowseAI run:", triggerJson);
+    } else {
+      console.log(`✅ BrowseAI run started (ID: ${runId}) — waiting for webhook callback...`);
     }
+  } catch (err) {
+    console.error("❌ BrowseAI API error:", err);
+  } // ✅ make sure this closes the try
+}
+
 
     // Save initial (Zapier) data while BrowseAI runs
     const phone = normalizePhone(leadPhone);
