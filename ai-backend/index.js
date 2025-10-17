@@ -190,7 +190,12 @@ function buildContextFromProperty(property) {
   if (facts.availability) lines.push(`Availability: ${facts.availability}`);
   if (facts.amenities) lines.push(`Amenities: ${facts.amenities}`);
   if (facts.neighbourhood) lines.push(`Neighbourhood: ${facts.neighbourhood}`);
-  if (facts.summary) lines.push(`Summary: ${facts.summary}`);
+
+  // ✅ Use merged summary as the main context body
+  if (facts.summary) {
+    lines.push(`\nFull Listing Summary:\n${facts.summary}`);
+  }
+
   if (facts.link) lines.push(`Listing link: ${facts.link}`);
 
   return `Property Facts:\n${lines.join("\n")}`;
@@ -249,47 +254,37 @@ app.post("/init/facts", async (req, res) => {
     const prop = await upsertPropertyBySlug(resolvedSlug, property);
     await linkLeadToProperty(lead.id, prop.id);
 
-    const {
-      rent,
-      bedrooms,
-      bathrooms,
-      parking,
-      utilities_included,
-      pets_allowed,
-    } = req.body;
+    // --- Save full BrowseAI payload and merge all fields into summary ---
+const mergedSummary = Object.entries(req.body)
+  .filter(([key, val]) => val && typeof val === "string" && key !== "leadPhone" && key !== "leadName")
+  .map(([key, val]) => `${key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}: ${val}`)
+  .join("\n");
 
-    await prisma.propertyFacts.upsert({
-      where: { slug: resolvedSlug },
-      update: {
-        leadPhone: phone,
-        leadName,
-        unit,
-        link,
-        rent,
-        bedrooms,
-        bathrooms,
-        parking,
-        utilitiesIncluded: utilities_included ?? undefined,
-        petsAllowed: pets_allowed ?? undefined,
-        property: { connect: { id: prop.id } },
-      },
-      create: {
-        slug: resolvedSlug,
-        leadPhone: phone,
-        leadName,
-        unit,
-        link,
-        rent,
-        bedrooms,
-        bathrooms,
-        parking,
-        utilitiesIncluded: utilities_included ?? undefined,
-        petsAllowed: pets_allowed ?? undefined,
-        property: { connect: { id: prop.id } },
-      },
-    });
+await prisma.propertyFacts.upsert({
+  where: { slug: resolvedSlug },
+  update: {
+    leadPhone: phone,
+    leadName,
+    unit,
+    link,
+    summary: mergedSummary,   // ✅ all BrowseAI fields combined
+    rawJson: req.body,        // ✅ store original payload safely
+    property: { connect: { id: prop.id } },
+  },
+  create: {
+    slug: resolvedSlug,
+    leadPhone: phone,
+    leadName,
+    unit,
+    link,
+    summary: mergedSummary,
+    rawJson: req.body,
+    property: { connect: { id: prop.id } },
+  },
+});
 
-    console.log("💾 Saved PropertyFacts:", resolvedSlug);
+console.log("💾 Saved PropertyFacts:", resolvedSlug);
+
     res.json({ ok: true, slug: resolvedSlug });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
