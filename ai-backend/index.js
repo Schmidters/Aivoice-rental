@@ -241,6 +241,7 @@ async function sendSms(to, body) {
 }
 
 // ---------- ROUTES ----------
+// --- Zapier → /init/facts ---
 app.post("/init/facts", async (req, res) => {
   try {
     const { leadPhone, leadName, property, unit, link, slug } = req.body || {};
@@ -254,43 +255,43 @@ app.post("/init/facts", async (req, res) => {
     const prop = await upsertPropertyBySlug(resolvedSlug, property);
     await linkLeadToProperty(lead.id, prop.id);
 
-    // --- Save full BrowseAI payload and merge all fields into summary ---
-const mergedSummary = Object.entries(req.body)
-  .filter(([key, val]) => val && typeof val === "string" && key !== "leadPhone" && key !== "leadName")
-  .map(([key, val]) => `${key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}: ${val}`)
-  .join("\n");
+    // --- Merge all fields into a single summary ---
+    const mergedSummary = Object.entries(req.body)
+      .filter(([key, val]) => val && typeof val === "string")
+      .map(
+        ([key, val]) =>
+          `${key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}: ${val}`
+      )
+      .join("\n");
 
-await prisma.propertyFacts.upsert({
-  where: { slug: resolvedSlug },
-  update: {
-    leadPhone: phone,
-    leadName,
-    unit,
-    link,
-    summary: mergedSummary,   // ✅ all BrowseAI fields combined
-    rawJson: req.body,        // ✅ store original payload safely
-    property: { connect: { id: prop.id } },
-  },
-  create: {
-    slug: resolvedSlug,
-    leadPhone: phone,
-    leadName,
-    unit,
-    link,
-    summary: mergedSummary,
-    rawJson: req.body,
-    property: { connect: { id: prop.id } },
-  },
-});
+    // --- Save to DB (simplified model) ---
+    await prisma.propertyFacts.upsert({
+      where: { slug: resolvedSlug },
+      update: {
+        unit,
+        link,
+        summary: mergedSummary,   // combined text for AI
+        rawJson: req.body,        // full original BrowseAI payload
+        property: { connect: { id: prop.id } },
+      },
+      create: {
+        slug: resolvedSlug,
+        unit,
+        link,
+        summary: mergedSummary,
+        rawJson: req.body,
+        property: { connect: { id: prop.id } },
+      },
+    });
 
-console.log("💾 Saved PropertyFacts:", resolvedSlug);
-
+    console.log("💾 Saved PropertyFacts:", resolvedSlug);
     res.json({ ok: true, slug: resolvedSlug });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
     res.status(500).json({ ok: false, error: String(err) });
   }
 });
+
 
 app.get("/health", async (_req, res) => {
   try {
