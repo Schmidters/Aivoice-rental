@@ -9,6 +9,7 @@ import OpenAI from "openai";
 import twilio from "twilio";
 import dotenv from "dotenv";
 import { PrismaClient } from "@prisma/client";
+import fetch from "node-fetch";
 dotenv.config();
 
 const prisma = new PrismaClient();
@@ -251,73 +252,74 @@ app.post("/init/facts", async (req, res) => {
     console.log("📦 Received property facts:", req.body);
 
     // --- 🔍 Trigger BrowseAI scrape directly ---
-    const BROWSEAI_API_KEY = process.env.BROWSEAI_API_KEY;
-    const BROWSEAI_ROBOT_ID = process.env.BROWSEAI_ROBOT_ID;
-    const propertyUrl = link || req.body.url || null;
-    let resultData = null;
+const BROWSEAI_API_KEY = process.env.BROWSEAI_API_KEY;
+const BROWSEAI_ROBOT_ID = process.env.BROWSEAI_ROBOT_ID;
+const propertyUrl = link || req.body.url || null;
+let resultData = null;
 
-    if (propertyUrl && BROWSEAI_API_KEY && BROWSEAI_ROBOT_ID) {
-      console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
+if (propertyUrl && BROWSEAI_API_KEY && BROWSEAI_ROBOT_ID) {
+  console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
 
-      const triggerResp = await fetch(
-        `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
-        {
-          method: "POST",
-          headers: {
-  "Content-Type": "application/json",
-  "x-api-key": BROWSEAI_API_KEY,
-},
+  const triggerResp = await fetch(
+    `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Basic ${Buffer.from(BROWSEAI_API_KEY).toString("base64")}`, // ✅ use Basic auth here too
+      },
+      body: JSON.stringify({
+        inputParameters: { url: propertyUrl },
+      }),
+    }
+  );
 
+  const triggerJson = await triggerResp.json();
+  const runId =
+    triggerJson?.result?.id ||
+    triggerJson?.robotRun?.id ||
+    triggerJson?.id ||
+    null;
 
-          body: JSON.stringify({ inputParameters: { url: propertyUrl } }),
-        }
-      );
-
-      const triggerJson = await triggerResp.json();
-      const runId =
-  triggerJson?.result?.id ||
-  triggerJson?.robotRun?.id ||
-  triggerJson?.id ||
-  null;
   if (!runId) {
-  console.error("❌ Failed to get BrowseAI run ID. Full response:", triggerJson);
+    console.error("❌ Failed to get BrowseAI run ID. Full response:", triggerJson);
+  } else {
+    console.log("✅ BrowseAI triggered run ID:", runId);
+  }
+
+  // --- Poll for completion ---
+  for (let i = 0; i < 12; i++) {
+    await new Promise((r) => setTimeout(r, 10000));
+    const statusResp = await fetch(
+      `https://api.browse.ai/v2/robot-runs/${runId}`,
+      {
+        headers: {
+          Authorization: `Basic ${Buffer.from(BROWSEAI_API_KEY).toString("base64")}`, // ✅ consistent here
+        },
+      }
+    );
+    const statusJson = await statusResp.json();
+
+    if (statusJson?.result?.status === "completed") {
+      resultData = statusJson?.result?.capturedLists?.[0]?.items?.[0];
+      console.log("✅ BrowseAI scrape completed");
+      break;
+    }
+    console.log("⏳ Waiting for BrowseAI to finish...");
+  }
+
+  if (resultData) {
+    const merged = Object.entries(resultData)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("\n");
+
+    req.body.browseai_summary = merged;
+    console.log("🧩 Merged BrowseAI data into summary (preview):", merged.slice(0, 200));
+  } else {
+    console.warn("⚠️ BrowseAI scrape timed out or returned no data.");
+  }
 }
 
-      console.log("✅ BrowseAI triggered run ID:", runId);
-
-      // --- Poll for completion ---
-      for (let i = 0; i < 12; i++) {
-        await new Promise((r) => setTimeout(r, 10000));
-        const statusResp = await fetch(
-          `https://api.browse.ai/v2/robot-runs/${runId}`,
-          {
-            headers: { Authorization: `Bearer ${BROWSEAI_API_KEY}` },
-          }
-        );
-        const statusJson = await statusResp.json();
-
-        if (statusJson?.result?.status === "completed") {
-          resultData = statusJson?.result?.capturedLists?.[0]?.items?.[0];
-          console.log("✅ BrowseAI scrape completed");
-          break;
-        }
-        console.log("⏳ Waiting for BrowseAI to finish...");
-      }
-
-      if (resultData) {
-        const merged = Object.entries(resultData)
-          .map(([k, v]) => `${k}: ${v}`)
-          .join("\n");
-
-        req.body.browseai_summary = merged;
-        console.log(
-          "🧩 Merged BrowseAI data into summary (preview):",
-          merged.slice(0, 200)
-        );
-      } else {
-        console.warn("⚠️ BrowseAI scrape timed out or returned no data.");
-      }
-    }
 
     const phone = normalizePhone(leadPhone);
     const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
