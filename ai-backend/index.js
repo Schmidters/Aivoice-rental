@@ -281,7 +281,7 @@ app.post("/init/facts", async (req, res) => {
     // --- 🔍 Trigger BrowseAI scrape directly ---
 // --- 🔍 Trigger BrowseAI scrape directly ---
 // NOTE: TEMPORARY HARDCODED KEY TO ISOLATE ENVIRONMENT VARIABLE ISSUE
-const BROWSEAI_API_KEY = "d1d34d0b-f6c6-4175-bc67-38087cbca5e4"; // <-- USE THE CLEAN KEY HERE
+const BROWSEAI_API_KEY = "d1d34d0b-f6c6-4175-bc67-38087cbca5e4"; // <-- INSERT THE CLEAN KEY HERE
 const BROWSEAI_ROBOT_ID = process.env.BROWSEAI_ROBOT_ID;
 const propertyUrl = link || req.body.url || null;
 let resultData = null;
