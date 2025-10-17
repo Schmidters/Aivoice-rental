@@ -305,7 +305,7 @@ app.post("/init/facts", async (req, res) => {
       return res.status(500).json({ ok: false, error: "Missing BrowseAI credentials" });
     }
 
-    // ✅ Trigger BrowseAI scrape (async)// ✅ Trigger BrowseAI scrape (async)
+// ✅ Trigger BrowseAI scrape (async)
 if (propertyUrl) {
   console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
   try {
@@ -337,8 +337,9 @@ if (propertyUrl) {
     }
   } catch (err) {
     console.error("❌ BrowseAI API error:", err);
-  } // ✅ make sure this closes the try
+  } // ✅ properly closes the try
 }
+
 
 
     // Save initial (Zapier) data while BrowseAI runs
