@@ -248,13 +248,19 @@ console.log("🔑 BrowseAI config:", {
 
 // --- Quick debug route to verify BrowseAI API connectivity ---
 app.get("/debug/browseai", async (req, res) => {
-  const apiKey = process.env.BROWSEAI_API_KEY;
+  let apiKey = process.env.BROWSEAI_API_KEY;
   const robotId = process.env.BROWSEAI_ROBOT_ID;
+
   if (!apiKey || !robotId) {
     return res.status(400).json({ error: "Missing API key or robot ID in env" });
   }
 
-  // 🟡 DEBUG LOG — shows what's actually being sent
+  // 🟡 Clean up quotes if Render or dotenv added them
+  if (apiKey.startsWith('"') && apiKey.endsWith('"')) {
+    apiKey = apiKey.slice(1, -1);
+  }
+
+  // 🧩 Debug log to confirm what’s being sent
   console.log("🔍 Using BrowseAI API key:", apiKey);
   console.log("🧩 Key length:", apiKey.length);
 
@@ -262,7 +268,7 @@ app.get("/debug/browseai", async (req, res) => {
     const resp = await fetch("https://api.browse.ai/v2/robots", {
       method: "GET",
       headers: {
-        "Authorization": `${apiKey}`, // ❌ no "Bearer" prefix
+        "Authorization": `${apiKey}`, // no Bearer prefix!
         "Accept": "application/json",
       },
     });
@@ -276,7 +282,6 @@ app.get("/debug/browseai", async (req, res) => {
   }
 });
 
-
 // --- Zapier → /init/facts (enhanced full merge with BrowseAI webhook) ---
 app.post("/init/facts", async (req, res) => {
   try {
@@ -286,7 +291,12 @@ app.post("/init/facts", async (req, res) => {
 
     console.log("📦 Received property facts:", req.body);
 
-    const BROWSEAI_API_KEY = process.env.BROWSEAI_API_KEY;
+    // 🟡 Clean API key in case it's quoted
+    let BROWSEAI_API_KEY = process.env.BROWSEAI_API_KEY;
+    if (BROWSEAI_API_KEY?.startsWith('"') && BROWSEAI_API_KEY?.endsWith('"')) {
+      BROWSEAI_API_KEY = BROWSEAI_API_KEY.slice(1, -1);
+    }
+
     const BROWSEAI_ROBOT_ID = process.env.BROWSEAI_ROBOT_ID;
     const propertyUrl = link || req.body.url || null;
 
@@ -295,27 +305,30 @@ app.post("/init/facts", async (req, res) => {
       return res.status(500).json({ ok: false, error: "Missing BrowseAI credentials" });
     }
 
-// ✅ Trigger BrowseAI scrape (async)
-if (propertyUrl) {
-  console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
-  try {
-    const triggerResp = await fetch(
-      `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `${BROWSEAI_API_KEY}`, // ✅ no Bearer for team:robot key format
-        },
-        body: JSON.stringify({
-          inputParameters: { originUrl: propertyUrl },
-          webhook: "https://aivoice-rental.onrender.com/browseai/webhook",
-        }),
-      }
-    );
+    // ✅ Trigger BrowseAI scrape (async)
+    if (propertyUrl) {
+      console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
+      try {
+        const triggerResp = await fetch(
+          `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `${BROWSEAI_API_KEY}`, // ✅ no Bearer prefix
+            },
+            body: JSON.stringify({
+              inputParameters: { originUrl: propertyUrl },
+              webhook: "https://aivoice-rental.onrender.com/browseai/webhook",
+            }),
+          }
+        );
 
         const triggerJson = await triggerResp.json();
-        const runId = triggerJson?.result?.id || triggerJson?.robotRun?.id || triggerJson?.id;
+        const runId =
+          triggerJson?.result?.id ||
+          triggerJson?.robotRun?.id ||
+          triggerJson?.id;
 
         if (!runId) {
           console.error("❌ Failed to start BrowseAI run:", triggerJson);
@@ -357,6 +370,7 @@ if (propertyUrl) {
     res.status(500).json({ ok: false, error: String(err) });
   }
 });
+
 
 // --- Browse AI Webhook Listener ---
 app.post("/browseai/webhook", async (req, res) => {
