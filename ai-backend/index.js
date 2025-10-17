@@ -244,6 +244,8 @@ async function sendSms(to, body) {
 // --- Zapier → /init/facts ---
 // --- Zapier → /init/facts ---
 // --- Zapier → /init/facts (enhanced full merge) ---
+// ---------- ROUTES ----------
+// --- Zapier → /init/facts (enhanced full merge) ---
 app.post("/init/facts", async (req, res) => {
   try {
     const { leadPhone, property, link, slug } = req.body || {};
@@ -259,27 +261,43 @@ app.post("/init/facts", async (req, res) => {
     const prop = await upsertPropertyBySlug(resolvedSlug, property);
     await linkLeadToProperty(lead.id, prop.id);
 
-    // --- Deep flatten all nested fields from BrowseAI ---
+    // --- Deep flatten all nested fields from BrowseAI (safe version) ---
     function flatten(obj, prefix = "") {
-      return Object.entries(obj).reduce((acc, [key, val]) => {
-        const cleanKey = prefix ? `${prefix}.${key}` : key;
-        if (val && typeof val === "object" && !Array.isArray(val)) {
-          Object.assign(acc, flatten(val, cleanKey));
-        } else if (Array.isArray(val)) {
-          acc[cleanKey] = val.join(", ");
-        } else if (val !== null && val !== undefined && val !== "") {
-          acc[cleanKey] = val;
-        }
-        return acc;
-      }, {});
+      try {
+        return Object.entries(obj).reduce((acc, [key, val]) => {
+          const cleanKey = prefix ? `${prefix}.${key}` : key;
+          if (val && typeof val === "object" && !Array.isArray(val)) {
+            Object.assign(acc, flatten(val, cleanKey));
+          } else if (Array.isArray(val)) {
+            acc[cleanKey] = val.join(", ");
+          } else if (val !== null && val !== undefined && val !== "") {
+            acc[cleanKey] = val;
+          }
+          return acc;
+        }, {});
+      } catch (err) {
+        console.error("⚠️ Flattening error:", err);
+        return {};
+      }
     }
 
-    const flat = flatten(req.body);
+    let flat = {};
+    try {
+      flat = flatten(req.body);
+    } catch (e) {
+      console.error("⚠️ Failed to flatten payload:", e);
+      flat = req.body;
+    }
 
     // --- Merge everything into summary ---
     const mergedSummary = Object.entries(flat)
       .filter(([_, val]) => typeof val === "string" || typeof val === "number")
-      .map(([key, val]) => `${key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}: ${val}`)
+      .map(
+        ([key, val]) =>
+          `${key
+            .replace(/_/g, " ")
+            .replace(/\b\w/g, (c) => c.toUpperCase())}: ${val}`
+      )
       .join("\n");
 
     // --- Save to DB ---
@@ -305,6 +323,7 @@ app.post("/init/facts", async (req, res) => {
     res.status(500).json({ ok: false, error: String(err) });
   }
 });
+
 
 
 
