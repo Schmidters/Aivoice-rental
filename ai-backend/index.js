@@ -284,6 +284,8 @@ app.get("/debug/browseai", async (req, res) => {
 
 // --- Zapier → /init/facts (enhanced full merge with BrowseAI webhook) ---
 app.post("/init/facts", async (req, res) => {
+    delete req.headers.authorization; // 🛡️ ensures clean request
+
   try {
     const { leadPhone, property, link, slug } = req.body || {};
     if (!leadPhone || !property)
