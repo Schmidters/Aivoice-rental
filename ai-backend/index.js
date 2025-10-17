@@ -243,6 +243,7 @@ async function sendSms(to, body) {
 // ---------- ROUTES ----------
 // --- Zapier → /init/facts ---
 // --- Zapier → /init/facts ---
+// --- Zapier → /init/facts (enhanced full merge) ---
 app.post("/init/facts", async (req, res) => {
   try {
     const { leadPhone, property, link, slug } = req.body || {};
@@ -258,16 +259,30 @@ app.post("/init/facts", async (req, res) => {
     const prop = await upsertPropertyBySlug(resolvedSlug, property);
     await linkLeadToProperty(lead.id, prop.id);
 
-    // --- Merge all fields into a single summary ---
-    const mergedSummary = Object.entries(req.body)
-      .filter(([key, val]) => val && typeof val === "string")
-      .map(
-        ([key, val]) =>
-          `${key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}: ${val}`
-      )
+    // --- Deep flatten all nested fields from BrowseAI ---
+    function flatten(obj, prefix = "") {
+      return Object.entries(obj).reduce((acc, [key, val]) => {
+        const cleanKey = prefix ? `${prefix}.${key}` : key;
+        if (val && typeof val === "object" && !Array.isArray(val)) {
+          Object.assign(acc, flatten(val, cleanKey));
+        } else if (Array.isArray(val)) {
+          acc[cleanKey] = val.join(", ");
+        } else if (val !== null && val !== undefined && val !== "") {
+          acc[cleanKey] = val;
+        }
+        return acc;
+      }, {});
+    }
+
+    const flat = flatten(req.body);
+
+    // --- Merge everything into summary ---
+    const mergedSummary = Object.entries(flat)
+      .filter(([_, val]) => typeof val === "string" || typeof val === "number")
+      .map(([key, val]) => `${key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}: ${val}`)
       .join("\n");
 
-    // --- Save to DB (only valid schema fields) ---
+    // --- Save to DB ---
     await prisma.propertyFacts.upsert({
       where: { slug: resolvedSlug },
       update: {
@@ -283,13 +298,14 @@ app.post("/init/facts", async (req, res) => {
       },
     });
 
-    console.log("💾 Saved PropertyFacts:", resolvedSlug);
+    console.log(`💾 Saved full merged PropertyFacts: ${resolvedSlug}`);
     res.json({ ok: true, slug: resolvedSlug });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
     res.status(500).json({ ok: false, error: String(err) });
   }
 });
+
 
 
 // ---------- Twilio inbound ----------
