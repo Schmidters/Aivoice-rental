@@ -524,6 +524,13 @@ app.post("/twilio/sms", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 V4.5 DB-only backend on :${PORT} (${NODE_ENV})`);
+// ✅ Health check route for Render
+app.get("/", (req, res) => {
+  res.json({ ok: true, service: "ai-backend", time: new Date().toISOString() });
+});
+
+// ✅ Use Render’s assigned port and make sure we listen on all interfaces
+const renderPort = process.env.PORT || 10000;
+app.listen(renderPort, "0.0.0.0", () => {
+  console.log(`🚀 V4.5 DB-only backend on :${renderPort} (${NODE_ENV})`);
 });
