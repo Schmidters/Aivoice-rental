@@ -293,7 +293,7 @@ if (propertyUrl && BROWSEAI_API_KEY && BROWSEAI_ROBOT_ID) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Basic ${Buffer.from(BROWSEAI_API_KEY).toString("base64")}`, // ✅ use Basic auth here too
+        Authorization: `Bearer ${BROWSEAI_API_KEY}`, // ✅ correct for BrowseAI API
       },
       body: JSON.stringify({
   inputParameters: { originUrl: propertyUrl },
@@ -321,7 +321,7 @@ if (propertyUrl && BROWSEAI_API_KEY && BROWSEAI_ROBOT_ID) {
       `https://api.browse.ai/v2/robot-runs/${runId}`,
       {
         headers: {
-          Authorization: `Basic ${Buffer.from(BROWSEAI_API_KEY).toString("base64")}`, // ✅ consistent here
+          Authorization: `Bearer ${BROWSEAI_API_KEY}`, // ✅ correct for BrowseAI API
         },
       }
     );
