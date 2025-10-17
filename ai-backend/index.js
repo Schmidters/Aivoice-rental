@@ -239,20 +239,75 @@ async function sendSms(to, body) {
   else msg.from = TWILIO_FROM_NUMBER;
   return twilioClient.messages.create(msg);
 }
-
-// ---------- ROUTES ----------
-// --- Zapier → /init/facts ---
-// --- Zapier → /init/facts ---
-// --- Zapier → /init/facts (enhanced full merge) ---
-// ---------- ROUTES ----------
 // --- Zapier → /init/facts (enhanced full merge) ---
 app.post("/init/facts", async (req, res) => {
   try {
     const { leadPhone, property, link, slug } = req.body || {};
     if (!leadPhone || !property)
-      return res.status(400).json({ ok: false, error: "Missing leadPhone or property" });
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing leadPhone or property" });
 
     console.log("📦 Received property facts:", req.body);
+
+    // --- 🔍 Trigger BrowseAI scrape directly ---
+    const BROWSEAI_API_KEY = process.env.BROWSEAI_API_KEY;
+    const BROWSEAI_ROBOT_ID = process.env.BROWSEAI_ROBOT_ID;
+    const propertyUrl = link || req.body.url || null;
+    let resultData = null;
+
+    if (propertyUrl && BROWSEAI_API_KEY && BROWSEAI_ROBOT_ID) {
+      console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
+
+      const triggerResp = await fetch(
+        `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${BROWSEAI_API_KEY}`,
+          },
+          body: JSON.stringify({ inputParameters: { url: propertyUrl } }),
+        }
+      );
+
+      const triggerJson = await triggerResp.json();
+      const runId = triggerJson?.result?.id;
+      console.log("✅ BrowseAI triggered run ID:", runId);
+
+      // --- Poll for completion ---
+      for (let i = 0; i < 12; i++) {
+        await new Promise((r) => setTimeout(r, 10000));
+        const statusResp = await fetch(
+          `https://api.browse.ai/v2/robot-runs/${runId}`,
+          {
+            headers: { Authorization: `Bearer ${BROWSEAI_API_KEY}` },
+          }
+        );
+        const statusJson = await statusResp.json();
+
+        if (statusJson?.result?.status === "completed") {
+          resultData = statusJson?.result?.capturedLists?.[0]?.items?.[0];
+          console.log("✅ BrowseAI scrape completed");
+          break;
+        }
+        console.log("⏳ Waiting for BrowseAI to finish...");
+      }
+
+      if (resultData) {
+        const merged = Object.entries(resultData)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join("\n");
+
+        req.body.browseai_summary = merged;
+        console.log(
+          "🧩 Merged BrowseAI data into summary (preview):",
+          merged.slice(0, 200)
+        );
+      } else {
+        console.warn("⚠️ BrowseAI scrape timed out or returned no data.");
+      }
+    }
 
     const phone = normalizePhone(leadPhone);
     const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
@@ -261,7 +316,7 @@ app.post("/init/facts", async (req, res) => {
     const prop = await upsertPropertyBySlug(resolvedSlug, property);
     await linkLeadToProperty(lead.id, prop.id);
 
-    // --- Deep flatten all nested fields from BrowseAI (safe version) ---
+    // --- Flatten helper ---
     function flatten(obj, prefix = "") {
       try {
         return Object.entries(obj).reduce((acc, [key, val]) => {
@@ -281,9 +336,10 @@ app.post("/init/facts", async (req, res) => {
       }
     }
 
+    // --- Deep flatten + merge both Zapier + BrowseAI payloads ---
     let flat = {};
     try {
-      flat = flatten(req.body);
+      flat = flatten({ ...req.body, ...(resultData || {}) }); // ✅ merge both
     } catch (e) {
       console.error("⚠️ Failed to flatten payload:", e);
       flat = req.body;
@@ -305,24 +361,25 @@ app.post("/init/facts", async (req, res) => {
       where: { slug: resolvedSlug },
       update: {
         summary: mergedSummary,
-        rawJson: req.body,
+        rawJson: { zapier: req.body, browseai: resultData },
         property: { connect: { id: prop.id } },
       },
       create: {
         slug: resolvedSlug,
         summary: mergedSummary,
-        rawJson: req.body,
+        rawJson: { zapier: req.body, browseai: resultData },
         property: { connect: { id: prop.id } },
       },
     });
 
-    console.log(`💾 Saved full merged PropertyFacts: ${resolvedSlug}`);
+    console.log(`💾 Saved PropertyFacts (BrowseAI merged): ${resolvedSlug}`);
     res.json({ ok: true, slug: resolvedSlug });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
     res.status(500).json({ ok: false, error: String(err) });
   }
 });
+
 
 
 
