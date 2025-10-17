@@ -246,6 +246,27 @@ console.log("🔑 BrowseAI config:", {
   robot: process.env.BROWSEAI_ROBOT_ID,
 });
 
+// --- Quick debug route to verify BrowseAI API connectivity ---
+app.get("/debug/browseai", async (req, res) => {
+  const apiKey = process.env.BROWSEAI_API_KEY;
+  const robotId = process.env.BROWSEAI_ROBOT_ID;
+  if (!apiKey || !robotId) {
+    return res.status(400).json({ error: "Missing API key or robot ID in env" });
+  }
+
+  try {
+    const resp = await fetch("https://api.browse.ai/v2/robots", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    const data = await resp.json();
+    console.log("🤖 BrowseAI /robots test:", data);
+    res.json(data);
+  } catch (err) {
+    console.error("❌ BrowseAI debug error:", err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // --- Zapier → /init/facts (enhanced full merge) ---
 app.post("/init/facts", async (req, res) => {
   try {
