@@ -282,7 +282,8 @@ app.get("/debug/browseai", async (req, res) => {
   }
 });
 
-// --- Zapier → /init/facts (enhanced full merge with BrowseAI webhook) ---
+// --- Zapier → /init/facts (enhanced direct BrowseAI run, no webhook) ---
+// --- Zapier → /init/facts (enhanced: direct BrowseAI REST API, no webhook) ---
 app.post("/init/facts", async (req, res) => {
   try {
     const { leadPhone, property, link, slug } = req.body || {};
@@ -291,7 +292,7 @@ app.post("/init/facts", async (req, res) => {
 
     console.log("📦 Received property facts:", req.body);
 
-    // 🟡 Clean API key in case it's quoted
+    // 🧩 Clean API key (Render sometimes adds quotes)
     let BROWSEAI_API_KEY = process.env.BROWSEAI_API_KEY;
     if (BROWSEAI_API_KEY?.startsWith('"') && BROWSEAI_API_KEY?.endsWith('"')) {
       BROWSEAI_API_KEY = BROWSEAI_API_KEY.slice(1, -1);
@@ -301,80 +302,121 @@ app.post("/init/facts", async (req, res) => {
     const propertyUrl = link || req.body.url || null;
 
     if (!BROWSEAI_API_KEY || !BROWSEAI_ROBOT_ID) {
-      console.error("❌ Missing BROWSEAI_API_KEY or BROWSEAI_ROBOT_ID env variables");
+      console.error("❌ Missing BrowseAI credentials");
       return res.status(500).json({ ok: false, error: "Missing BrowseAI credentials" });
     }
 
-    // 🧩 Auto-detect key format (Bearer vs raw)
-    const useBearer = !BROWSEAI_API_KEY.includes(":");
-    const authHeader = useBearer
-      ? `Bearer ${BROWSEAI_API_KEY}`
-      : BROWSEAI_API_KEY;
+    // 💾 Save initial (Zapier) data right away
+    const phone = normalizePhone(leadPhone);
+    const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
+    const lead = await upsertLeadByPhone(phone);
+    const prop = await upsertPropertyBySlug(resolvedSlug, property);
+    await linkLeadToProperty(lead.id, prop.id);
 
-    console.log(
-      `🔐 Using ${useBearer ? "Bearer" : "raw"} key mode for BrowseAI (length ${BROWSEAI_API_KEY.length})`
-    );
+    await prisma.propertyFacts.upsert({
+      where: { slug: resolvedSlug },
+      update: {
+        summary: `Initial Zapier data received for ${property}`,
+        rawJson: { zapier: req.body },
+        property: { connect: { id: prop.id } },
+      },
+      create: {
+        slug: resolvedSlug,
+        summary: `Initial Zapier data received for ${property}`,
+        rawJson: { zapier: req.body },
+        property: { connect: { id: prop.id } },
+      },
+    });
 
-    // ✅ Trigger BrowseAI scrape (async)
+    console.log(`💾 Saved initial PropertyFacts (Zapier only): ${resolvedSlug}`);
+
+    // ✅ Trigger BrowseAI directly and wait for data
     if (propertyUrl) {
-      console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
-      try {
-        const triggerResp = await fetch(
-          `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
+      console.log(`⚡ Starting BrowseAI run for: ${propertyUrl}`);
+
+      // --- Step 1: Start run ---
+      const startResp = await fetch(
+        `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${BROWSEAI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            inputParameters: { originUrl: propertyUrl },
+          }),
+        }
+      );
+
+      const startJson = await startResp.json();
+      const runId = startJson?.result?.id || startJson?.id;
+
+      if (!runId) {
+        console.error("❌ Failed to start BrowseAI run:", startJson);
+      } else {
+        console.log(`✅ BrowseAI run started (ID: ${runId})`);
+      }
+
+      // --- Step 2: Poll until complete ---
+      let attempts = 0;
+      let resultData = null;
+
+      while (attempts < 15) {
+        await new Promise((r) => setTimeout(r, 5000)); // wait 5 sec
+        const statusResp = await fetch(
+          `https://api.browse.ai/v2/robot-runs/${runId}`,
           {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": authHeader,
-            },
-            body: JSON.stringify({
-              inputParameters: { originUrl: propertyUrl },
-              webhook: "https://aivoice-rental.onrender.com/browseai/webhook",
-            }),
+            headers: { "Authorization": `Bearer ${BROWSEAI_API_KEY}` },
           }
         );
+        const statusJson = await statusResp.json();
 
-        const triggerJson = await triggerResp.json();
-        const runId =
-          triggerJson?.result?.id ||
-          triggerJson?.robotRun?.id ||
-          triggerJson?.id;
+        const status = statusJson?.result?.status;
+        console.log(`⏳ BrowseAI run status: ${status} (${attempts + 1}/15)`);
 
-        if (!runId) {
-          console.error("❌ Failed to start BrowseAI run:", triggerJson);
-        } else {
-          console.log(`✅ BrowseAI run started (ID: ${runId}) — waiting for webhook callback...`);
+        if (status === "completed") {
+          resultData =
+            statusJson?.result?.extractedData?.[0] ||
+            statusJson?.result?.capturedLists?.[0]?.items?.[0] ||
+            statusJson?.result?.data;
+          console.log(`✅ BrowseAI run complete for ${propertyUrl}`);
+          break;
+        } else if (status === "failed") {
+          console.error("❌ BrowseAI run failed:", statusJson);
+          break;
         }
-      } catch (err) {
-        console.error("❌ BrowseAI API error:", err);
+
+        attempts++;
+      }
+
+      // --- Step 3: Save final data ---
+      if (resultData) {
+        await prisma.propertyFacts.upsert({
+          where: { slug: resolvedSlug },
+          update: {
+            summary: JSON.stringify(resultData, null, 2).slice(0, 2000),
+            rawJson: { browseai: resultData },
+            updatedAt: new Date(),
+          },
+          create: {
+            slug: resolvedSlug,
+            summary: JSON.stringify(resultData, null, 2).slice(0, 2000),
+            rawJson: { browseai: resultData },
+          },
+        });
+
+        console.log(`💾 [BrowseAI] Saved scraped data for ${resolvedSlug}`);
+      } else {
+        console.warn("⚠️ No BrowseAI data returned after polling.");
       }
     }
 
-    // 💾 Save initial (Zapier) data while BrowseAI runs
-    const phone = normalizePhone(leadPhone);
-    const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
-
-    const lead = await upsertLeadByPhone(phone);
-    const prop = await upsertPropertyBySlug(resolvedSlug, property);
-    await linkLeadToProperty(lead.id, prop.id);
-
-    await prisma.propertyFacts.upsert({
-      where: { slug: resolvedSlug },
-      update: {
-        summary: `Initial Zapier data received for ${property}`,
-        rawJson: { zapier: req.body },
-        property: { connect: { id: prop.id } },
-      },
-      create: {
-        slug: resolvedSlug,
-        summary: `Initial Zapier data received for ${property}`,
-        rawJson: { zapier: req.body },
-        property: { connect: { id: prop.id } },
-      },
+    res.json({
+      ok: true,
+      slug: slug || slugify(link?.split("/").pop() || property),
+      message: "Property data processed successfully",
     });
-
-    console.log(`💾 Saved initial PropertyFacts (Zapier only): ${resolvedSlug}`);
-    res.json({ ok: true, slug: resolvedSlug });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
     res.status(500).json({ ok: false, error: String(err) });
@@ -382,37 +424,6 @@ app.post("/init/facts", async (req, res) => {
 });
 
 
-
-    // Save initial (Zapier) data while BrowseAI runs
-    const phone = normalizePhone(leadPhone);
-    const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
-
-    const lead = await upsertLeadByPhone(phone);
-    const prop = await upsertPropertyBySlug(resolvedSlug, property);
-    await linkLeadToProperty(lead.id, prop.id);
-
-    await prisma.propertyFacts.upsert({
-      where: { slug: resolvedSlug },
-      update: {
-        summary: `Initial Zapier data received for ${property}`,
-        rawJson: { zapier: req.body },
-        property: { connect: { id: prop.id } },
-      },
-      create: {
-        slug: resolvedSlug,
-        summary: `Initial Zapier data received for ${property}`,
-        rawJson: { zapier: req.body },
-        property: { connect: { id: prop.id } },
-      },
-    });
-
-    console.log(`💾 Saved initial PropertyFacts (Zapier only): ${resolvedSlug}`);
-    res.json({ ok: true, slug: resolvedSlug });
-  } catch (err) {
-    console.error("❌ /init/facts error:", err);
-    res.status(500).json({ ok: false, error: String(err) });
-  }
-});
 
 
 // --- Browse AI Webhook Listener ---
