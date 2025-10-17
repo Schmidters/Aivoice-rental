@@ -268,7 +268,7 @@ app.get("/debug/browseai", async (req, res) => {
     const resp = await fetch("https://api.browse.ai/v2/robots", {
       method: "GET",
       headers: {
-        "Authorization": `${apiKey}`, // no Bearer prefix!
+        "Authorization": `Bearer ${apiKey}`, // no Bearer prefix!
         "Accept": "application/json",
       },
     });
@@ -315,7 +315,7 @@ app.post("/init/facts", async (req, res) => {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": `${BROWSEAI_API_KEY}`, // ✅ no Bearer prefix
+              "Authorization": `Bearer ${BROWSEAI_API_KEY}`, // ✅ no Bearer prefix
             },
             body: JSON.stringify({
               inputParameters: { originUrl: propertyUrl },
