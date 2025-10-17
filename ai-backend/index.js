@@ -279,12 +279,15 @@ app.post("/init/facts", async (req, res) => {
     console.log("📦 Received property facts:", req.body);
 
     // --- 🔍 Trigger BrowseAI scrape directly ---
-const BROWSEAI_API_KEY = process.env.BROWSEAI_API_KEY;
+// --- 🔍 Trigger BrowseAI scrape directly ---
+// NOTE: TEMPORARY HARDCODED KEY TO ISOLATE ENVIRONMENT VARIABLE ISSUE
+const BROWSEAI_API_KEY = "d1d34d0b-f6c6-4175-bc67-38087cbca5e4"; // <-- USE THE CLEAN KEY HERE
 const BROWSEAI_ROBOT_ID = process.env.BROWSEAI_ROBOT_ID;
 const propertyUrl = link || req.body.url || null;
 let resultData = null;
 
 if (propertyUrl && BROWSEAI_API_KEY && BROWSEAI_ROBOT_ID) {
+// ...
   console.log("🟡 Triggering BrowseAI scrape for:", propertyUrl);
 
   const triggerResp = await fetch(
