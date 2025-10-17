@@ -254,10 +254,19 @@ app.get("/debug/browseai", async (req, res) => {
     return res.status(400).json({ error: "Missing API key or robot ID in env" });
   }
 
+  // 🟡 DEBUG LOG — shows what's actually being sent
+  console.log("🔍 Using BrowseAI API key:", apiKey);
+  console.log("🧩 Key length:", apiKey.length);
+
   try {
-   const resp = await fetch("https://api.browse.ai/v2/robots", {
-  headers: { Authorization: `Bearer ${apiKey}` },
-});
+    const resp = await fetch("https://api.browse.ai/v2/robots", {
+      method: "GET",
+      headers: {
+        "Authorization": `${apiKey}`, // ❌ no "Bearer" prefix
+        "Accept": "application/json",
+      },
+    });
+
     const data = await resp.json();
     console.log("🤖 BrowseAI /robots test:", data);
     res.json(data);
@@ -266,6 +275,7 @@ app.get("/debug/browseai", async (req, res) => {
     res.status(500).json({ error: String(err) });
   }
 });
+
 
 // --- Zapier → /init/facts (enhanced full merge with BrowseAI webhook) ---
 app.post("/init/facts", async (req, res) => {
@@ -295,7 +305,7 @@ if (propertyUrl) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${BROWSEAI_API_KEY}`, // ✅ fixed variable name
+          "Authorization": `${BROWSEAI_API_KEY}`, // ✅ no Bearer for team:robot key format
         },
         body: JSON.stringify({
           inputParameters: { originUrl: propertyUrl },
