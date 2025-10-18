@@ -57,7 +57,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// ✅ Update existing property
+// ✅ Update property by slug
 router.put("/:slug", async (req, res) => {
   try {
     const updated = await prisma.propertyFacts.update({
