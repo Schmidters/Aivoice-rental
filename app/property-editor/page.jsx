@@ -30,12 +30,7 @@ function PropertyEditorContent() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // ... continue here with your existing useEffect for fetching the property,
-  // handleChange(), handleSave(), and return JSX for the form fields.
-}
-
-
-  // Load the property by slug
+  // ✅ Everything below stays INSIDE the function
   useEffect(() => {
     if (!slugFromUrl) return;
     const loadProperty = async () => {
@@ -43,11 +38,8 @@ function PropertyEditorContent() {
       try {
         const res = await fetch(`/api/property-editor/${slugFromUrl}`);
         const json = await res.json();
-        if (json.ok) {
-          setProperty(json.data);
-        } else {
-          toast.error('Property not found');
-        }
+        if (json.ok) setProperty(json.data);
+        else toast.error('Property not found');
       } catch (err) {
         console.error('Error fetching property:', err);
         toast.error('Failed to load property');
@@ -74,22 +66,25 @@ function PropertyEditorContent() {
         body: JSON.stringify({ facts: property }),
       });
       const json = await res.json();
-      if (json.ok) {
-        toast.success('✅ Property updated!');
-      } else {
-        toast.error('Save failed');
-      }
+      if (json.ok) toast.success('✅ Property updated!');
+      else toast.error('Save failed');
     } catch (err) {
       toast.error('Network error saving changes');
     }
     setSaving(false);
   };
 
-  if (loading) return <div className="p-6 text-sm text-gray-500">Loading property…</div>;
+  if (loading)
+    return <div className="p-6 text-sm text-gray-500">Loading property…</div>;
+
   if (!property)
     return (
       <div className="p-6 text-sm text-gray-500">
-        No property selected. Go back to <a href="/properties" className="text-blue-600 underline">Property Data</a>.
+        No property selected. Go back to{' '}
+        <a href="/properties" className="text-blue-600 underline">
+          Property Data
+        </a>
+        .
       </div>
     );
 
