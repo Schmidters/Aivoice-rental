@@ -4,70 +4,80 @@ import { PrismaClient } from "@prisma/client";
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// ✅ Get all properties
+// 🧩 GET all properties
 router.get("/", async (req, res) => {
   try {
-    const data = await prisma.propertyFacts.findMany({
+    const properties = await prisma.propertyFacts.findMany({
       orderBy: { updatedAt: "desc" },
     });
-    res.json({ ok: true, data });
+
+    res.json({
+      ok: true,
+      data: properties.map((p) => ({
+        id: p.id,
+        slug: p.slug,
+        summary: p.notes || "",
+        updatedAt: p.updatedAt,
+        rawJson: p,
+      })),
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, error: "Failed to fetch properties" });
+    console.error("❌ Error loading properties:", err);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// ✅ Get one property by slug
+// 🧩 GET one property by slug
 router.get("/:slug", async (req, res) => {
   try {
-    const data = await prisma.propertyFacts.findUnique({
+    const property = await prisma.propertyFacts.findUnique({
       where: { slug: req.params.slug },
     });
-    if (!data) return res.json({ ok: false, error: "Not found" });
-    res.json({ ok: true, data });
+    if (!property)
+      return res.status(404).json({ ok: false, error: "Property not found" });
+
+    res.json({ ok: true, data: property });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, error: "Failed to fetch property" });
+    console.error("❌ Error fetching property:", err);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// ✅ Create new property
+// 🧩 POST — create new property
 router.post("/", async (req, res) => {
   try {
-    const data = await prisma.propertyFacts.create({
-      data: {
-        slug: req.body.slug || `property-${Date.now()}`,
-        address: req.body.address || null,
-        rent: req.body.rent || null,
-        bedrooms: req.body.bedrooms || null,
-        bathrooms: req.body.bathrooms || null,
-        sqft: req.body.sqft || null,
-        parking: req.body.parking || null,
-        utilities: req.body.utilities || null,
-        availability: req.body.availability || null,
-        petsAllowed: req.body.petsAllowed || false,
-        furnished: req.body.furnished || false,
-        notes: req.body.notes || null,
-      },
+    const data = req.body;
+    if (!data.slug)
+      return res.status(400).json({ ok: false, error: "Slug is required" });
+
+    const created = await prisma.propertyFacts.create({
+      data,
     });
-    res.json({ ok: true, data });
+
+    console.log("💾 [Property Created]", created.slug);
+    res.json({ ok: true, data: created });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, error: "Failed to create property" });
+    console.error("❌ Error creating property:", err);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// ✅ Update property by slug
+// 🧩 PUT — update existing property
 router.put("/:slug", async (req, res) => {
   try {
+    const { slug } = req.params;
+    const data = req.body;
+
     const updated = await prisma.propertyFacts.update({
-      where: { slug: req.params.slug },
-      data: req.body,
+      where: { slug },
+      data,
     });
+
+    console.log("💾 [Property Updated]", slug);
     res.json({ ok: true, data: updated });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, error: "Failed to update property" });
+    console.error("❌ Error updating property:", err);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
