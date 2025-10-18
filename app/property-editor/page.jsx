@@ -53,23 +53,26 @@ function PropertyEditorContent() {
   };
 
   const handleSave = async () => {
-    if (!property) return;
-    setSaving(true);
-    try {
-      const res = await fetch(`${BACKEND}/api/properties/${property.slug}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(property),
-      });
-      const json = await res.json();
-      if (json.ok) toast.success('✅ Property updated!');
-      else toast.error('Save failed');
-    } catch (err) {
-      toast.error('Network error saving changes');
-      console.error(err);
+  if (!property) return;
+  setSaving(true);
+  try {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_AI_BACKEND_URL}/api/properties/${property.slug}`, {
+      method: property.id ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(property),
+    });
+    const json = await res.json();
+    if (json.ok) {
+      toast.success("✅ Property saved!");
+    } else {
+      toast.error("Save failed: " + (json.error || "Unknown error"));
     }
-    setSaving(false);
-  };
+  } catch (err) {
+    toast.error("Network error saving changes");
+  }
+  setSaving(false);
+};
+
 
   if (loading)
     return <div className="p-6 text-sm text-gray-500">Loading property…</div>;

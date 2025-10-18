@@ -31,14 +31,23 @@ export default function PropertyDataPage() {
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Property Data</h1>
-        <button
-          onClick={loadData}
-          className="bg-blue-500 text-white px-3 py-1.5 rounded-md text-sm hover:bg-blue-600"
-        >
-          Refresh
-        </button>
-      </div>
+  <h1 className="text-2xl font-semibold">Property Data</h1>
+  <div className="flex gap-2">
+    <Link
+      href="/property-editor"
+      className="bg-green-500 text-white px-3 py-1.5 rounded-md text-sm hover:bg-green-600"
+    >
+      + New Property
+    </Link>
+    <button
+      onClick={loadData}
+      className="bg-blue-500 text-white px-3 py-1.5 rounded-md text-sm hover:bg-blue-600"
+    >
+      Refresh
+    </button>
+  </div>
+</div>
+
 
       {/* Loading state */}
       {loading ? (

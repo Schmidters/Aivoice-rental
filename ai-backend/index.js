@@ -6,14 +6,24 @@
 
 import express from "express";
 import bodyParser from "body-parser";
+import dotenv from "dotenv";
 import OpenAI from "openai";
 import twilio from "twilio";
-import dotenv from "dotenv";
 import { PrismaClient } from "@prisma/client";
+import propertiesRouter from "./routes/properties.js"; // ✅ import route
 
 dotenv.config();
 
+const app = express();
 const prisma = new PrismaClient();
+
+// Middleware setup
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: false }));
+
+// ✅ Mount the route AFTER app is defined
+app.use("/api/properties", propertiesRouter);
+
 
 // ---------- ENV ----------
 const {

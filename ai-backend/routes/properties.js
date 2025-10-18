@@ -1,34 +1,74 @@
-// ai-backend/routes/properties.js
 import express from "express";
+import { PrismaClient } from "@prisma/client";
 
-export default function makePropertiesRouter(prisma) {
-  const router = express.Router();
+const router = express.Router();
+const prisma = new PrismaClient();
 
-  // GET /api/properties → list all facts (latest first)
-  router.get("/", async (req, res) => {
-    try {
-      const properties = await prisma.propertyFacts.findMany({
-        orderBy: { updatedAt: "desc" },
-      });
-      res.json({ ok: true, data: properties });
-    } catch (err) {
-      console.error("GET /api/properties failed:", err);
-      res.status(500).json({ ok: false, error: "SERVER_ERROR" });
-    }
-  });
+// ✅ Get all properties
+router.get("/", async (req, res) => {
+  try {
+    const data = await prisma.propertyFacts.findMany({
+      orderBy: { updatedAt: "desc" },
+    });
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, error: "Failed to fetch properties" });
+  }
+});
 
-  // GET /api/properties/:slug → single property
-  router.get("/:slug", async (req, res) => {
-    try {
-      const { slug } = req.params;
-      const property = await prisma.propertyFacts.findUnique({ where: { slug } });
-      if (!property) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
-      res.json({ ok: true, data: property });
-    } catch (err) {
-      console.error("GET /api/properties/:slug failed:", err);
-      res.status(500).json({ ok: false, error: "SERVER_ERROR" });
-    }
-  });
+// ✅ Get one property by slug
+router.get("/:slug", async (req, res) => {
+  try {
+    const data = await prisma.propertyFacts.findUnique({
+      where: { slug: req.params.slug },
+    });
+    if (!data) return res.json({ ok: false, error: "Not found" });
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, error: "Failed to fetch property" });
+  }
+});
 
-  return router;
-}
+// ✅ Create new property
+router.post("/", async (req, res) => {
+  try {
+    const data = await prisma.propertyFacts.create({
+      data: {
+        slug: req.body.slug || `property-${Date.now()}`,
+        address: req.body.address || null,
+        rent: req.body.rent || null,
+        bedrooms: req.body.bedrooms || null,
+        bathrooms: req.body.bathrooms || null,
+        sqft: req.body.sqft || null,
+        parking: req.body.parking || null,
+        utilities: req.body.utilities || null,
+        availability: req.body.availability || null,
+        petsAllowed: req.body.petsAllowed || false,
+        furnished: req.body.furnished || false,
+        notes: req.body.notes || null,
+      },
+    });
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, error: "Failed to create property" });
+  }
+});
+
+// ✅ Update existing property
+router.put("/:slug", async (req, res) => {
+  try {
+    const updated = await prisma.propertyFacts.update({
+      where: { slug: req.params.slug },
+      data: req.body,
+    });
+    res.json({ ok: true, data: updated });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, error: "Failed to update property" });
+  }
+});
+
+export default router;
