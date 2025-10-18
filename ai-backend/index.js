@@ -59,6 +59,11 @@ app.use((req, res, next) => {
   next();
 });
 
+// ---------- Property API ----------
+import makePropertiesRouter from "./routes/properties.js";
+app.use("/api/properties", makePropertiesRouter(prisma));
+
+
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
