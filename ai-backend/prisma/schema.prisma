@@ -37,17 +37,28 @@ model Property {
 }
 
 model PropertyFacts {
-  id          Int       @id @default(autoincrement())
-  slug        String    @unique
-  propertyId  Int?      @unique
-  property    Property? @relation(fields: [propertyId], references: [id])
+  id           Int       @id @default(autoincrement())
+  slug         String    @unique
+  propertyId   Int?      @unique
+  property     Property? @relation(fields: [propertyId], references: [id])
 
-  summary     String?   // full merged text summary for AI
-  rawJson     Json?     // full original BrowseAI payload
+  // 👇 Human-entered fields (used by AI)
+  address      String?
+  rent         String?
+  bedrooms     String?
+  bathrooms    String?
+  sqft         String?
+  parking      String?
+  utilities    String?
+  petsAllowed  Boolean?
+  furnished    Boolean?
+  availability String?
+  notes        String?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }
+
 
 
 model Message {
