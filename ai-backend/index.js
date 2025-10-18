@@ -1,6 +1,7 @@
 /**
- * AI Voice Rental — V4.5 (Pure DB-first, no Redis)
- * - Postgres (Prisma) is canonical storage for leads, properties, messages, bookings
+ * Ava V7 — Manual-only backend
+ * - Postgres (Prisma) is canonical storage for leads, properties, messages, bookings, property facts
+ * - NO BrowseAI / NO Zapier; AI replies only use human-entered PropertyFacts fields
  */
 
 import express from "express";
@@ -9,7 +10,7 @@ import OpenAI from "openai";
 import twilio from "twilio";
 import dotenv from "dotenv";
 import { PrismaClient } from "@prisma/client";
-import fetch from "node-fetch";
+
 dotenv.config();
 
 const prisma = new PrismaClient();
@@ -25,12 +26,10 @@ const {
   TWILIO_MESSAGING_SERVICE_SID,
   TWILIO_PHONE_NUMBER,
   TWILIO_FROM_NUMBER: ENV_TWILIO_FROM_NUMBER,
-  HANDOFF_ENABLED: ENV_HANDOFF_ENABLED,
   DASHBOARD_ORIGIN = "*",
 } = process.env;
 
 const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
-const HANDOFF_ENABLED = String(ENV_HANDOFF_ENABLED ?? "true") === "true";
 
 // ---------- GUARDS ----------
 if (!process.env.DATABASE_URL) throw new Error("Missing DATABASE_URL");
@@ -38,7 +37,9 @@ if (!OPENAI_API_KEY) throw new Error("Missing OPENAI_API_KEY");
 if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN)
   throw new Error("Missing Twilio credentials");
 if (!TWILIO_MESSAGING_SERVICE_SID && !TWILIO_FROM_NUMBER)
-  throw new Error("Provide TWILIO_MESSAGING_SERVICE_SID or TWILIO_PHONE_NUMBER/TWILIO_FROM_NUMBER");
+  throw new Error(
+    "Provide TWILIO_MESSAGING_SERVICE_SID or TWILIO_PHONE_NUMBER/TWILIO_FROM_NUMBER"
+  );
 
 // ---------- CORE ----------
 const app = express();
@@ -59,11 +60,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------- Property API ----------
-import makePropertiesRouter from "./routes/properties.js";
-app.use("/api/properties", makePropertiesRouter(prisma));
-
-
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
@@ -76,9 +72,18 @@ const normalizePhone = (num) => {
 };
 const slugify = (s) =>
   (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
-const nowIso = () => new Date().toISOString();
 
-// ---------- DB HELPERS ----------
+// Link a lead to a property (if not already)
+async function linkLeadToProperty(leadId, propertyId) {
+  try {
+    await prisma.leadProperty.upsert({
+      where: { leadId_propertyId: { leadId, propertyId } },
+      update: {},
+      create: { leadId, propertyId },
+    });
+  } catch {}
+}
+
 async function upsertLeadByPhone(phone) {
   return prisma.lead.upsert({
     where: { phone },
@@ -93,70 +98,86 @@ async function upsertPropertyBySlug(slug, address) {
     create: { slug, address },
   });
 }
-async function linkLeadToProperty(leadId, propertyId) {
-  try {
-    await prisma.leadProperty.upsert({
-      where: { leadId_propertyId: { leadId, propertyId } },
-      update: {},
-      create: { leadId, propertyId },
-    });
-  } catch {}
-}
-async function saveMessage({ phone, role, content, meta, propertySlug }) {
+
+async function saveMessage({ phone, role, content, propertyId }) {
   const lead = await upsertLeadByPhone(phone);
-  let prop = null;
-  if (propertySlug) prop = await upsertPropertyBySlug(propertySlug);
   return prisma.message.create({
     data: {
       role,
       content,
-      meta: meta || undefined,
       leadId: lead.id,
-      propertyId: prop?.id ?? null,
+      propertyId: propertyId ?? null,
     },
   });
 }
+
 async function findBestPropertyForLeadFromDB(phone) {
+  // Prefer linked property (via LeadProperty)
   const lead = await prisma.lead.findUnique({
     where: { phone },
     include: {
       properties: {
         include: {
-          property: {
-            include: { facts: true }, // ✅ also load BrowseAI facts
-          },
+          property: { include: { facts: true } },
         },
       },
     },
   });
 
   if (lead?.properties?.length) {
+    // Take most recently updated property with facts if possible
     const propIds = lead.properties.map((lp) => lp.propertyId);
     const prop = await prisma.property.findFirst({
       where: { id: { in: propIds } },
-      include: { facts: true }, // ✅ include full facts object
+      include: { facts: true },
       orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
     });
     return prop;
   }
-  return null;
+
+  // Fallback: just return most recently updated property overall (if any)
+  const any = await prisma.property.findFirst({
+    include: { facts: true },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+  });
+  return any ?? null;
 }
 
-// ---------- INTENT + AI ----------
-const INTENT_LABELS = [
-  "book_showing",
-  "pricing_question",
-  "availability",
-  "parking",
-  "pets",
-  "application_process",
-  "negotiation",
-  "general_info",
-  "spam_or_unknown",
-];
+function buildContextFromProperty(property) {
+  // property.facts contains manual fields (address, rent, bedrooms, etc.)
+  const f = property?.facts || {};
+  const lines = [];
+  const safe = (v, fallback = "N/A") => (v == null || v === "" ? fallback : v);
+
+  lines.push(`Address: ${safe(f.address, property?.address ?? "N/A")}`);
+  lines.push(`Rent: ${safe(f.rent)}`);
+  lines.push(`Bedrooms: ${safe(f.bedrooms)}`);
+  lines.push(`Bathrooms: ${safe(f.bathrooms)}`);
+  lines.push(`Size: ${safe(f.sqft)}`);
+  lines.push(`Parking: ${safe(f.parking)}`);
+  lines.push(`Utilities: ${safe(f.utilities)}`);
+  lines.push(`Pets allowed: ${f.petsAllowed === true ? "Yes" : f.petsAllowed === false ? "No" : "N/A"}`);
+  lines.push(`Furnished: ${f.furnished === true ? "Yes" : f.furnished === false ? "No" : "N/A"}`);
+  lines.push(`Availability: ${safe(f.availability)}`);
+  lines.push(`Notes: ${safe(f.notes, "-")}`);
+
+  return `Property Facts (human-entered):\n${lines.join("\n")}`;
+}
+
 async function detectIntent(text) {
+  const labels = [
+    "book_showing",
+    "pricing_question",
+    "availability",
+    "parking",
+    "pets",
+    "application_process",
+    "negotiation",
+    "general_info",
+    "spam_or_unknown",
+  ];
   try {
-    const sys = `Classify into: ${INTENT_LABELS.join(", ")}. Return ONLY the label.`;
+    const sys = `Classify into: ${labels.join(", ")}. Return ONLY the label.`;
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       temperature: 0,
@@ -166,56 +187,18 @@ async function detectIntent(text) {
       ],
     });
     const label = resp.choices?.[0]?.message?.content?.trim();
-    return INTENT_LABELS.includes(label) ? label : "general_info";
+    return labels.includes(label) ? label : "general_info";
   } catch {
     return "general_info";
   }
 }
 
-function buildContextFromProperty(property) {
-  if (!property) return "";
-
-  const facts = property.facts || {};
-  const lines = [];
-
-  // --- Basic info ---
-  if (property.address) lines.push(`Address: ${property.address}`);
-  if (facts.propertyName) lines.push(`Property name: ${facts.propertyName}`);
-  if (facts.unit) lines.push(`Unit: ${facts.unit}`);
-  if (facts.rent) lines.push(`Rent: $${facts.rent}`);
-  if (facts.bedrooms) lines.push(`Bedrooms: ${facts.bedrooms}`);
-  if (facts.bathrooms) lines.push(`Bathrooms: ${facts.bathrooms}`);
-  if (facts.sqft) lines.push(`Size: ${facts.sqft} sq ft`);
-  if (facts.parking) lines.push(`Parking: ${facts.parking}`);
-  if (facts.utilitiesIncluded !== undefined)
-    lines.push(`Utilities included: ${facts.utilitiesIncluded ? "yes" : "no"}`);
-  else if (facts.utilities)
-    lines.push(`Utilities: ${facts.utilities}`);
-  if (facts.petsAllowed !== undefined)
-    lines.push(`Pets allowed: ${facts.petsAllowed ? "yes" : "no"}`);
-  if (facts.availability) lines.push(`Availability: ${facts.availability}`);
-  if (facts.amenities) lines.push(`Amenities: ${facts.amenities}`);
-  if (facts.neighbourhood) lines.push(`Neighbourhood: ${facts.neighbourhood}`);
-
-  // ✅ Use merged summary as the main context body
-  if (facts.summary) {
-    lines.push(`\nFull Listing Summary:\n${facts.summary}`);
-  }
-
-  if (facts.link) lines.push(`Listing link: ${facts.link}`);
-
-  return `Property Facts:\n${lines.join("\n")}`;
-}
-
-
 async function aiReply({ incomingText, property, intent }) {
   const context = buildContextFromProperty(property);
   const system = `
 You are a friendly, professional leasing assistant.
-Use the provided property facts exactly as written when answering questions.
-If the answer is not in the facts, respond naturally and politely but never invent details.
-Keep replies short (1–2 sentences).
-Never say you're an AI.`;
+Use the provided property facts EXACTLY as written. If a detail is not present, don't invent it.
+Keep replies concise (1–2 sentences). Never say you're an AI.`;
   try {
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
@@ -228,386 +211,210 @@ Never say you're an AI.`;
         },
       ],
     });
-    return (
-      resp.choices?.[0]?.message?.content?.trim() ||
-      "Thanks for reaching out!"
-    );
+    return resp.choices?.[0]?.message?.content?.trim() || "Thanks for reaching out!";
   } catch {
     return "Hey! Thanks for reaching out — when would you like to see the place?";
   }
 }
 
-// ---------- TWILIO ----------
 async function sendSms(to, body) {
   const msg = { to, body };
-  if (TWILIO_MESSAGING_SERVICE_SID)
-    msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
+  if (TWILIO_MESSAGING_SERVICE_SID) msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
   else msg.from = TWILIO_FROM_NUMBER;
   return twilioClient.messages.create(msg);
 }
 
-console.log("🔑 BrowseAI config:", {
-  key: process.env.BROWSEAI_API_KEY?.slice(0, 10) + "...",
-  robot: process.env.BROWSEAI_ROBOT_ID,
+// ---------- ROUTES ----------
+
+// Health
+app.get("/", (req, res) => {
+  res.json({ ok: true, service: "ai-backend-v7", time: new Date().toISOString() });
 });
 
-// --- Quick debug route to verify BrowseAI API connectivity ---
-app.get("/debug/browseai", async (req, res) => {
-  let apiKey = process.env.BROWSEAI_API_KEY;
-  const robotId = process.env.BROWSEAI_ROBOT_ID;
-
-  if (!apiKey || !robotId) {
-    return res.status(400).json({ error: "Missing API key or robot ID in env" });
-  }
-
-  // 🟡 Clean up quotes if Render or dotenv added them
-  if (apiKey.startsWith('"') && apiKey.endsWith('"')) {
-    apiKey = apiKey.slice(1, -1);
-  }
-
-  // 🧩 Debug log to confirm what’s being sent
-  console.log("🔍 Using BrowseAI API key:", apiKey);
-  console.log("🧩 Key length:", apiKey.length);
-
+// Read-only list for dashboard (Property Data tab)
+app.get("/api/properties", async (_req, res) => {
   try {
-    const resp = await fetch("https://api.browse.ai/v2/robots", {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`, // no Bearer prefix!
-        "Accept": "application/json",
-      },
+    const data = await prisma.propertyFacts.findMany({
+      include: { property: true },
+      orderBy: { updatedAt: "desc" },
     });
-
-    const data = await resp.json();
-    console.log("🤖 BrowseAI /robots test:", data);
-    res.json(data);
+    res.json({ ok: true, data });
   } catch (err) {
-    console.error("❌ BrowseAI debug error:", err);
-    res.status(500).json({ error: String(err) });
+    console.error("GET /api/properties failed:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
 
-// --- Zapier → /init/facts (enhanced direct BrowseAI run, no webhook) ---
-// --- Zapier → /init/facts (enhanced: direct BrowseAI REST API, no webhook) ---
-app.post("/init/facts", async (req, res) => {
+// Property Editor — list all properties with facts
+app.get("/api/property-editor", async (_req, res) => {
   try {
-    const { leadPhone, property, link, slug } = req.body || {};
-    if (!leadPhone || !property)
-      return res.status(400).json({ ok: false, error: "Missing leadPhone or property" });
-
-    console.log("📦 Received property facts:", req.body);
-
-    // 🧩 Clean API key (Render sometimes adds quotes)
-    let BROWSEAI_API_KEY = process.env.BROWSEAI_API_KEY;
-    if (BROWSEAI_API_KEY?.startsWith('"') && BROWSEAI_API_KEY?.endsWith('"')) {
-      BROWSEAI_API_KEY = BROWSEAI_API_KEY.slice(1, -1);
-    }
-
-    const BROWSEAI_ROBOT_ID = process.env.BROWSEAI_ROBOT_ID;
-    const propertyUrl = link || req.body.url || null;
-
-    if (!BROWSEAI_API_KEY || !BROWSEAI_ROBOT_ID) {
-      console.error("❌ Missing BrowseAI credentials");
-      return res.status(500).json({ ok: false, error: "Missing BrowseAI credentials" });
-    }
-
-    // 💾 Save initial (Zapier) data right away
-    const phone = normalizePhone(leadPhone);
-    const resolvedSlug = slug || slugify(link?.split("/").pop() || property);
-    const lead = await upsertLeadByPhone(phone);
-    const prop = await upsertPropertyBySlug(resolvedSlug, property);
-    await linkLeadToProperty(lead.id, prop.id);
-
-    await prisma.propertyFacts.upsert({
-      where: { slug: resolvedSlug },
-      update: {
-        summary: `Initial Zapier data received for ${property}`,
-        rawJson: { zapier: req.body },
-        property: { connect: { id: prop.id } },
-      },
-      create: {
-        slug: resolvedSlug,
-        summary: `Initial Zapier data received for ${property}`,
-        rawJson: { zapier: req.body },
-        property: { connect: { id: prop.id } },
-      },
+    const data = await prisma.property.findMany({
+      include: { facts: true },
+      orderBy: { updatedAt: "desc" },
     });
-
-    console.log(`💾 Saved initial PropertyFacts (Zapier only): ${resolvedSlug}`);
-
-    // ✅ Trigger BrowseAI directly and wait for data
-    if (propertyUrl) {
-      console.log(`⚡ Starting BrowseAI run for: ${propertyUrl}`);
-
-      // --- Step 1: Start run ---
-      const startResp = await fetch(
-        `https://api.browse.ai/v2/robots/${BROWSEAI_ROBOT_ID}/run`,
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${BROWSEAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            inputParameters: { originUrl: propertyUrl },
-          }),
-        }
-      );
-
-      const startJson = await startResp.json();
-      const runId = startJson?.result?.id || startJson?.id;
-
-      if (!runId) {
-        console.error("❌ Failed to start BrowseAI run:", startJson);
-      } else {
-        console.log(`✅ BrowseAI run started (ID: ${runId})`);
-      }
-
-      // --- Step 2: Poll until complete ---
-      let attempts = 0;
-      let resultData = null;
-
-      while (attempts < 15) {
-        await new Promise((r) => setTimeout(r, 5000)); // wait 5 sec
-        const statusResp = await fetch(
-          `https://api.browse.ai/v2/robot-runs/${runId}`,
-          {
-            headers: { "Authorization": `Bearer ${BROWSEAI_API_KEY}` },
-          }
-        );
-        const statusJson = await statusResp.json();
-
-        const status = statusJson?.result?.status;
-        console.log(`⏳ BrowseAI run status: ${status} (${attempts + 1}/15)`);
-
-        if (status === "completed") {
-          resultData =
-            statusJson?.result?.extractedData?.[0] ||
-            statusJson?.result?.capturedLists?.[0]?.items?.[0] ||
-            statusJson?.result?.data;
-          console.log(`✅ BrowseAI run complete for ${propertyUrl}`);
-          break;
-        } else if (status === "failed") {
-          console.error("❌ BrowseAI run failed:", statusJson);
-          break;
-        }
-
-        attempts++;
-      }
-
-      // --- Step 3: Save final data ---
-      if (resultData) {
-        await prisma.propertyFacts.upsert({
-          where: { slug: resolvedSlug },
-          update: {
-            summary: JSON.stringify(resultData, null, 2).slice(0, 2000),
-            rawJson: { browseai: resultData },
-            updatedAt: new Date(),
-          },
-          create: {
-            slug: resolvedSlug,
-            summary: JSON.stringify(resultData, null, 2).slice(0, 2000),
-            rawJson: { browseai: resultData },
-          },
-        });
-
-        console.log(`💾 [BrowseAI] Saved scraped data for ${resolvedSlug}`);
-      } else {
-        console.warn("⚠️ No BrowseAI data returned after polling.");
-      }
-    }
-
-    res.json({
-      ok: true,
-      slug: slug || slugify(link?.split("/").pop() || property),
-      message: "Property data processed successfully",
-    });
+    res.json({ ok: true, data });
   } catch (err) {
-    console.error("❌ /init/facts error:", err);
-    res.status(500).json({ ok: false, error: String(err) });
+    console.error("GET /api/property-editor failed:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
 
-
-
-
-// --- Browse AI Webhook Listener ---
-app.post("/browseai/webhook", async (req, res) => {
+// Property Editor — create/update property + facts (manual entry)
+app.post("/api/property-editor", async (req, res) => {
   try {
-    console.log("📥 [BrowseAI Webhook] Payload:", JSON.stringify(req.body, null, 2));
-    res.status(200).json({ ok: true }); // Respond immediately
+    const { slug: rawSlug, address, facts = {} } = req.body || {};
+    if (!rawSlug) return res.status(400).json({ ok: false, error: "MISSING_SLUG" });
 
-    const result = req.body?.result;
-    if (!result) {
-      console.warn("⚠️ No result in webhook payload");
-      return;
-    }
+    const slug = slugify(rawSlug);
+    const property = await upsertPropertyBySlug(slug, address);
 
-    const propertyUrl =
-      result?.run?.input?.originUrl ||
-      result?.run?.input?.url ||
-      "unknown-url";
-    const propertySlug = slugify(propertyUrl);
-    const resultData =
-      result?.extractedData?.[0] ||
-      result?.capturedLists?.[0]?.items?.[0] ||
-      result?.data ||
-      {};
-
-    await prisma.propertyFacts.upsert({
-      where: { slug: propertySlug },
-      update: {
-        summary: JSON.stringify(resultData, null, 2).slice(0, 2000),
-        rawJson: { browseai: result },
-        updatedAt: new Date(),
-      },
-      create: {
-        slug: propertySlug,
-        summary: JSON.stringify(resultData, null, 2).slice(0, 2000),
-        rawJson: { browseai: result },
-      },
+    // Ensure facts row exists & update with manual fields only
+    const updatedFacts = await prisma.propertyFacts.upsert({
+      where: { propertyId: property.id },
+      update: { ...facts, address: facts.address ?? address, updatedAt: new Date() },
+      create: { propertyId: property.id, slug, address: facts.address ?? address, ...facts },
     });
 
-    console.log(`💾 [BrowseAI] Saved property data for ${propertySlug}`);
+    res.json({ ok: true, data: { property, facts: updatedFacts } });
   } catch (err) {
-    console.error("❌ [BrowseAI Webhook Error]:", err);
+    console.error("POST /api/property-editor failed:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
 
+// Property Editor — update facts for specific property
+app.put("/api/property-editor/:slug", async (req, res) => {
+  try {
+    const slug = slugify(req.params.slug);
+    const { facts = {} } = req.body || {};
 
+    const property = await prisma.property.findUnique({ where: { slug } });
+    if (!property) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
 
+    const updated = await prisma.propertyFacts.upsert({
+      where: { propertyId: property.id },
+      update: { ...facts, updatedAt: new Date() },
+      create: { propertyId: property.id, slug, ...facts },
+    });
 
+    res.json({ ok: true, data: updated });
+  } catch (err) {
+    console.error("PUT /api/property-editor/:slug failed:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+  }
+});
 
-// ---------- Twilio inbound ----------
+// Bookings (kept minimal so your dashboard keeps working)
+app.get("/api/bookings", async (_req, res) => {
+  try {
+    const list = await prisma.booking.findMany({
+      include: { property: true, lead: true },
+      orderBy: { id: "desc" },
+      take: 100,
+    });
+    res.json({ ok: true, data: list });
+  } catch (err) {
+    console.error("GET /api/bookings failed:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+  }
+});
+
+// Lightweight SSE for bookings "events" (heartbeat)
+app.get("/api/bookings/events", async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  const iv = setInterval(() => {
+    res.write(`event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+  }, 15000);
+
+  req.on("close", () => clearInterval(iv));
+});
+
+// ---------- Twilio inbound (AI reply uses ONLY manual facts) ----------
 app.post("/twilio/sms", async (req, res) => {
   try {
-    console.log("📩 Raw Twilio webhook body:", req.body);
     const from = normalizePhone(req.body.From);
-    const incomingText = req.body.Body?.trim() || "";
+    const incomingText = (req.body.Body || "").trim();
     if (!from || !incomingText) return res.status(400).end();
-    console.log("📩 SMS received from", from, ":", incomingText);
 
-    let property = await findBestPropertyForLeadFromDB(from);
+    // Find or create lead
+    const lead = await upsertLeadByPhone(from);
 
-    // Merge in latest PropertyFacts before AI reply
-    if (property?.slug) {
-      const facts = await prisma.propertyFacts.findUnique({
-        where: { slug: property.slug },
-      });
-      if (facts) Object.assign(property, facts);
-    }
+    // Choose property for this lead
+    const property = await findBestPropertyForLeadFromDB(from);
+
+    // If no property linked yet but message mentions an address-like snippet, you could:
+    // - parse and link here (omitted for V7 minimalism)
 
     const intent = await detectIntent(incomingText);
 
-    // --- Booking intent handler ---
+    // Booking short-circuit (kept from V6 but simplified)
     if (
       intent === "book_showing" ||
       /\b(?:am|pm|tomorrow|today|\b\d{1,2}[: ]?\d{0,2}\b)\b/i.test(incomingText)
     ) {
       const { DateTime } = await import("luxon");
-      let tz = "America/Edmonton";
-      if (property?.address) {
-        const addr = property.address.toLowerCase();
-        if (addr.includes("vancouver") || addr.includes("british columbia"))
-          tz = "America/Vancouver";
-        else if (addr.includes("toronto") || addr.includes("ontario"))
-          tz = "America/Toronto";
-        else if (addr.includes("winnipeg") || addr.includes("manitoba"))
-          tz = "America/Winnipeg";
-        else if (addr.includes("halifax") || addr.includes("nova scotia"))
-          tz = "America/Halifax";
-        else if (addr.includes("saskatoon") || addr.includes("regina"))
-          tz = "America/Regina";
-      }
+      const tz = "America/Edmonton"; // Keep simple default for V7; you can refine by city later
 
-      const timeMatch = incomingText.match(
-        /\b(\d{1,2})(?::?(\d{2}))?\s*(am|pm)?\b/i
-      );
-      if (!timeMatch) {
+      // naive time parse
+      const m = incomingText.match(/\b(\d{1,2})(?::?(\d{2}))?\s*(am|pm)?\b/i);
+      if (!m) {
         await sendSms(from, "What time works best for you? (e.g., 'Sat 10:30am')");
         return res.status(200).end();
       }
+      let hour = parseInt(m[1], 10);
+      const minute = parseInt(m[2] || "0", 10);
+      const mer = (m[3] || "").toLowerCase();
+      if (mer === "pm" && hour < 12) hour += 12;
+      if (mer === "am" && hour === 12) hour = 0;
 
       let when = DateTime.now().setZone(tz);
-      const msg = incomingText.toLowerCase();
-      if (msg.includes("tomorrow")) when = when.plus({ days: 1 });
-      if (msg.includes("next week")) when = when.plus({ days: 7 });
+      if (incomingText.toLowerCase().includes("tomorrow")) when = when.plus({ days: 1 });
 
-      const hour = parseInt(timeMatch[1]);
-      const minute = parseInt(timeMatch[2] || "0");
-      const meridian = (timeMatch[3] || "").toLowerCase();
-      let hour24 = hour;
-      if (meridian === "pm" && hour < 12) hour24 = hour + 12;
-      if (meridian === "am" && hour === 12) hour24 = 0;
+      const startAt = when.set({ hour, minute }).startOf("minute");
 
-      const startAt = when.set({ hour: hour24, minute }).startOf("minute");
-
-      const conflict = await prisma.booking.findFirst({
-        where: {
-          property: { id: property?.id },
-          startAt: {
-            gte: startAt.minus({ minutes: 30 }).toISO(),
-            lte: startAt.plus({ minutes: 30 }).toISO(),
-          },
-          status: { in: ["pending_confirmation", "confirmed"] },
-        },
-      });
-
-      if (conflict) {
-        const nextSlot = startAt.plus({ minutes: 30 });
-        const nextConflict = await prisma.booking.findFirst({
-          where: {
-            property: { id: property?.id },
-            startAt: {
-              gte: nextSlot.minus({ minutes: 30 }).toISO(),
-              lte: nextSlot.plus({ minutes: 30 }).toISO(),
-            },
-            status: { in: ["pending_confirmation", "confirmed"] },
-          },
-        });
-
-        if (!nextConflict) {
-          await sendSms(
-            from,
-            `Someone’s already booked near ${startAt.toFormat(
-              "ccc, LLL d 'at' h:mm a"
-            )}. I can offer ${nextSlot.toFormat(
-              "h:mm a"
-            )} instead — does that work?`
-          );
-        } else {
-          await sendSms(
-            from,
-            `Looks like that time’s taken. Would you like to try a different day or time?`
-          );
-        }
-        return res.status(200).end();
-      }
-
-      await prisma.booking.create({
+      const created = await prisma.booking.create({
         data: {
           phone: from,
           property: property ? { connect: { id: property.id } } : undefined,
-          startAt: startAt.toISO(),
-          timezone: tz,
+          datetime: startAt.toJSDate(),
           source: "sms",
-          status: "pending_confirmation",
         },
+      });
+
+      await saveMessage({
+        phone: from,
+        role: "user",
+        content: incomingText,
+        propertyId: property?.id,
+      });
+      await saveMessage({
+        phone: from,
+        role: "assistant",
+        content: `Booked ${startAt.toFormat("cccc, LLL d 'at' h:mm a")} (${tz.replace("America/", "")}).`,
+        propertyId: property?.id,
       });
 
       await sendSms(
         from,
-        `Perfect — you're booked for ${startAt.toFormat(
-          "cccc, LLL d 'at' h:mm a"
-        )} (${tz.replace("America/", "")}). See you then!`
+        `Perfect — you're booked for ${startAt.toFormat("cccc, LLL d 'at' h:mm a")} (${tz.replace(
+          "America/",
+          ""
+        )}).`
       );
-      console.log(`✅ Booking created at ${startAt.toISO()} (${tz}) for ${from}`);
+
+      console.log(`✅ Booking created for ${from} at ${startAt.toISO()}`);
       return res.status(200).end();
     }
 
+    // Normal AI reply (manual facts only)
     const reply = await aiReply({ incomingText, property, intent });
-    await saveMessage({ phone: from, role: "user", content: incomingText, propertySlug: property?.slug });
-    await saveMessage({ phone: from, role: "assistant", content: reply, propertySlug: property?.slug });
+
+    await saveMessage({ phone: from, role: "user", content: incomingText, propertyId: property?.id });
+    await saveMessage({ phone: from, role: "assistant", content: reply, propertyId: property?.id });
     await sendSms(from, reply);
 
     console.log("💬 AI reply sent to", from, ":", reply);
@@ -618,13 +425,8 @@ app.post("/twilio/sms", async (req, res) => {
   }
 });
 
-// ✅ Health check route for Render
-app.get("/", (req, res) => {
-  res.json({ ok: true, service: "ai-backend", time: new Date().toISOString() });
-});
-
-// ✅ Use Render’s assigned port and make sure we listen on all interfaces
+// ---------- Server start ----------
 const renderPort = process.env.PORT || 10000;
 app.listen(renderPort, "0.0.0.0", () => {
-  console.log(`🚀 V4.5 DB-only backend on :${renderPort} (${NODE_ENV})`);
+  console.log(`🚀 Ava V7 manual-only backend on :${renderPort} (${NODE_ENV})`);
 });
