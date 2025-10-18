@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import Link from "next/link";
 
 const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
 
@@ -52,27 +53,44 @@ export default function PropertyDataPage() {
                   <th className="text-left px-4 py-2">Slug</th>
                   <th className="text-left px-4 py-2">Summary</th>
                   <th className="text-left px-4 py-2">Updated</th>
+                  <th className="text-left px-4 py-2 w-20">Edit</th>
                 </tr>
               </thead>
               <tbody>
                 {properties.map((p) => (
                   <tr
                     key={p.id}
-                    className="border-t hover:bg-gray-100 cursor-pointer"
+                    className="border-t hover:bg-gray-100"
                     onClick={() => setSelected(p)}
                   >
-                    <td className="px-4 py-2 font-medium text-gray-700">{p.slug}</td>
+                    <td className="px-4 py-2 font-medium text-gray-700">
+                      {p.slug}
+                    </td>
                     <td className="px-4 py-2 text-gray-600">
-                      {p.summary ? p.summary.slice(0, 60) + "…" : "(no summary)"}
+                      {p.summary
+                        ? p.summary.slice(0, 60) + "…"
+                        : "(no summary)"}
                     </td>
                     <td className="px-4 py-2 text-gray-500">
                       {new Date(p.updatedAt).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <Link
+                        href={`/property-editor?slug=${p.slug}`}
+                        className="text-blue-600 hover:underline text-xs font-medium"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Edit
+                      </Link>
                     </td>
                   </tr>
                 ))}
                 {properties.length === 0 && (
                   <tr>
-                    <td colSpan="3" className="px-4 py-6 text-center text-gray-500">
+                    <td
+                      colSpan="4"
+                      className="px-4 py-6 text-center text-gray-500"
+                    >
                       No properties found
                     </td>
                   </tr>
@@ -90,7 +108,9 @@ export default function PropertyDataPage() {
                 </div>
               ) : (
                 <div>
-                  <h2 className="font-medium mb-2 text-gray-900">{selected.slug}</h2>
+                  <h2 className="font-medium mb-2 text-gray-900">
+                    {selected.slug}
+                  </h2>
                   <p className="text-xs text-gray-500 mb-4">
                     Updated: {new Date(selected.updatedAt).toLocaleString()}
                   </p>
