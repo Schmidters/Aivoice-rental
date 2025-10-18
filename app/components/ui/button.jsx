@@ -1,4 +1,4 @@
-export function Button({ children, variant = 'default', className = '', ...props }) {
+export default function Button({ children, variant = 'default', className = '', ...props }) {
   const base =
     'inline-flex items-center justify-center px-3 py-2 rounded-md text-sm font-medium transition';
   const variants = {
