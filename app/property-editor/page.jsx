@@ -1,21 +1,39 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+
+// ✅ Default export (yours)
+import Button from '@/components/ui/button';
+
+// ✅ Named exports (shadcn)
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+
 import { toast } from 'sonner';
 
 export default function PropertyEditorPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-gray-500">Loading editor…</div>}>
+      <PropertyEditorContent />
+    </Suspense>
+  );
+}
+
+function PropertyEditorContent() {
   const searchParams = useSearchParams();
   const slugFromUrl = searchParams.get('slug'); // ← grabs slug from ?slug=
 
   const [property, setProperty] = useState(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // ... continue here with your existing useEffect for fetching the property,
+  // handleChange(), handleSave(), and return JSX for the form fields.
+}
+
 
   // Load the property by slug
   useEffect(() => {
