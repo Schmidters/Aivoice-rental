@@ -52,7 +52,6 @@ if (!TWILIO_MESSAGING_SERVICE_SID && !TWILIO_FROM_NUMBER)
   );
 
 // ---------- CORE ----------
-const app = express();
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
