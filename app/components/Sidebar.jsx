@@ -8,6 +8,7 @@ import {
   CalendarDays,
   BookOpenText,
   ListTree,
+  Database,
 } from 'lucide-react';
 import useUnreadCount from './useUnreadCount';
 
@@ -16,6 +17,7 @@ const NAV = [
   { href: '/leads', label: 'Leads', icon: ListTree },
   { href: '/conversations', label: 'Conversations', icon: MessageSquare, showUnread: true },
   { href: '/bookings', label: 'Bookings', icon: CalendarDays },
+  { href: '/properties', label: 'Property Data', icon: Database },
   { href: '/logs', label: 'Logs', icon: BookOpenText },
 ];
 
