@@ -425,6 +425,53 @@ app.post("/twilio/sms", async (req, res) => {
   }
 });
 
+// ---------- Property Editor API ----------
+
+// GET single property by slug
+app.get("/api/properties/:slug", async (req, res) => {
+  try {
+    const slug = req.params.slug;
+    const facts = await prisma.propertyFacts.findUnique({ where: { slug } });
+    if (!facts) return res.status(404).json({ ok: false, error: "Not found" });
+    res.json({ ok: true, data: facts });
+  } catch (err) {
+    console.error("❌ GET /api/properties/:slug error:", err);
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// PUT update property
+app.put("/api/properties/:slug", async (req, res) => {
+  try {
+    const slug = req.params.slug;
+    const updates = req.body;
+
+    const updated = await prisma.propertyFacts.update({
+      where: { slug },
+      data: {
+        address: updates.address || null,
+        rent: updates.rent || null,
+        bedrooms: updates.bedrooms || null,
+        bathrooms: updates.bathrooms || null,
+        sqft: updates.sqft || null,
+        parking: updates.parking || null,
+        utilities: updates.utilities || null,
+        petsAllowed: updates.petsAllowed ?? null,
+        furnished: updates.furnished ?? null,
+        availability: updates.availability || null,
+        notes: updates.notes || null,
+        updatedAt: new Date(),
+      },
+    });
+
+    console.log(`💾 Updated property ${slug}`);
+    res.json({ ok: true, data: updated });
+  } catch (err) {
+    console.error("❌ PUT /api/properties/:slug error:", err);
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
 // ---------- Server start ----------
 const renderPort = process.env.PORT || 10000;
 app.listen(renderPort, "0.0.0.0", () => {
