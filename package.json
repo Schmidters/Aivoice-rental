@@ -18,6 +18,11 @@
     "lucide-react": "0.468.0",
     "ioredis": "5.4.1",
     "react-big-calendar": "^1.8.1",
-    "date-fns": "^3.6.0"
+    "date-fns": "^3.6.0",
+    "@radix-ui/react-label": "^2.0.2",
+    "@radix-ui/react-switch": "^1.0.3",
+    "class-variance-authority": "^0.7.0",
+    "sonner": "^1.4.1",
+    "tailwind-variants": "^0.2.1"
   }
 }
