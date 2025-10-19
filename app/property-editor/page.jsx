@@ -12,6 +12,14 @@ import { toast } from "sonner";
 
 const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
 
+// 🧩 Helper to generate slugs from address
+function slugify(text) {
+  return (text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "");
+}
+
 export default function PropertyEditorPage() {
   return (
     <Suspense fallback={<div className="p-6 text-gray-500">Loading editor…</div>}>
@@ -27,29 +35,34 @@ function PropertyEditorContent() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Load property if slug provided
+  // 🧩 Load property if slug provided
   useEffect(() => {
     if (!slugFromUrl) return;
     const loadProperty = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`${BACKEND}/api/properties/${slugFromUrl}`);
+        const res = await fetch(`${BACKEND}/api/property-editor/${slugFromUrl}`);
         const json = await res.json();
         if (json.ok) {
-          setProperty(json.data);
+          setProperty({
+            ...json.data.facts,
+            slug: json.data.facts.slug,
+            address: json.data.facts.address,
+          });
         } else {
           toast.error("Property not found");
         }
       } catch (err) {
         console.error("Error loading property:", err);
         toast.error("Failed to load property");
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
     loadProperty();
   }, [slugFromUrl]);
 
-  // Create blank new property if no slug
+  // 🧩 Create blank new property if no slug
   useEffect(() => {
     if (!slugFromUrl) {
       setProperty({
@@ -69,60 +82,75 @@ function PropertyEditorContent() {
     }
   }, [slugFromUrl]);
 
+  // 🧩 Handle field changes, auto-generate slug from address
   const handleChange = (field, value) => {
-    setProperty((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+    setProperty((prev) => {
+      if (field === "address") {
+        const autoSlug = slugify(value);
+        return { ...prev, address: value, slug: autoSlug };
+      }
+      return { ...prev, [field]: value };
+    });
   };
 
-const handleSave = async () => {
-  if (!property) return;
-  setSaving(true);
-  try {
-    const isNew = !property.id;
-    const method = isNew ? "POST" : "PUT";
-    const url = isNew
-      ? `${BACKEND}/api/properties`
-      : `${BACKEND}/api/properties/${property.slug}`;
+  // 🧩 Save handler — POST or PUT with correct shape
+  const handleSave = async () => {
+    if (!property) return;
+    setSaving(true);
+    try {
+      const isNew = !slugFromUrl;
+      const payload = {
+        slug: property.slug || slugify(property.address),
+        address: property.address || null,
+        facts: {
+          rent: property.rent || null,
+          bedrooms: property.bedrooms || null,
+          bathrooms: property.bathrooms || null,
+          sqft: property.sqft || null,
+          parking: property.parking || null,
+          utilities: property.utilities || null,
+          petsAllowed: property.petsAllowed ?? null,
+          furnished: property.furnished ?? null,
+          availability: property.availability || null,
+          notes: property.notes || null,
+        },
+      };
 
-    const res = await fetch(url, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(property),
-    });
+      const url = isNew
+        ? `${BACKEND}/api/property-editor`
+        : `${BACKEND}/api/property-editor/${payload.slug}`;
 
-    const json = await res.json();
-if (json.ok) {
-  const updated = json.data;
-  setProperty(updated); // 🧠 refresh UI state with DB version
+      const res = await fetch(url, {
+        method: isNew ? "POST" : "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-  toast.success(isNew ? "✅ Property created!" : "✅ Changes saved!");
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `HTTP ${res.status}`);
+      }
 
-  // 🟢 Mark that we came from the editor (used for auto-refresh on /properties)
-  window.sessionStorage.setItem("savedFromEditor", "true");
-
-  // small delay so toast is visible before redirect
-  setTimeout(() => {
-    window.location.href = "/properties";
-  }, 1000);
-} else {
-  toast.error(json.error || "Save failed");
-}
-
-  } catch (err) {
-    console.error("Save error:", err);
-    toast.error("Network error saving changes");
-  } finally {
-    setSaving(false);
-  }
-};
-
+      const json = await res.json();
+      if (json.ok) {
+        toast.success(isNew ? "✅ Property created!" : "✅ Changes saved!");
+        window.sessionStorage.setItem("savedFromEditor", "true");
+        setTimeout(() => {
+          window.location.href = "/properties";
+        }, 800);
+      } else {
+        toast.error(json.error || "Save failed");
+      }
+    } catch (err) {
+      console.error("Save error:", err);
+      toast.error(`Save failed: ${err.message || "Unknown error"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (loading)
-    return (
-      <div className="p-6 text-sm text-gray-500">Loading property…</div>
-    );
+    return <div className="p-6 text-sm text-gray-500">Loading property…</div>;
 
   if (!property)
     return (
@@ -140,15 +168,8 @@ if (json.ok) {
       <h1 className="text-xl font-semibold">
         {slugFromUrl ? "Edit Property" : "Add New Property"}
       </h1>
-      <div className="grid grid-cols-2 gap-4 max-w-3xl">
-        {/* Auto-generated slug — hidden from user */}
-{slugFromUrl && (
-  <div>
-    <Label>Slug</Label>
-    <Input value={property.slug || ""} disabled />
-  </div>
-)}
 
+      <div className="grid grid-cols-2 gap-4 max-w-3xl">
         <div>
           <Label>Address</Label>
           <Input
@@ -205,6 +226,7 @@ if (json.ok) {
             onChange={(e) => handleChange("availability", e.target.value)}
           />
         </div>
+
         <div className="flex items-center gap-2">
           <Switch
             checked={property.petsAllowed || false}
@@ -212,6 +234,7 @@ if (json.ok) {
           />
           <Label>Pets Allowed</Label>
         </div>
+
         <div className="flex items-center gap-2">
           <Switch
             checked={property.furnished || false}
@@ -219,6 +242,7 @@ if (json.ok) {
           />
           <Label>Furnished</Label>
         </div>
+
         <div className="col-span-2">
           <Label>Notes</Label>
           <Textarea
@@ -228,6 +252,7 @@ if (json.ok) {
           />
         </div>
       </div>
+
       <Button onClick={handleSave} disabled={saving}>
         {saving ? "Saving…" : "Save Changes"}
       </Button>
