@@ -37,27 +37,29 @@ model Property {
 }
 
 model PropertyFacts {
-  id           Int       @id @default(autoincrement())
-  slug         String    @unique
-  propertyId   Int?      @unique
-  property     Property? @relation(fields: [propertyId], references: [id])
+  id                 Int       @id @default(autoincrement())
+  propertyId         Int       @unique
+  slug               String    @unique
+  address            String?
+  buildingName       String?
+  buildingType       String?   // Apartment, Townhouse, Condo, etc.
+  description        String?   // Marketing summary or detailed description
+  leaseType          String?   // "Long Term", "Short Term"
+  deposit            String?
+  parkingOptions     String?   // "Underground, Outdoor"
+  utilitiesIncluded  String?   // "Internet, Heat, Water"
+  amenities          Json?     // JSON object: { gym: true, balcony: true, ... }
+  images             Json?     // Array of URLs
+  units              Json?     // Array of unit objects [{unitName, rent, sqft, bathrooms, bedrooms, availableDate}]
+  petsAllowed        Boolean?
+  furnished          Boolean?
+  notes              String?   // Free-form summary
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  // 👇 Human-entered fields (used by AI)
-  address      String?
-  rent         String?
-  bedrooms     String?
-  bathrooms    String?
-  sqft         String?
-  parking      String?
-  utilities    String?
-  petsAllowed  Boolean?
-  furnished    Boolean?
-  availability String?
-  notes        String?
-
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  property           Property  @relation(fields: [propertyId], references: [id])
 }
+
 
 
 
