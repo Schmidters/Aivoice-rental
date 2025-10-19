@@ -276,6 +276,8 @@ app.post("/api/property-editor", async (req, res) => {
 
     const slug = slugify(rawSlug);
     const property = await upsertPropertyBySlug(slug, address);
+    console.log("💾 [PropertyEditor] Creating new:", slug);
+
 
     // Ensure facts row exists & update with manual fields only
     const updatedFacts = await prisma.propertyFacts.upsert({
@@ -299,6 +301,8 @@ app.put("/api/property-editor/:slug", async (req, res) => {
 
     const property = await prisma.property.findUnique({ where: { slug } });
     if (!property) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+
+    console.log("💾 [PropertyEditor] Updating:", slug);
 
     const updated = await prisma.propertyFacts.upsert({
       where: { propertyId: property.id },

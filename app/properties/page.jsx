@@ -89,10 +89,11 @@ export default function PropertyDataPage() {
                       {p.slug}
                     </td>
                     <td className="px-4 py-2 text-gray-600">
-                      {p.summary
-                        ? p.summary.slice(0, 60) + "…"
-                        : "(no summary)"}
-                    </td>
+  {p.facts?.notes
+    ? p.facts.notes.slice(0, 60) + "…"
+    : p.facts?.address || "(no summary)"}
+</td>
+
                     <td className="px-4 py-2 text-gray-500">
                       {new Date(p.updatedAt).toLocaleString()}
                     </td>

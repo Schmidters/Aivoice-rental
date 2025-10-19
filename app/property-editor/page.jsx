@@ -98,7 +98,7 @@ function PropertyEditorContent() {
     if (!property) return;
     setSaving(true);
     try {
-      const isNew = !slugFromUrl;
+      const isNew = !property?.slug || !slugFromUrl;
       const payload = {
         slug: property.slug || slugify(property.address),
         address: property.address || null,
