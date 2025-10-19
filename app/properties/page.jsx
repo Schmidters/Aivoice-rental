@@ -138,7 +138,7 @@ export default function PropertyDataPage() {
                     Updated: {new Date(selected.updatedAt).toLocaleString()}
                   </p>
                   <pre className="text-xs bg-gray-100 p-3 rounded overflow-auto max-h-[400px]">
-                    {JSON.stringify(selected.rawJson, null, 2)}
+                    {JSON.stringify(selected.facts ?? selected, null, 2)}
                   </pre>
                 </div>
               )}

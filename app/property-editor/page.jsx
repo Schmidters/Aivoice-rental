@@ -44,10 +44,20 @@ function PropertyEditorContent() {
         const res = await fetch(`${BACKEND}/api/property-editor/${slugFromUrl}`);
         const json = await res.json();
         if (json.ok) {
+          const facts = json.data.facts || {};
           setProperty({
-            ...json.data.facts,
-            slug: json.data.facts.slug,
-            address: json.data.facts.address,
+            slug: json.data.slug,
+            address: facts.address || json.data.address || "",
+            rent: facts.rent || "",
+            bedrooms: facts.bedrooms || "",
+            bathrooms: facts.bathrooms || "",
+            sqft: facts.sqft || "",
+            parking: facts.parking || "",
+            utilities: facts.utilities || "",
+            availability: facts.availability || "",
+            petsAllowed: facts.petsAllowed ?? false,
+            furnished: facts.furnished ?? false,
+            notes: facts.notes || "",
           });
         } else {
           toast.error("Property not found");
@@ -82,7 +92,7 @@ function PropertyEditorContent() {
     }
   }, [slugFromUrl]);
 
-  // 🧩 Handle field changes, auto-generate slug from address
+  // 🧩 Handle field changes and auto-generate slug from address
   const handleChange = (field, value) => {
     setProperty((prev) => {
       if (field === "address") {
@@ -93,12 +103,13 @@ function PropertyEditorContent() {
     });
   };
 
-  // 🧩 Save handler — POST or PUT with correct shape
+  // 🧩 Save handler — POST or PUT with correct payload
   const handleSave = async () => {
     if (!property) return;
     setSaving(true);
     try {
-      const isNew = !property?.slug || !slugFromUrl;
+      const isNew = !slugFromUrl; // ✅ Only new if no slug in URL
+
       const payload = {
         slug: property.slug || slugify(property.address),
         address: property.address || null,
@@ -125,11 +136,6 @@ function PropertyEditorContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(text || `HTTP ${res.status}`);
-      }
 
       const json = await res.json();
       if (json.ok) {

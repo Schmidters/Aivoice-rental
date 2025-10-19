@@ -10,7 +10,6 @@ import dotenv from "dotenv";
 import OpenAI from "openai";
 import twilio from "twilio";
 import { PrismaClient } from "@prisma/client";
-import propertiesRouter from "./routes/properties.js"; // ✅ import route
 
 dotenv.config();
 
@@ -21,8 +20,7 @@ const prisma = new PrismaClient();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 
-// ✅ Mount the route AFTER app is defined
-app.use("/api/properties", propertiesRouter);
+
 
 
 // ---------- ENV ----------
@@ -439,51 +437,48 @@ app.post("/twilio/sms", async (req, res) => {
 });
 
 // ---------- Property Editor API ----------
-
-// GET single property by slug
-app.get("/api/properties/:slug", async (req, res) => {
+// ✅ Unified single-property fetch for Property Editor
+app.get("/api/property-editor/:slug", async (req, res) => {
   try {
     const slug = req.params.slug;
-    const facts = await prisma.propertyFacts.findUnique({ where: { slug } });
-    if (!facts) return res.status(404).json({ ok: false, error: "Not found" });
-    res.json({ ok: true, data: facts });
+    const property = await prisma.property.findUnique({
+      where: { slug },
+      include: { facts: true },
+    });
+    if (!property) return res.status(404).json({ ok: false, error: "Not found" });
+    res.json({ ok: true, data: property });
   } catch (err) {
-    console.error("❌ GET /api/properties/:slug error:", err);
-    res.status(500).json({ ok: false, error: "Server error" });
+    console.error("❌ GET /api/property-editor/:slug error:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
 
-// PUT update property
-app.put("/api/properties/:slug", async (req, res) => {
-  try {
-    const slug = req.params.slug;
-    const updates = req.body;
 
-    const updated = await prisma.propertyFacts.update({
-      where: { slug },
-      data: {
-        address: updates.address || null,
-        rent: updates.rent || null,
-        bedrooms: updates.bedrooms || null,
-        bathrooms: updates.bathrooms || null,
-        sqft: updates.sqft || null,
-        parking: updates.parking || null,
-        utilities: updates.utilities || null,
-        petsAllowed: updates.petsAllowed ?? null,
-        furnished: updates.furnished ?? null,
-        availability: updates.availability || null,
-        notes: updates.notes || null,
-        updatedAt: new Date(),
-      },
+// ✅ Unified PUT for property editor
+app.put("/api/property-editor/:slug", async (req, res) => {
+  try {
+    const slug = slugify(req.params.slug);
+    const body = req.body || {};
+    const facts = body.facts || body; // supports both shapes
+
+    const property = await prisma.property.findUnique({ where: { slug } });
+    if (!property) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+
+    console.log("💾 [PropertyEditor] Updating:", slug);
+
+    const updated = await prisma.propertyFacts.upsert({
+      where: { propertyId: property.id },
+      update: { ...facts, updatedAt: new Date() },
+      create: { propertyId: property.id, slug, ...facts },
     });
 
-    console.log(`💾 Updated property ${slug}`);
     res.json({ ok: true, data: updated });
   } catch (err) {
-    console.error("❌ PUT /api/properties/:slug error:", err);
-    res.status(500).json({ ok: false, error: String(err) });
+    console.error("PUT /api/property-editor/:slug failed:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
+
 
 // ---------- Server start ----------
 const renderPort = process.env.PORT || 10000;
