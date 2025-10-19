@@ -16,7 +16,7 @@ export default function PropertyDataPage() {
   async function loadData() {
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND}/api/properties`);
+      const res = await fetch(`${BACKEND}/api/property-editor`);
       const json = await res.json();
       if (json.ok) setProperties(json.data);
       else console.error("Failed to load properties:", json);
