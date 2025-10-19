@@ -47,13 +47,33 @@ router.get("/:slug", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const data = req.body;
-    if (!data.slug)
-      return res.status(400).json({ ok: false, error: "Slug is required" });
 
-    const created = await prisma.propertyFacts.create({
-      data,
+    // 🧠 Auto-generate slug if not provided
+    if (!data.slug) {
+      if (data.address) {
+        data.slug = data.address
+          .toLowerCase()
+          .replace(/[^\w\s-]/g, "")
+          .trim()
+          .replace(/\s+/g, "-");
+      } else {
+        return res
+          .status(400)
+          .json({ ok: false, error: "Address is required to create property" });
+      }
+    }
+
+    // Ensure slug is unique
+    const existing = await prisma.propertyFacts.findUnique({
+      where: { slug: data.slug },
     });
+    if (existing) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Property slug already exists" });
+    }
 
+    const created = await prisma.propertyFacts.create({ data });
     console.log("💾 [Property Created]", created.slug);
     res.json({ ok: true, data: created });
   } catch (err) {
@@ -61,6 +81,7 @@ router.post("/", async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
 
 // 🧩 PUT — update existing property
 router.put("/:slug", async (req, res) => {

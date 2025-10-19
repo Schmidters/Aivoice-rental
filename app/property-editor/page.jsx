@@ -141,15 +141,14 @@ if (json.ok) {
         {slugFromUrl ? "Edit Property" : "Add New Property"}
       </h1>
       <div className="grid grid-cols-2 gap-4 max-w-3xl">
-        <div>
-          <Label>Slug</Label>
-          <Input
-            value={property.slug || ""}
-            onChange={(e) => handleChange("slug", e.target.value)}
-            placeholder="e.g. 215-16-street-southeast"
-            disabled={!!slugFromUrl}
-          />
-        </div>
+        {/* Auto-generated slug — hidden from user */}
+{slugFromUrl && (
+  <div>
+    <Label>Slug</Label>
+    <Input value={property.slug || ""} disabled />
+  </div>
+)}
+
         <div>
           <Label>Address</Label>
           <Input
