@@ -76,34 +76,48 @@ function PropertyEditorContent() {
     }));
   };
 
-  const handleSave = async () => {
-    if (!property) return;
-    setSaving(true);
-    try {
-      const method = property.id ? "PUT" : "POST";
-      const url = property.id
-        ? `${BACKEND}/api/properties/${property.slug}`
-        : `${BACKEND}/api/properties`;
+const handleSave = async () => {
+  if (!property) return;
+  setSaving(true);
+  try {
+    const isNew = !property.id;
+    const method = isNew ? "POST" : "PUT";
+    const url = isNew
+      ? `${BACKEND}/api/properties`
+      : `${BACKEND}/api/properties/${property.slug}`;
 
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(property),
-      });
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(property),
+    });
 
-      const json = await res.json();
-      if (json.ok) {
-        toast.success("✅ Property saved!");
-        setTimeout(() => (window.location.href = "/properties"), 800);
-      } else {
-        toast.error("Save failed");
-      }
-    } catch (err) {
-      console.error("Save error:", err);
-      toast.error("Network error saving changes");
-    }
+    const json = await res.json();
+if (json.ok) {
+  const updated = json.data;
+  setProperty(updated); // 🧠 refresh UI state with DB version
+
+  toast.success(isNew ? "✅ Property created!" : "✅ Changes saved!");
+
+  // 🟢 Mark that we came from the editor (used for auto-refresh on /properties)
+  window.sessionStorage.setItem("savedFromEditor", "true");
+
+  // small delay so toast is visible before redirect
+  setTimeout(() => {
+    window.location.href = "/properties";
+  }, 1000);
+} else {
+  toast.error(json.error || "Save failed");
+}
+
+  } catch (err) {
+    console.error("Save error:", err);
+    toast.error("Network error saving changes");
+  } finally {
     setSaving(false);
-  };
+  }
+};
+
 
   if (loading)
     return (

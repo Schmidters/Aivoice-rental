@@ -24,8 +24,18 @@ export default function PropertyDataPage() {
   }
 
   useEffect(() => {
-    loadData();
-  }, []);
+  // 🧠 Check if we just came back from saving a property
+  const fromEditor = window.sessionStorage.getItem("savedFromEditor");
+
+  if (fromEditor) {
+    console.log("🔁 Refreshing after save");
+    loadData(); // fetch new data
+    window.sessionStorage.removeItem("savedFromEditor"); // clear flag
+  } else {
+    loadData(); // normal first load
+  }
+}, []);
+
 
   return (
     <div className="p-6 space-y-6">

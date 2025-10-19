@@ -68,17 +68,27 @@ router.put("/:slug", async (req, res) => {
     const { slug } = req.params;
     const data = req.body;
 
+    // Make sure property exists
+    const existing = await prisma.propertyFacts.findUnique({ where: { slug } });
+    if (!existing) {
+      return res.status(404).json({ ok: false, error: "Property not found" });
+    }
+
     const updated = await prisma.propertyFacts.update({
       where: { slug },
       data,
     });
 
+    // Re-fetch to return the freshest data (ensures updatedAt is current)
+    const refreshed = await prisma.propertyFacts.findUnique({ where: { slug } });
+
     console.log("💾 [Property Updated]", slug);
-    res.json({ ok: true, data: updated });
+    res.json({ ok: true, data: refreshed });
   } catch (err) {
     console.error("❌ Error updating property:", err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
 
 export default router;
