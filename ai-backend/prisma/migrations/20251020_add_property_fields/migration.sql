@@ -1,18 +1,18 @@
--- Migration: add_building_fields (Ava V7)
+-- Migration: add_building_fields (Ava V7, forced redeploy)
 -- Purpose: Expand PropertyFacts to support multiple unit types, floorplans, and amenities.
--- Compatible with PostgreSQL.
 
 ------------------------------------------------------------
--- Drop old/deprecated columns
+-- Drop deprecated columns (safe even if not present)
 ------------------------------------------------------------
 ALTER TABLE "PropertyFacts"
 DROP COLUMN IF EXISTS "summary",
 DROP COLUMN IF EXISTS "rawJson";
 
 ------------------------------------------------------------
--- Core property metadata
+-- Ensure all Ava V7 fields exist
 ------------------------------------------------------------
 ALTER TABLE "PropertyFacts"
+ADD COLUMN IF NOT EXISTS "unitType"            TEXT,
 ADD COLUMN IF NOT EXISTS "buildingName"        TEXT,
 ADD COLUMN IF NOT EXISTS "buildingType"        TEXT,
 ADD COLUMN IF NOT EXISTS "description"         TEXT,
