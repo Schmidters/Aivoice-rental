@@ -54,6 +54,7 @@ model PropertyFacts {
   parkingOptions     String?
   utilities          String?
   utilitiesIncluded  String?
+  description        String?
   petsAllowed        Boolean?
   petPolicy          String?
   furnished          Boolean?
