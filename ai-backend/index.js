@@ -315,6 +315,12 @@ app.post("/api/property-editor", async (req, res) => {
     const property = await upsertPropertyBySlug(slug, address);
     console.log("💾 [PropertyEditor] Creating new:", slug);
 
+    // 🩹 Compatibility absorber — handle old "utilitiesIncluded" key safely
+if (facts.utilitiesIncluded && !facts.includedUtilities) {
+  facts.includedUtilities = facts.utilitiesIncluded;
+}
+delete facts.utilitiesIncluded;
+
     // Upsert all new manual fields (safe for null/missing)
     const updatedFacts = await prisma.propertyFacts.upsert({
       where: { propertyId: property.id },
@@ -389,6 +395,13 @@ app.put("/api/property-editor/:slug", async (req, res) => {
     if (!property) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
 
     console.log("💾 [PropertyEditor] Updating:", slug);
+
+    // 🩹 Compatibility absorber — handle old "utilitiesIncluded" key safely
+if (facts.utilitiesIncluded && !facts.includedUtilities) {
+  facts.includedUtilities = facts.utilitiesIncluded;
+}
+delete facts.utilitiesIncluded;
+
 
     const updatedFacts = await prisma.propertyFacts.upsert({
       where: { propertyId: property.id },
@@ -552,48 +565,6 @@ app.post("/twilio/sms", async (req, res) => {
   }
 });
 
-// ---------- Property Editor API ----------
-// ✅ Unified single-property fetch for Property Editor
-app.get("/api/property-editor/:slug", async (req, res) => {
-  try {
-    const slug = req.params.slug;
-    const property = await prisma.property.findUnique({
-      where: { slug },
-      include: { facts: true },
-    });
-    if (!property) return res.status(404).json({ ok: false, error: "Not found" });
-    res.json({ ok: true, data: property });
-  } catch (err) {
-    console.error("❌ GET /api/property-editor/:slug error:", err);
-    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
-  }
-});
-
-
-// ✅ Unified PUT for property editor
-app.put("/api/property-editor/:slug", async (req, res) => {
-  try {
-    const slug = slugify(req.params.slug);
-    const body = req.body || {};
-    const facts = body.facts || body; // supports both shapes
-
-    const property = await prisma.property.findUnique({ where: { slug } });
-    if (!property) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
-
-    console.log("💾 [PropertyEditor] Updating:", slug);
-
-    const updated = await prisma.propertyFacts.upsert({
-      where: { propertyId: property.id },
-      update: { ...facts, updatedAt: new Date() },
-      create: { propertyId: property.id, slug, ...facts },
-    });
-
-    res.json({ ok: true, data: updated });
-  } catch (err) {
-    console.error("PUT /api/property-editor/:slug failed:", err);
-    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
-  }
-});
 
 
 // ---------- Server start ----------
