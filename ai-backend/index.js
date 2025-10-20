@@ -330,7 +330,7 @@ app.post("/api/property-editor", async (req, res) => {
         parking: facts.parking || null,
         parkingOptions: facts.parkingOptions || null,
         utilities: facts.utilities || null,
-        utilitiesIncluded: facts.includedUtilities || null,
+        includedUtilities: facts.includedUtilities || null,
         petsAllowed: facts.petsAllowed ?? null,
         petPolicy: facts.petPolicy || null,
         furnished: facts.furnished ?? null,
