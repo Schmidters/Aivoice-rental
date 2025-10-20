@@ -175,12 +175,14 @@ function PropertyEditorContent() {
 
       const json = await res.json();
       if (json.ok) {
-        toast.success(isNew ? "✅ Property created!" : "✅ Changes saved!");
-        window.sessionStorage.setItem("savedFromEditor", "true");
-        setTimeout(() => {
-          window.location.href = "/properties";
-        }, 800);
-      } else {
+  toast.success(isNew ? "✅ Property created!" : "✅ Changes saved!");
+  // Update state with new timestamp (so “Saved” indicator appears)
+  setProperty((prev) => ({
+    ...prev,
+    updatedAt: new Date().toISOString(),
+  }));
+}
+ else {
         toast.error(json.error || "Save failed");
       }
     } catch (err) {
@@ -210,6 +212,12 @@ function PropertyEditorContent() {
       <h1 className="text-xl font-semibold">
         {slugFromUrl ? "Edit Property" : "Add New Property"}
       </h1>
+
+{property?.updatedAt && (
+  <div className="text-sm text-green-600">
+    ✅ Saved {new Date(property.updatedAt).toLocaleTimeString()}
+  </div>
+)}
 
       <div className="grid grid-cols-2 gap-4 max-w-4xl">
         {/* Building Info */}

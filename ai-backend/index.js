@@ -252,6 +252,27 @@ app.get("/api/properties", async (_req, res) => {
   }
 });
 
+// Property Editor — GET single property (for editing)
+app.get("/api/property-editor/:slug", async (req, res) => {
+  try {
+    const slug = slugify(req.params.slug);
+
+    const property = await prisma.property.findUnique({
+      where: { slug },
+      include: { facts: true },
+    });
+
+    if (!property) {
+      return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    }
+
+    res.json({ ok: true, data: property });
+  } catch (err) {
+    console.error("GET /api/property-editor/:slug failed:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+  }
+});
+
 // Property Editor — list all properties with facts
 app.get("/api/property-editor", async (_req, res) => {
   try {
@@ -266,7 +287,11 @@ app.get("/api/property-editor", async (_req, res) => {
   }
 });
 
-// Property Editor — create/update property + facts (manual entry)
+// ===========================================================
+// Property Editor — create or update property + all facts (Ava V7)
+// ===========================================================
+
+// CREATE new property + facts
 app.post("/api/property-editor", async (req, res) => {
   try {
     const { slug: rawSlug, address, facts = {} } = req.body || {};
@@ -276,12 +301,60 @@ app.post("/api/property-editor", async (req, res) => {
     const property = await upsertPropertyBySlug(slug, address);
     console.log("💾 [PropertyEditor] Creating new:", slug);
 
-
-    // Ensure facts row exists & update with manual fields only
+    // Upsert all new manual fields (safe for null/missing)
     const updatedFacts = await prisma.propertyFacts.upsert({
       where: { propertyId: property.id },
-      update: { ...facts, address: facts.address ?? address, updatedAt: new Date() },
-      create: { propertyId: property.id, slug, address: facts.address ?? address, ...facts },
+      update: {
+        buildingName: facts.buildingName || null,
+        unitType: facts.unitType || null,
+        rent: facts.rent || null,
+        deposit: facts.deposit || null,
+        leaseTerm: facts.leaseTerm || null,
+        bedrooms: facts.bedrooms || null,
+        bathrooms: facts.bathrooms || null,
+        sqft: facts.sqft || null,
+        parking: facts.parking || null,
+        parkingOptions: facts.parkingOptions || null,
+        utilities: facts.utilities || null,
+        includedUtilities: facts.includedUtilities || null,
+        petsAllowed: facts.petsAllowed ?? null,
+        petPolicy: facts.petPolicy || null,
+        furnished: facts.furnished ?? null,
+        availability: facts.availability || null,
+        notes: facts.notes || null,
+        floorPlans: facts.floorPlans || null,
+        amenities: facts.amenities || null,
+        managedBy: facts.managedBy || null,
+        listingUrl: facts.listingUrl || null,
+        address: facts.address ?? address,
+        updatedAt: new Date(),
+      },
+      create: {
+        propertyId: property.id,
+        slug,
+        address: facts.address ?? address,
+        buildingName: facts.buildingName || null,
+        unitType: facts.unitType || null,
+        rent: facts.rent || null,
+        deposit: facts.deposit || null,
+        leaseTerm: facts.leaseTerm || null,
+        bedrooms: facts.bedrooms || null,
+        bathrooms: facts.bathrooms || null,
+        sqft: facts.sqft || null,
+        parking: facts.parking || null,
+        parkingOptions: facts.parkingOptions || null,
+        utilities: facts.utilities || null,
+        includedUtilities: facts.includedUtilities || null,
+        petsAllowed: facts.petsAllowed ?? null,
+        petPolicy: facts.petPolicy || null,
+        furnished: facts.furnished ?? null,
+        availability: facts.availability || null,
+        notes: facts.notes || null,
+        floorPlans: facts.floorPlans || null,
+        amenities: facts.amenities || null,
+        managedBy: facts.managedBy || null,
+        listingUrl: facts.listingUrl || null,
+      },
     });
 
     res.json({ ok: true, data: { property, facts: updatedFacts } });
@@ -291,7 +364,7 @@ app.post("/api/property-editor", async (req, res) => {
   }
 });
 
-// Property Editor — update facts for specific property
+// UPDATE existing property facts by slug
 app.put("/api/property-editor/:slug", async (req, res) => {
   try {
     const slug = slugify(req.params.slug);
@@ -302,18 +375,46 @@ app.put("/api/property-editor/:slug", async (req, res) => {
 
     console.log("💾 [PropertyEditor] Updating:", slug);
 
-    const updated = await prisma.propertyFacts.upsert({
+    const updatedFacts = await prisma.propertyFacts.upsert({
       where: { propertyId: property.id },
-      update: { ...facts, updatedAt: new Date() },
-      create: { propertyId: property.id, slug, ...facts },
+      update: {
+        buildingName: facts.buildingName || null,
+        unitType: facts.unitType || null,
+        rent: facts.rent || null,
+        deposit: facts.deposit || null,
+        leaseTerm: facts.leaseTerm || null,
+        bedrooms: facts.bedrooms || null,
+        bathrooms: facts.bathrooms || null,
+        sqft: facts.sqft || null,
+        parking: facts.parking || null,
+        parkingOptions: facts.parkingOptions || null,
+        utilities: facts.utilities || null,
+        includedUtilities: facts.includedUtilities || null,
+        petsAllowed: facts.petsAllowed ?? null,
+        petPolicy: facts.petPolicy || null,
+        furnished: facts.furnished ?? null,
+        availability: facts.availability || null,
+        notes: facts.notes || null,
+        floorPlans: facts.floorPlans || null,
+        amenities: facts.amenities || null,
+        managedBy: facts.managedBy || null,
+        listingUrl: facts.listingUrl || null,
+        updatedAt: new Date(),
+      },
+      create: {
+        propertyId: property.id,
+        slug,
+        ...facts,
+      },
     });
 
-    res.json({ ok: true, data: updated });
+    res.json({ ok: true, data: updatedFacts });
   } catch (err) {
     console.error("PUT /api/property-editor/:slug failed:", err);
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
+
 
 // Bookings (kept minimal so your dashboard keeps working)
 app.get("/api/bookings", async (_req, res) => {
