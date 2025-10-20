@@ -39,6 +39,15 @@ export default function PropertyDataPage() {
   }
 }, []);
 
+// 🩹 Listen for propertyDataUpdated events (from Property Editor)
+useEffect(() => {
+  const handlePropertyUpdate = () => {
+    console.log("🔄 Detected property update — reloading data");
+    loadData();
+  };
+  window.addEventListener("propertyDataUpdated", handlePropertyUpdate);
+  return () => window.removeEventListener("propertyDataUpdated", handlePropertyUpdate);
+}, []);
 
   return (
     <div className="p-6 space-y-6">

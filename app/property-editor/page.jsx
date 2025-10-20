@@ -198,6 +198,9 @@ const handleSave = async () => {
       if (typeof setAllProperties === "function") setAllProperties(all);
 
       console.log("✅ Property and full list reloaded after save");
+      // 🔔 Notify other tabs (like Property Data) that data changed
+window.dispatchEvent(new Event("propertyDataUpdated"));
+
     } else {
       toast.error(json.error || "Save failed");
     }
