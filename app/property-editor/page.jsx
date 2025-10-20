@@ -161,6 +161,7 @@ const handleSave = async () => {
         petPolicy: property.petPolicy || null,
         parkingOptions: property.parkingOptions || null,
         amenities: property.amenities || null,
+        units: property.units || [], // 🧩 new multi-unit data
       },
     };
 
@@ -181,7 +182,7 @@ const handleSave = async () => {
 
       // 🔔 Notify Property Data page to refresh
   window.dispatchEvent(new Event("propertyDataUpdated"));
-  
+
     // ✅ Mark for refresh when user navigates back
   sessionStorage.setItem("propertyDataNeedsRefresh", "true");
 
@@ -314,6 +315,87 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
             onChange={(e) => handleChange("parking", e.target.value)}
           />
         </div>
+
+        {/* 🏘️ Multiple Unit Types */}
+<div className="col-span-2 mt-6 border-t pt-4">
+  <h2 className="text-lg font-semibold mb-2">Unit Types</h2>
+
+  {(property.units || []).map((u, i) => (
+    <div key={i} className="grid grid-cols-5 gap-3 mb-3 p-3 border rounded-lg">
+      <div>
+        <Label>Unit Type</Label>
+        <Input
+          value={u.unitType || ""}
+          onChange={(e) => {
+            const copy = [...property.units];
+            copy[i].unitType = e.target.value;
+            setProperty({ ...property, units: copy });
+          }}
+        />
+      </div>
+      <div>
+        <Label>Rent</Label>
+        <Input
+          value={u.rent || ""}
+          onChange={(e) => {
+            const copy = [...property.units];
+            copy[i].rent = e.target.value;
+            setProperty({ ...property, units: copy });
+          }}
+        />
+      </div>
+      <div>
+        <Label>Bedrooms</Label>
+        <Input
+          value={u.bedrooms || ""}
+          onChange={(e) => {
+            const copy = [...property.units];
+            copy[i].bedrooms = e.target.value;
+            setProperty({ ...property, units: copy });
+          }}
+        />
+      </div>
+      <div>
+        <Label>Bathrooms</Label>
+        <Input
+          value={u.bathrooms || ""}
+          onChange={(e) => {
+            const copy = [...property.units];
+            copy[i].bathrooms = e.target.value;
+            setProperty({ ...property, units: copy });
+          }}
+        />
+      </div>
+      <div>
+        <Label>Sqft</Label>
+        <Input
+          value={u.sqft || ""}
+          onChange={(e) => {
+            const copy = [...property.units];
+            copy[i].sqft = e.target.value;
+            setProperty({ ...property, units: copy });
+          }}
+        />
+      </div>
+    </div>
+  ))}
+
+  <button
+    onClick={() =>
+      setProperty({
+        ...property,
+        units: [
+          ...(property.units || []),
+          { unitType: "", rent: "", bedrooms: "", bathrooms: "", sqft: "" },
+        ],
+      })
+    }
+    className="bg-gray-100 px-3 py-1 rounded-md text-sm hover:bg-gray-200"
+  >
+    + Add Unit Type
+  </button>
+</div>
+
 
         {/* Extra Info */}
         <div>
