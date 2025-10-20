@@ -34,7 +34,6 @@ function PropertyEditorContent() {
   const [property, setProperty] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [property, setProperty] = useState(null);
 
 
   // 🧩 Load property if slug provided
