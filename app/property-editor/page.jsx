@@ -179,6 +179,9 @@ const handleSave = async () => {
     if (json.ok) {
       toast.success(isNew ? "✅ Property created!" : "✅ Changes saved!");
 
+      // 🔔 Notify Property Data page to refresh
+  window.dispatchEvent(new Event("propertyDataUpdated"));
+  
       // 🩹 1️⃣ Re-fetch updated property facts (fresh from backend)
       const updatedFacts = await fetch(`${BACKEND}/api/property-editor/${payload.slug}`)
         .then((res) => res.json())
