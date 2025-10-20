@@ -49,6 +49,7 @@ model PropertyFacts {
   leaseTerm          String?
   bedrooms           String?
   bathrooms          String?
+  leaseType          String?
   sqft               String?
   parking            String?
   parkingOptions     String?
