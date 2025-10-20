@@ -62,7 +62,6 @@ model PropertyFacts {
   amenities          Json?
   managedBy          String?
   listingUrl         String?
-  floorPlans         Json?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
