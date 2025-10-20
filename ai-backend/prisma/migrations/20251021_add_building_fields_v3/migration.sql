@@ -47,6 +47,5 @@ BEGIN
     FROM information_schema.columns
     WHERE table_name = 'PropertyFacts' AND column_name = 'utilitiesIncluded'
   ) THEN
-    ALTER TABLE "PropertyFacts" RENAME COLUMN "utilitiesIncluded" TO "includedUtilities";
   END IF;
 END $$;
