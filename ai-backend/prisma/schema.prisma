@@ -52,7 +52,7 @@ model PropertyFacts {
   parking            String?
   parkingOptions     String?
   utilities          String?
-  includedUtilities  String?
+  utilitiesIncluded  String?
   petsAllowed        Boolean?
   petPolicy          String?
   furnished          Boolean?
