@@ -378,6 +378,7 @@ app.post("/api/property-editor", async (req, res) => {
   }
 });
 
+
 // UPDATE existing property facts by slug
 app.put("/api/property-editor/:slug", async (req, res) => {
   try {
