@@ -34,6 +34,8 @@ function PropertyEditorContent() {
   const [property, setProperty] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [property, setProperty] = useState(null);
+
 
   // 🧩 Load property if slug provided
   useEffect(() => {
@@ -127,71 +129,87 @@ function PropertyEditorContent() {
     });
   };
 
-  // 🧩 Save handler
-  const handleSave = async () => {
-    if (!property) return;
-    setSaving(true);
-    try {
-      const isNew = !slugFromUrl;
+  // 🧩 Save handler (fixed)
+const handleSave = async () => {
+  if (!property) return;
+  setSaving(true);
+  try {
+    const isNew = !slugFromUrl;
 
-      const payload = {
-        slug: property.slug || slugify(property.address),
-        address: property.address || null,
-        facts: {
-          rent: property.rent || null,
-          bedrooms: property.bedrooms || null,
-          bathrooms: property.bathrooms || null,
-          sqft: property.sqft || null,
-          parking: property.parking || null,
-          utilities: property.utilities || null,
-          petsAllowed: property.petsAllowed ?? null,
-          furnished: property.furnished ?? null,
-          availability: property.availability || null,
-          notes: property.notes || null,
-          // New fields
-          buildingName: property.buildingName || null,
-          buildingType: property.buildingType || null,
-          description: property.description || null,
-          leaseType: property.leaseType || null,
-          deposit: property.deposit || null,
-          managedBy: property.managedBy || null,
-          listingUrl: property.listingUrl || null,
-          utilitiesIncluded: property.utilitiesIncluded || null,
-          petPolicy: property.petPolicy || null,
-          parkingOptions: property.parkingOptions || null,
-          amenities: property.amenities || null,
-        },
-      };
+    const payload = {
+      slug: property.slug || slugify(property.address),
+      address: property.address || null,
+      facts: {
+        rent: property.rent || null,
+        bedrooms: property.bedrooms || null,
+        bathrooms: property.bathrooms || null,
+        sqft: property.sqft || null,
+        parking: property.parking || null,
+        utilities: property.utilities || null,
+        petsAllowed: property.petsAllowed ?? null,
+        furnished: property.furnished ?? null,
+        availability: property.availability || null,
+        notes: property.notes || null,
+        // ✅ fixed field names
+        buildingName: property.buildingName || null,
+        buildingType: property.buildingType || null,
+        description: property.description || null,
+        leaseType: property.leaseType || null,
+        deposit: property.deposit || null,
+        managedBy: property.managedBy || null,
+        listingUrl: property.listingUrl || null,
+        includedUtilities: property.utilitiesIncluded || null, // 🔥 correct field name
+        petPolicy: property.petPolicy || null,
+        parkingOptions: property.parkingOptions || null,
+        amenities: property.amenities || null,
+      },
+    };
 
-      const url = isNew
-        ? `${BACKEND}/api/property-editor`
-        : `${BACKEND}/api/property-editor/${payload.slug}`;
+    const url = isNew
+      ? `${BACKEND}/api/property-editor`
+      : `${BACKEND}/api/property-editor/${payload.slug}`;
 
-      const res = await fetch(url, {
-        method: isNew ? "POST" : "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+    const res = await fetch(url, {
+      method: isNew ? "POST" : "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-      const json = await res.json();
-      if (json.ok) {
-  toast.success(isNew ? "✅ Property created!" : "✅ Changes saved!");
-  // Update state with new timestamp (so “Saved” indicator appears)
-  setProperty((prev) => ({
-    ...prev,
-    updatedAt: new Date().toISOString(),
-  }));
-}
- else {
-        toast.error(json.error || "Save failed");
-      }
-    } catch (err) {
-      console.error("Save error:", err);
-      toast.error(`Save failed: ${err.message || "Unknown error"}`);
-    } finally {
-      setSaving(false);
+    const json = await res.json();
+
+    if (json.ok) {
+      toast.success(isNew ? "✅ Property created!" : "✅ Changes saved!");
+
+      // 🩹 1️⃣ Re-fetch updated property facts (fresh from backend)
+      const updatedFacts = await fetch(`${BACKEND}/api/property-editor/${payload.slug}`)
+        .then((res) => res.json())
+        .then((data) => data?.data?.facts || {});
+
+      // 🩹 2️⃣ Update the local property state with fresh data
+      setProperty((prev) => ({
+        ...prev,
+        ...updatedFacts,
+        updatedAt: new Date().toISOString(),
+      }));
+
+      // 🩹 3️⃣ Refresh the global property list (Property Data tab)
+      const all = await fetch(`${BACKEND}/api/property-editor`)
+        .then((res) => res.json())
+        .then((data) => data?.data || []);
+      if (typeof setAllProperties === "function") setAllProperties(all);
+
+      console.log("✅ Property and full list reloaded after save");
+    } else {
+      toast.error(json.error || "Save failed");
     }
-  };
+  } catch (err) {
+    console.error("Save error:", err);
+    toast.error(`Save failed: ${err.message || "Unknown error"}`);
+  } finally {
+    setSaving(false);
+  }
+};
+
 
   if (loading)
     return <div className="p-6 text-sm text-gray-500">Loading property…</div>;
