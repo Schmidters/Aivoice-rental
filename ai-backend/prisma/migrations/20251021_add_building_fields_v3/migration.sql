@@ -17,6 +17,7 @@ ADD COLUMN IF NOT EXISTS "buildingName"        TEXT,
 ADD COLUMN IF NOT EXISTS "buildingType"        TEXT,
 ADD COLUMN IF NOT EXISTS "description"         TEXT,
 ADD COLUMN IF NOT EXISTS "leaseType"           TEXT,
+ADD COLUMN IF NOT EXISTS "leaseTerm"           TEXT,
 ADD COLUMN IF NOT EXISTS "deposit"             TEXT,
 ADD COLUMN IF NOT EXISTS "rent"                TEXT,
 ADD COLUMN IF NOT EXISTS "bedrooms"            TEXT,
@@ -35,11 +36,6 @@ ADD COLUMN IF NOT EXISTS "images"              JSONB,
 ADD COLUMN IF NOT EXISTS "units"               JSONB,
 ADD COLUMN IF NOT EXISTS "notes"               TEXT,
 ADD COLUMN IF NOT EXISTS "listingUrl"          TEXT,
-ADD COLUMN IF NOT EXISTS "managedBy"           TEXT;
-
-------------------------------------------------------------
--- Timestamp safety
-------------------------------------------------------------
-ALTER TABLE "PropertyFacts"
+ADD COLUMN IF NOT EXISTS "managedBy"           TEXT,
 ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP DEFAULT NOW(),
 ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMP DEFAULT NOW();
