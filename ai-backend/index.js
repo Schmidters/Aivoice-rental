@@ -10,11 +10,25 @@ import dotenv from "dotenv";
 import OpenAI from "openai";
 import twilio from "twilio";
 import { PrismaClient } from "@prisma/client";
+import cors from "cors";
 
 dotenv.config();
 
 const app = express();
 const prisma = new PrismaClient();
+
+// ✅ Allow your dashboard origin
+app.use(
+  cors({
+    origin: [
+      "https://ai-leasing-dashboard.onrender.com", // your Next.js dashboard
+      "http://localhost:3000", // for local dev
+    ],
+    methods: ["GET", "POST", "PUT", "OPTIONS"],
+    allowedHeaders: ["Content-Type"],
+    credentials: true,
+  })
+);
 
 // Middleware setup
 app.use(bodyParser.json());
