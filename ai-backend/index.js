@@ -385,24 +385,26 @@ delete facts.utilitiesIncluded;
 });
 
 
-// UPDATE existing property facts by slug
+// UPDATE existing property + facts by slug
 app.put("/api/property-editor/:slug", async (req, res) => {
   try {
     const slug = slugify(req.params.slug);
-    const { facts = {} } = req.body || {};
+    const { address, facts = {} } = req.body || {};
 
     const property = await prisma.property.findUnique({ where: { slug } });
-    if (!property) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    if (!property) {
+      return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    }
 
     console.log("💾 [PropertyEditor] Updating:", slug);
 
-    // 🩹 Compatibility absorber — handle old "utilitiesIncluded" key safely
-if (facts.utilitiesIncluded && !facts.includedUtilities) {
-  facts.includedUtilities = facts.utilitiesIncluded;
-}
-delete facts.utilitiesIncluded;
+    // 🩹 Handle backward compatibility for old key
+    if (facts.utilitiesIncluded && !facts.includedUtilities) {
+      facts.includedUtilities = facts.utilitiesIncluded;
+    }
+    delete facts.utilitiesIncluded;
 
-
+    // ✅ Update the related propertyFacts record (upsert)
     const updatedFacts = await prisma.propertyFacts.upsert({
       where: { propertyId: property.id },
       update: {
@@ -427,21 +429,25 @@ delete facts.utilitiesIncluded;
         amenities: facts.amenities || null,
         managedBy: facts.managedBy || null,
         listingUrl: facts.listingUrl || null,
+        address: facts.address ?? address,
         updatedAt: new Date(),
       },
       create: {
         propertyId: property.id,
         slug,
+        address: facts.address ?? address,
         ...facts,
       },
     });
 
+    console.log("✅ [PropertyEditor] Updated facts for:", slug);
     res.json({ ok: true, data: updatedFacts });
   } catch (err) {
-    console.error("PUT /api/property-editor/:slug failed:", err);
+    console.error("❌ [PropertyEditor] Failed to update:", err);
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
+
 
 
 // Bookings (kept minimal so your dashboard keeps working)
