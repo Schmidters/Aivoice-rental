@@ -51,3 +51,9 @@ BEGIN
   ) THEN
   END IF;
 END $$;
+
+------------------------------------------------------------
+-- Add support for multiple unit types (Ava V7.1 enhancement)
+------------------------------------------------------------
+ALTER TABLE "PropertyFacts"
+ADD COLUMN IF NOT EXISTS "units" JSONB;

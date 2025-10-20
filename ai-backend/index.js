@@ -347,6 +347,7 @@ delete facts.utilitiesIncluded;
         managedBy: facts.managedBy || null,
         listingUrl: facts.listingUrl || null,
         address: facts.address ?? address,
+        units: facts.units || null, // ✅ support multiple unit types
         updatedAt: new Date(),
       },
       create: {
@@ -373,6 +374,7 @@ delete facts.utilitiesIncluded;
         floorPlans: facts.floorPlans || null,
         amenities: facts.amenities || null,
         managedBy: facts.managedBy || null,
+        units: facts.units || null, // ✅ support multiple unit types
         listingUrl: facts.listingUrl || null,
       },
     });
@@ -430,12 +432,14 @@ app.put("/api/property-editor/:slug", async (req, res) => {
         managedBy: facts.managedBy || null,
         listingUrl: facts.listingUrl || null,
         address: facts.address ?? address,
+        units: facts.units || null, 
         updatedAt: new Date(),
       },
       create: {
         propertyId: property.id,
         slug,
         address: facts.address ?? address,
+        units: facts.units || null,  // ✅ add here too
         ...facts,
       },
     });

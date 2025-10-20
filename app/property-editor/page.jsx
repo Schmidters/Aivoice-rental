@@ -281,13 +281,6 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
           />
         </div>
         <div>
-          <Label>Rent</Label>
-          <Input
-            value={property.rent || ""}
-            onChange={(e) => handleChange("rent", e.target.value)}
-          />
-        </div>
-        <div>
           <Label>Bedrooms</Label>
           <Input
             value={property.bedrooms || ""}

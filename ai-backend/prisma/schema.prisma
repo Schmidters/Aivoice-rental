@@ -44,6 +44,7 @@ model PropertyFacts {
   buildingName       String?
   buildingType       String?
   unitType           String?
+  units              Json?
   rent               String?
   deposit            String?
   leaseTerm          String?
