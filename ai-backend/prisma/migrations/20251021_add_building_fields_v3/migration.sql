@@ -14,6 +14,7 @@ DROP COLUMN IF EXISTS "rawJson";
 ALTER TABLE "PropertyFacts"
 ADD COLUMN IF NOT EXISTS "unitType"            TEXT,
 ADD COLUMN IF NOT EXISTS "buildingName"        TEXT,
+ADD COLUMN IF NOT EXISTS "buildingType"        TEXT,
 ADD COLUMN IF NOT EXISTS "leaseType"           TEXT,
 ADD COLUMN IF NOT EXISTS "leaseTerm"           TEXT,
 ADD COLUMN IF NOT EXISTS "deposit"             TEXT,

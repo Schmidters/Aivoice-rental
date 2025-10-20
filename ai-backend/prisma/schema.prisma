@@ -42,6 +42,7 @@ model PropertyFacts {
   slug               String   @unique
   address            String?
   buildingName       String?
+  buildingType       String?
   unitType           String?
   rent               String?
   deposit            String?
