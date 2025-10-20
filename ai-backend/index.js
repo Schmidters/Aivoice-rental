@@ -296,9 +296,9 @@ app.get("/api/property-editor", async (_req, res) => {
     });
     res.json({ ok: true, data });
   } catch (err) {
-    console.error("GET /api/property-editor failed:", err);
-    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
-  }
+  console.error("GET /api/property-editor failed:", err);
+  res.status(500).json({ ok: false, error: err.message || "SERVER_ERROR" });
+}
 });
 
 // ===========================================================
