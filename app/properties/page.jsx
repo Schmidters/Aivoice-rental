@@ -5,7 +5,6 @@ import Link from "next/link";
 
 console.log("NEXT_PUBLIC_AI_BACKEND_URL =", process.env.NEXT_PUBLIC_AI_BACKEND_URL);
 
-
 const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
 
 export default function PropertyDataPage() {
@@ -16,7 +15,8 @@ export default function PropertyDataPage() {
   async function loadData() {
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND}/api/property-editor`);
+      // 🧩 Force fresh data, never use cache
+      const res = await fetch(`${BACKEND}/api/property-editor`, { cache: "no-store" });
       const json = await res.json();
       if (json.ok) setProperties(json.data);
       else console.error("Failed to load properties:", json);
@@ -26,50 +26,42 @@ export default function PropertyDataPage() {
     setLoading(false);
   }
 
+  // ✅ Single clean refresh system
   useEffect(() => {
-  // 🧠 Check if we just came back from saving a property
-  const fromEditor = window.sessionStorage.getItem("savedFromEditor");
+    const handleRefresh = () => loadData();
+    window.addEventListener("propertyDataUpdated", handleRefresh);
 
-  if (fromEditor) {
-    console.log("🔁 Refreshing after save");
-    loadData(); // fetch new data
-    window.sessionStorage.removeItem("savedFromEditor"); // clear flag
-  } else {
-    loadData(); // normal first load
-  }
-}, []);
+    // 🧩 If user navigated back from Property Editor
+    if (sessionStorage.getItem("propertyDataNeedsRefresh") === "true") {
+      sessionStorage.removeItem("propertyDataNeedsRefresh");
+      loadData(); // force fresh DB fetch
+    } else {
+      loadData(); // normal first load
+    }
 
-// 🩹 Listen for propertyDataUpdated events (from Property Editor)
-useEffect(() => {
-  const handlePropertyUpdate = () => {
-    console.log("🔄 Detected property update — reloading data");
-    loadData();
-  };
-  window.addEventListener("propertyDataUpdated", handlePropertyUpdate);
-  return () => window.removeEventListener("propertyDataUpdated", handlePropertyUpdate);
-}, []);
+    return () => window.removeEventListener("propertyDataUpdated", handleRefresh);
+  }, []);
 
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-  <h1 className="text-2xl font-semibold">Property Data</h1>
-  <div className="flex gap-2">
-    <Link
-      href="/property-editor"
-      className="bg-green-500 text-white px-3 py-1.5 rounded-md text-sm hover:bg-green-600"
-    >
-      + New Property
-    </Link>
-    <button
-      onClick={loadData}
-      className="bg-blue-500 text-white px-3 py-1.5 rounded-md text-sm hover:bg-blue-600"
-    >
-      Refresh
-    </button>
-  </div>
-</div>
-
+        <h1 className="text-2xl font-semibold">Property Data</h1>
+        <div className="flex gap-2">
+          <Link
+            href="/property-editor"
+            className="bg-green-500 text-white px-3 py-1.5 rounded-md text-sm hover:bg-green-600"
+          >
+            + New Property
+          </Link>
+          <button
+            onClick={loadData}
+            className="bg-blue-500 text-white px-3 py-1.5 rounded-md text-sm hover:bg-blue-600"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
 
       {/* Loading state */}
       {loading ? (
@@ -79,79 +71,34 @@ useEffect(() => {
           {/* Property List */}
           <div className="lg:col-span-2 rounded-xl border overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-100">
                 <tr>
-                  <th className="text-left px-4 py-2">Slug</th>
-                  <th className="text-left px-4 py-2">Summary</th>
-                  <th className="text-left px-4 py-2">Updated</th>
-                  <th className="text-left px-4 py-2 w-20">Edit</th>
+                  <th className="px-4 py-2 text-left">Address</th>
+                  <th className="px-4 py-2 text-left">Rent</th>
+                  <th className="px-4 py-2 text-left">Bedrooms</th>
+                  <th className="px-4 py-2 text-left">Bathrooms</th>
+                  <th className="px-4 py-2 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {properties.map((p) => (
-                  <tr
-                    key={p.id}
-                    className="border-t hover:bg-gray-100"
-                    onClick={() => setSelected(p)}
-                  >
-                    <td className="px-4 py-2 font-medium text-gray-700">
-                      {p.slug}
-                    </td>
-                    <td className="px-4 py-2 text-gray-600">
-  {p.facts?.notes
-    ? p.facts.notes.slice(0, 60) + "…"
-    : p.facts?.address || "(no summary)"}
-</td>
-
-                    <td className="px-4 py-2 text-gray-500">
-                      {new Date(p.updatedAt).toLocaleString()}
-                    </td>
-                    <td className="px-4 py-2 text-center">
+                  <tr key={p.slug} className="border-t">
+                    <td className="px-4 py-2">{p.facts?.address || p.address}</td>
+                    <td className="px-4 py-2">{p.facts?.rent || "-"}</td>
+                    <td className="px-4 py-2">{p.facts?.bedrooms || "-"}</td>
+                    <td className="px-4 py-2">{p.facts?.bathrooms || "-"}</td>
+                    <td className="px-4 py-2">
                       <Link
                         href={`/property-editor?slug=${p.slug}`}
-                        className="text-blue-600 hover:underline text-xs font-medium"
-                        onClick={(e) => e.stopPropagation()}
+                        className="text-blue-600 hover:underline"
                       >
                         Edit
                       </Link>
                     </td>
                   </tr>
                 ))}
-                {properties.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan="4"
-                      className="px-4 py-6 text-center text-gray-500"
-                    >
-                      No properties found
-                    </td>
-                  </tr>
-                )}
               </tbody>
             </table>
-          </div>
-
-          {/* Property Details */}
-          <div className="lg:col-span-1">
-            <div className="rounded-xl border p-4 bg-white">
-              {!selected ? (
-                <div className="text-gray-500 text-sm">
-                  Select a property to view details
-                </div>
-              ) : (
-                <div>
-                  <h2 className="font-medium mb-2 text-gray-900">
-                    {selected.slug}
-                  </h2>
-                  <p className="text-xs text-gray-500 mb-4">
-                    Updated: {new Date(selected.updatedAt).toLocaleString()}
-                  </p>
-                  <pre className="text-xs bg-gray-100 p-3 rounded overflow-auto max-h-[400px]">
-                    {JSON.stringify(selected.facts ?? selected, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </div>
           </div>
         </div>
       )}
