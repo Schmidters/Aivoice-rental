@@ -33,10 +33,20 @@ ADD COLUMN IF NOT EXISTS "amenities"           JSONB,
 ADD COLUMN IF NOT EXISTS "notes"               TEXT,
 ADD COLUMN IF NOT EXISTS "listingUrl"          TEXT,
 ADD COLUMN IF NOT EXISTS "managedBy"           TEXT,
-ADD COLUMN IF NOT EXISTS "floorPlans"          JSONB;
+ADD COLUMN IF NOT EXISTS "floorPlans"          JSONB,
 ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP DEFAULT NOW(),
 ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMP DEFAULT NOW();
 
--- Rename legacy column to match backend naming
-ALTER TABLE "PropertyFacts" 
-RENAME COLUMN "utilitiesIncluded" TO "includedUtilities";
+------------------------------------------------------------
+-- Rename legacy column if it exists
+------------------------------------------------------------
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'PropertyFacts' AND column_name = 'utilitiesIncluded'
+  ) THEN
+    ALTER TABLE "PropertyFacts" RENAME COLUMN "utilitiesIncluded" TO "includedUtilities";
+  END IF;
+END $$;
