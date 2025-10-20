@@ -1,5 +1,5 @@
--- Migration: add_building_fields (Ava V7, forced redeploy)
--- Purpose: Expand PropertyFacts to support multiple unit types, floorplans, and amenities.
+-- Migration: add_building_fields (Ava V7, aligned with backend)
+-- Purpose: Expand PropertyFacts to support all Ava V7 manual fields
 
 ------------------------------------------------------------
 -- Drop deprecated columns (safe even if not present)
@@ -14,8 +14,6 @@ DROP COLUMN IF EXISTS "rawJson";
 ALTER TABLE "PropertyFacts"
 ADD COLUMN IF NOT EXISTS "unitType"            TEXT,
 ADD COLUMN IF NOT EXISTS "buildingName"        TEXT,
-ADD COLUMN IF NOT EXISTS "buildingType"        TEXT,
-ADD COLUMN IF NOT EXISTS "description"         TEXT,
 ADD COLUMN IF NOT EXISTS "leaseType"           TEXT,
 ADD COLUMN IF NOT EXISTS "leaseTerm"           TEXT,
 ADD COLUMN IF NOT EXISTS "deposit"             TEXT,
@@ -30,10 +28,8 @@ ADD COLUMN IF NOT EXISTS "petPolicy"           TEXT,
 ADD COLUMN IF NOT EXISTS "parking"             TEXT,
 ADD COLUMN IF NOT EXISTS "parkingOptions"      TEXT,
 ADD COLUMN IF NOT EXISTS "utilities"           TEXT,
-ADD COLUMN IF NOT EXISTS "utilitiesIncluded"   TEXT,
+ADD COLUMN IF NOT EXISTS "includedUtilities"   TEXT,
 ADD COLUMN IF NOT EXISTS "amenities"           JSONB,
-ADD COLUMN IF NOT EXISTS "images"              JSONB,
-ADD COLUMN IF NOT EXISTS "units"               JSONB,
 ADD COLUMN IF NOT EXISTS "notes"               TEXT,
 ADD COLUMN IF NOT EXISTS "listingUrl"          TEXT,
 ADD COLUMN IF NOT EXISTS "managedBy"           TEXT,

@@ -37,42 +37,37 @@ model Property {
 }
 
 model PropertyFacts {
-  id                Int      @id @default(autoincrement())
-  propertyId        Int      @unique
-  slug              String   @unique
-  address           String?
-  buildingName      String?
-  buildingType      String?
-  description       String?
-  unitType          String?
-  rent              String?
-  deposit           String?
-  leaseTerm         String?
-  leaseType         String?
-  bedrooms          String?
-  bathrooms         String?
-  sqft              String?
-  parking           String?
-  parkingOptions    String?
-  utilities         String?
-  utilitiesIncluded String?
-  includedUtilities String?
-  petsAllowed       Boolean?
-  petPolicy         String?
-  furnished         Boolean?
-  availability      String?
-  notes             String?
-  floorPlans        Json?
-  amenities         Json?
-  managedBy         String?
-  listingUrl        String?
-  images            Json?
-  units             Json?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                 Int      @id @default(autoincrement())
+  propertyId         Int      @unique
+  slug               String   @unique
+  address            String?
+  buildingName       String?
+  unitType           String?
+  rent               String?
+  deposit            String?
+  leaseTerm          String?
+  bedrooms           String?
+  bathrooms          String?
+  sqft               String?
+  parking            String?
+  parkingOptions     String?
+  utilities          String?
+  includedUtilities  String?
+  petsAllowed        Boolean?
+  petPolicy          String?
+  furnished          Boolean?
+  availability       String?
+  notes              String?
+  floorPlans         Json?
+  amenities          Json?
+  managedBy          String?
+  listingUrl         String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  property Property @relation(fields: [propertyId], references: [id])
+  property           Property @relation(fields: [propertyId], references: [id])
 }
+
 
 
 
