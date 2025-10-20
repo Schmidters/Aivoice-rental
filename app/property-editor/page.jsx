@@ -58,6 +58,18 @@ function PropertyEditorContent() {
             petsAllowed: facts.petsAllowed ?? false,
             furnished: facts.furnished ?? false,
             notes: facts.notes || "",
+            // New fields
+            buildingName: facts.buildingName || "",
+            buildingType: facts.buildingType || "",
+            description: facts.description || "",
+            leaseType: facts.leaseType || "",
+            deposit: facts.deposit || "",
+            managedBy: facts.managedBy || "",
+            listingUrl: facts.listingUrl || "",
+            utilitiesIncluded: facts.utilitiesIncluded || "",
+            petPolicy: facts.petPolicy || "",
+            parkingOptions: facts.parkingOptions || "",
+            amenities: facts.amenities || "",
           });
         } else {
           toast.error("Property not found");
@@ -88,11 +100,23 @@ function PropertyEditorContent() {
         petsAllowed: false,
         furnished: false,
         notes: "",
+        // new fields
+        buildingName: "",
+        buildingType: "",
+        description: "",
+        leaseType: "",
+        deposit: "",
+        managedBy: "",
+        listingUrl: "",
+        utilitiesIncluded: "",
+        petPolicy: "",
+        parkingOptions: "",
+        amenities: "",
       });
     }
   }, [slugFromUrl]);
 
-  // 🧩 Handle field changes and auto-generate slug from address
+  // 🧩 Handle field changes
   const handleChange = (field, value) => {
     setProperty((prev) => {
       if (field === "address") {
@@ -103,12 +127,12 @@ function PropertyEditorContent() {
     });
   };
 
-  // 🧩 Save handler — POST or PUT with correct payload
+  // 🧩 Save handler
   const handleSave = async () => {
     if (!property) return;
     setSaving(true);
     try {
-      const isNew = !slugFromUrl; // ✅ Only new if no slug in URL
+      const isNew = !slugFromUrl;
 
       const payload = {
         slug: property.slug || slugify(property.address),
@@ -124,6 +148,18 @@ function PropertyEditorContent() {
           furnished: property.furnished ?? null,
           availability: property.availability || null,
           notes: property.notes || null,
+          // New fields
+          buildingName: property.buildingName || null,
+          buildingType: property.buildingType || null,
+          description: property.description || null,
+          leaseType: property.leaseType || null,
+          deposit: property.deposit || null,
+          managedBy: property.managedBy || null,
+          listingUrl: property.listingUrl || null,
+          utilitiesIncluded: property.utilitiesIncluded || null,
+          petPolicy: property.petPolicy || null,
+          parkingOptions: property.parkingOptions || null,
+          amenities: property.amenities || null,
         },
       };
 
@@ -175,7 +211,32 @@ function PropertyEditorContent() {
         {slugFromUrl ? "Edit Property" : "Add New Property"}
       </h1>
 
-      <div className="grid grid-cols-2 gap-4 max-w-3xl">
+      <div className="grid grid-cols-2 gap-4 max-w-4xl">
+        {/* Building Info */}
+        <div>
+          <Label>Building Name</Label>
+          <Input
+            value={property.buildingName || ""}
+            onChange={(e) => handleChange("buildingName", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Building Type</Label>
+          <Input
+            value={property.buildingType || ""}
+            onChange={(e) => handleChange("buildingType", e.target.value)}
+          />
+        </div>
+        <div className="col-span-2">
+          <Label>Description</Label>
+          <Textarea
+            value={property.description || ""}
+            onChange={(e) => handleChange("description", e.target.value)}
+            rows={3}
+          />
+        </div>
+
+        {/* Core Info */}
         <div>
           <Label>Address</Label>
           <Input
@@ -218,6 +279,8 @@ function PropertyEditorContent() {
             onChange={(e) => handleChange("parking", e.target.value)}
           />
         </div>
+
+        {/* Extra Info */}
         <div>
           <Label>Utilities</Label>
           <Input
@@ -233,6 +296,69 @@ function PropertyEditorContent() {
           />
         </div>
 
+        {/* Financial Info */}
+        <div>
+          <Label>Deposit</Label>
+          <Input
+            value={property.deposit || ""}
+            onChange={(e) => handleChange("deposit", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Lease Type</Label>
+          <Input
+            value={property.leaseType || ""}
+            onChange={(e) => handleChange("leaseType", e.target.value)}
+          />
+        </div>
+        <div className="col-span-2">
+          <Label>Managed By</Label>
+          <Input
+            value={property.managedBy || ""}
+            onChange={(e) => handleChange("managedBy", e.target.value)}
+          />
+        </div>
+
+        {/* Listing Info */}
+        <div className="col-span-2">
+          <Label>Listing URL</Label>
+          <Input
+            value={property.listingUrl || ""}
+            onChange={(e) => handleChange("listingUrl", e.target.value)}
+          />
+        </div>
+
+        {/* Extra structured fields */}
+        <div>
+          <Label>Utilities Included</Label>
+          <Input
+            value={property.utilitiesIncluded || ""}
+            onChange={(e) => handleChange("utilitiesIncluded", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Pet Policy</Label>
+          <Input
+            value={property.petPolicy || ""}
+            onChange={(e) => handleChange("petPolicy", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Parking Options</Label>
+          <Input
+            value={property.parkingOptions || ""}
+            onChange={(e) => handleChange("parkingOptions", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Amenities</Label>
+          <Input
+            value={property.amenities || ""}
+            onChange={(e) => handleChange("amenities", e.target.value)}
+          />
+        </div>
+
+        {/* Switches */}
         <div className="flex items-center gap-2">
           <Switch
             checked={property.petsAllowed || false}
