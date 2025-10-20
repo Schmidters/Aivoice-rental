@@ -3,7 +3,7 @@
 -- Compatible with PostgreSQL.
 
 ------------------------------------------------------------
--- Clean-up (optional): remove deprecated columns if present
+-- Drop old/deprecated columns
 ------------------------------------------------------------
 ALTER TABLE "PropertyFacts"
 DROP COLUMN IF EXISTS "summary",
@@ -13,12 +13,12 @@ DROP COLUMN IF EXISTS "rawJson";
 -- Core property metadata
 ------------------------------------------------------------
 ALTER TABLE "PropertyFacts"
-ADD COLUMN IF NOT EXISTS "buildingName"        TEXT,       -- e.g. “Junction 88”
-ADD COLUMN IF NOT EXISTS "unitType"            TEXT,       -- e.g. “1 Bed 1 Bath”, “2 Bed + Den”
-ADD COLUMN IF NOT EXISTS "address"             TEXT,
-ADD COLUMN IF NOT EXISTS "rent"                TEXT,
+ADD COLUMN IF NOT EXISTS "buildingName"        TEXT,
+ADD COLUMN IF NOT EXISTS "buildingType"        TEXT,
+ADD COLUMN IF NOT EXISTS "description"         TEXT,
+ADD COLUMN IF NOT EXISTS "leaseType"           TEXT,
 ADD COLUMN IF NOT EXISTS "deposit"             TEXT,
-ADD COLUMN IF NOT EXISTS "leaseTerm"           TEXT,
+ADD COLUMN IF NOT EXISTS "rent"                TEXT,
 ADD COLUMN IF NOT EXISTS "bedrooms"            TEXT,
 ADD COLUMN IF NOT EXISTS "bathrooms"           TEXT,
 ADD COLUMN IF NOT EXISTS "sqft"                TEXT,
@@ -29,22 +29,13 @@ ADD COLUMN IF NOT EXISTS "petPolicy"           TEXT,
 ADD COLUMN IF NOT EXISTS "parking"             TEXT,
 ADD COLUMN IF NOT EXISTS "parkingOptions"      TEXT,
 ADD COLUMN IF NOT EXISTS "utilities"           TEXT,
-ADD COLUMN IF NOT EXISTS "includedUtilities"   TEXT,
-ADD COLUMN IF NOT EXISTS "notes"               TEXT;
-
-------------------------------------------------------------
--- Structured JSON fields (for richer UI integration)
-------------------------------------------------------------
-ALTER TABLE "PropertyFacts"
-ADD COLUMN IF NOT EXISTS "floorPlans" JSONB,   -- [{ name, rent, sqft, bedrooms, bathrooms }]
-ADD COLUMN IF NOT EXISTS "amenities"  JSONB;   -- [{ category, items: [...] }]
-
-------------------------------------------------------------
--- Listing / management metadata
-------------------------------------------------------------
-ALTER TABLE "PropertyFacts"
-ADD COLUMN IF NOT EXISTS "managedBy"  TEXT,    -- e.g. “Mainstreet Equities”
-ADD COLUMN IF NOT EXISTS "listingUrl" TEXT;    -- canonical external listing link
+ADD COLUMN IF NOT EXISTS "utilitiesIncluded"   TEXT,
+ADD COLUMN IF NOT EXISTS "amenities"           JSONB,
+ADD COLUMN IF NOT EXISTS "images"              JSONB,
+ADD COLUMN IF NOT EXISTS "units"               JSONB,
+ADD COLUMN IF NOT EXISTS "notes"               TEXT,
+ADD COLUMN IF NOT EXISTS "listingUrl"          TEXT,
+ADD COLUMN IF NOT EXISTS "managedBy"           TEXT;
 
 ------------------------------------------------------------
 -- Timestamp safety
