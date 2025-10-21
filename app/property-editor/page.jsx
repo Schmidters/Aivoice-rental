@@ -248,352 +248,303 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
   </div>
 )}
 
-      <div className="grid grid-cols-2 gap-4 max-w-4xl">
-        {/* Building Info */}
-        <div>
-          <Label>Building Name</Label>
-          <Input
-            value={property.buildingName || ""}
-            onChange={(e) => handleChange("buildingName", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Building Type</Label>
-          <Input
-            value={property.buildingType || ""}
-            onChange={(e) => handleChange("buildingType", e.target.value)}
-          />
-        </div>
-        <div className="col-span-2">
-          <Label>Description</Label>
-          <Textarea
-            value={property.description || ""}
-            onChange={(e) => handleChange("description", e.target.value)}
-            rows={3}
-          />
-        </div>
+ <div className="grid grid-cols-2 gap-4 max-w-4xl">
+  {/* Building Info */}
+  <div>
+    <Label>Building Name</Label>
+    <Input
+      value={property.buildingName || ""}
+      onChange={(e) => handleChange("buildingName", e.target.value)}
+    />
+  </div>
+  <div>
+    <Label>Building Type</Label>
+    <Input
+      value={property.buildingType || ""}
+      onChange={(e) => handleChange("buildingType", e.target.value)}
+    />
+  </div>
+  <div className="col-span-2">
+    <Label>Description</Label>
+    <Textarea
+      value={property.description || ""}
+      onChange={(e) => handleChange("description", e.target.value)}
+      rows={3}
+    />
+  </div>
 
-        {/* Core Info */}
-        <div>
-          <Label>Address</Label>
-          <Input
-            value={property.address || ""}
-            onChange={(e) => handleChange("address", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Bedrooms</Label>
-          <Input
-            value={property.bedrooms || ""}
-            onChange={(e) => handleChange("bedrooms", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Bathrooms</Label>
-          <Input
-            value={property.bathrooms || ""}
-            onChange={(e) => handleChange("bathrooms", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Sqft</Label>
-          <Input
-            value={property.sqft || ""}
-            onChange={(e) => handleChange("sqft", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Parking</Label>
-          <Input
-            value={property.parking || ""}
-            onChange={(e) => handleChange("parking", e.target.value)}
-          />
-        </div>
+  {/* Core Info */}
+  <div>
+    <Label>Address</Label>
+    <Input
+      value={property.address || ""}
+      onChange={(e) => handleChange("address", e.target.value)}
+    />
+  </div>
+  <div>
+    <Label>Availability</Label>
+    <Input
+      value={property.availability || ""}
+      onChange={(e) => handleChange("availability", e.target.value)}
+    />
+  </div>
+  <div>
+    <Label>Lease Type</Label>
+    <Input
+      value={property.leaseType || ""}
+      onChange={(e) => handleChange("leaseType", e.target.value)}
+    />
+  </div>
+  <div className="col-span-2">
+    <Label>Managed By</Label>
+    <Input
+      value={property.managedBy || ""}
+      onChange={(e) => handleChange("managedBy", e.target.value)}
+    />
+  </div>
 
+  {/* Listing Info */}
+  <div className="col-span-2">
+    <Label>Listing URL</Label>
+    <Input
+      value={property.listingUrl || ""}
+      onChange={(e) => handleChange("listingUrl", e.target.value)}
+    />
+  </div>
 
+  {/* 🏢 Units Section — multiple unit types */}
+  <div className="col-span-2 border-t pt-6 mt-6">
+    <h2 className="text-lg font-semibold mb-3">🏘️ Unit Types</h2>
 
-
-        {/* Extra Info */}
-        <div>
-          <Label>Utilities</Label>
-          <Input
-            value={property.utilities || ""}
-            onChange={(e) => handleChange("utilities", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Availability</Label>
-          <Input
-            value={property.availability || ""}
-            onChange={(e) => handleChange("availability", e.target.value)}
-          />
-        </div>
-
-        {/* Financial Info */}
-        <div>
-          <Label>Deposit</Label>
-          <Input
-            value={property.deposit || ""}
-            onChange={(e) => handleChange("deposit", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Lease Type</Label>
-          <Input
-            value={property.leaseType || ""}
-            onChange={(e) => handleChange("leaseType", e.target.value)}
-          />
-        </div>
-        <div className="col-span-2">
-          <Label>Managed By</Label>
-          <Input
-            value={property.managedBy || ""}
-            onChange={(e) => handleChange("managedBy", e.target.value)}
-          />
-        </div>
-
-        {/* Listing Info */}
-        <div className="col-span-2">
-          <Label>Listing URL</Label>
-          <Input
-            value={property.listingUrl || ""}
-            onChange={(e) => handleChange("listingUrl", e.target.value)}
-          />
-        </div>
-
-        {/* Extra structured fields */}
-{/* 🏢 Units Section — multiple unit types */}
-<div className="col-span-2 border-t pt-6 mt-6">
-  <h2 className="text-lg font-semibold mb-3">🏘️ Unit Types</h2>
-
-  {Array.isArray(property.units) && property.units.length > 0 ? (
-    property.units.map((unit, i) => (
-      <div
-        key={i}
-        className="rounded-xl border border-gray-200 bg-white shadow-sm mb-4 p-4 space-y-3"
-      >
-        <div className="flex justify-between items-center">
-          <h3 className="font-medium text-gray-700">
-            Unit {i + 1} — {unit.unitType || "Untitled"}
-          </h3>
-          <button
-            type="button"
-            onClick={() =>
-              handleChange(
-                "units",
-                property.units.filter((_, j) => j !== i)
-              )
-            }
-            className="text-red-500 text-sm hover:underline"
-          >
-            Remove
-          </button>
-        </div>
-
-        <div className="grid grid-cols-4 gap-3">
-          <div>
-            <Label>Unit Type</Label>
-            <Input
-              value={unit.unitType || ""}
-              onChange={(e) =>
+    {Array.isArray(property.units) && property.units.length > 0 ? (
+      property.units.map((unit, i) => (
+        <div
+          key={i}
+          className="rounded-xl border border-gray-200 bg-white shadow-sm mb-4 p-4 space-y-3"
+        >
+          <div className="flex justify-between items-center">
+            <h3 className="font-medium text-gray-700">
+              Unit {i + 1} — {unit.unitType || "Untitled"}
+            </h3>
+            <button
+              type="button"
+              onClick={() =>
                 handleChange(
                   "units",
-                  property.units.map((u, j) =>
-                    j === i ? { ...u, unitType: e.target.value } : u
-                  )
+                  property.units.filter((_, j) => j !== i)
                 )
               }
-            />
+              className="text-red-500 text-sm hover:underline"
+            >
+              Remove
+            </button>
           </div>
-          <div>
-            <Label>Bedrooms</Label>
-            <Input
-              value={unit.bedrooms || ""}
-              onChange={(e) =>
-                handleChange(
-                  "units",
-                  property.units.map((u, j) =>
-                    j === i ? { ...u, bedrooms: e.target.value } : u
-                  )
-                )
-              }
-            />
-          </div>
-          <div>
-            <Label>Bathrooms</Label>
-            <Input
-              value={unit.bathrooms || ""}
-              onChange={(e) =>
-                handleChange(
-                  "units",
-                  property.units.map((u, j) =>
-                    j === i ? { ...u, bathrooms: e.target.value } : u
-                  )
-                )
-              }
-            />
-          </div>
-          <div>
-            <Label>Rent</Label>
-            <Input
-              value={unit.rent || ""}
-              onChange={(e) =>
-                handleChange(
-                  "units",
-                  property.units.map((u, j) =>
-                    j === i ? { ...u, rent: e.target.value } : u
-                  )
-                )
-              }
-            />
-          </div>
-        </div>
 
-        <div className="grid grid-cols-4 gap-3 mt-2">
-          <div>
-            <Label>Sqft</Label>
-            <Input
-              value={unit.sqft || ""}
-              onChange={(e) =>
-                handleChange(
-                  "units",
-                  property.units.map((u, j) =>
-                    j === i ? { ...u, sqft: e.target.value } : u
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <Label>Unit Type</Label>
+              <Input
+                value={unit.unitType || ""}
+                onChange={(e) =>
+                  handleChange(
+                    "units",
+                    property.units.map((u, j) =>
+                      j === i ? { ...u, unitType: e.target.value } : u
+                    )
                   )
-                )
-              }
-            />
+                }
+              />
+            </div>
+            <div>
+              <Label>Bedrooms</Label>
+              <Input
+                value={unit.bedrooms || ""}
+                onChange={(e) =>
+                  handleChange(
+                    "units",
+                    property.units.map((u, j) =>
+                      j === i ? { ...u, bedrooms: e.target.value } : u
+                    )
+                  )
+                }
+              />
+            </div>
+            <div>
+              <Label>Bathrooms</Label>
+              <Input
+                value={unit.bathrooms || ""}
+                onChange={(e) =>
+                  handleChange(
+                    "units",
+                    property.units.map((u, j) =>
+                      j === i ? { ...u, bathrooms: e.target.value } : u
+                    )
+                  )
+                }
+              />
+            </div>
+            <div>
+              <Label>Rent</Label>
+              <Input
+                value={unit.rent || ""}
+                onChange={(e) =>
+                  handleChange(
+                    "units",
+                    property.units.map((u, j) =>
+                      j === i ? { ...u, rent: e.target.value } : u
+                    )
+                  )
+                }
+              />
+            </div>
           </div>
-          <div>
-            <Label>Deposit</Label>
-            <Input
-              value={unit.deposit || ""}
-              onChange={(e) =>
-                handleChange(
-                  "units",
-                  property.units.map((u, j) =>
-                    j === i ? { ...u, deposit: e.target.value } : u
+
+          <div className="grid grid-cols-4 gap-3 mt-2">
+            <div>
+              <Label>Sqft</Label>
+              <Input
+                value={unit.sqft || ""}
+                onChange={(e) =>
+                  handleChange(
+                    "units",
+                    property.units.map((u, j) =>
+                      j === i ? { ...u, sqft: e.target.value } : u
+                    )
                   )
-                )
-              }
-            />
-          </div>
-          <div>
-            <Label>Availability</Label>
-            <Input
-              value={unit.availability || ""}
-              onChange={(e) =>
-                handleChange(
-                  "units",
-                  property.units.map((u, j) =>
-                    j === i ? { ...u, availability: e.target.value } : u
+                }
+              />
+            </div>
+            <div>
+              <Label>Deposit</Label>
+              <Input
+                value={unit.deposit || ""}
+                onChange={(e) =>
+                  handleChange(
+                    "units",
+                    property.units.map((u, j) =>
+                      j === i ? { ...u, deposit: e.target.value } : u
+                    )
                   )
-                )
-              }
-            />
-          </div>
-          <div>
-            <Label>Notes</Label>
-            <Input
-              value={unit.notes || ""}
-              onChange={(e) =>
-                handleChange(
-                  "units",
-                  property.units.map((u, j) =>
-                    j === i ? { ...u, notes: e.target.value } : u
+                }
+              />
+            </div>
+            <div>
+              <Label>Availability</Label>
+              <Input
+                value={unit.availability || ""}
+                onChange={(e) =>
+                  handleChange(
+                    "units",
+                    property.units.map((u, j) =>
+                      j === i ? { ...u, availability: e.target.value } : u
+                    )
                   )
-                )
-              }
-            />
+                }
+              />
+            </div>
+            <div>
+              <Label>Notes</Label>
+              <Input
+                value={unit.notes || ""}
+                onChange={(e) =>
+                  handleChange(
+                    "units",
+                    property.units.map((u, j) =>
+                      j === i ? { ...u, notes: e.target.value } : u
+                    )
+                  )
+                }
+              />
+            </div>
           </div>
         </div>
+      ))
+    ) : (
+      <div className="text-gray-500 text-sm mb-3">
+        No unit types added yet.
       </div>
-    ))
-  ) : (
-    <div className="text-gray-500 text-sm mb-3">
-      No unit types added yet.
-    </div>
-  )}
+    )}
 
-  <button
-    type="button"
-    onClick={() =>
-      handleChange("units", [
-        ...(property.units || []),
-        {
-          unitType: "",
-          bedrooms: "",
-          bathrooms: "",
-          rent: "",
-          sqft: "",
-          deposit: "",
-          availability: "",
-          notes: "",
-        },
-      ])
-    }
-    className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm hover:bg-blue-700"
-  >
-    + Add Another Unit
-  </button>
+    <button
+      type="button"
+      onClick={() =>
+        handleChange("units", [
+          ...(property.units || []),
+          {
+            unitType: "",
+            bedrooms: "",
+            bathrooms: "",
+            rent: "",
+            sqft: "",
+            deposit: "",
+            availability: "",
+            notes: "",
+          },
+        ])
+      }
+      className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm hover:bg-blue-700"
+    >
+      + Add Another Unit
+    </button>
+  </div>
+
+  {/* Property-wide Info */}
+  <div>
+    <Label>Utilities Included</Label>
+    <Input
+      value={property.utilitiesIncluded || ""}
+      onChange={(e) => handleChange("utilitiesIncluded", e.target.value)}
+    />
+  </div>
+  <div>
+    <Label>Pet Policy</Label>
+    <Input
+      value={property.petPolicy || ""}
+      onChange={(e) => handleChange("petPolicy", e.target.value)}
+    />
+  </div>
+  <div>
+    <Label>Parking Options</Label>
+    <Input
+      value={property.parkingOptions || ""}
+      onChange={(e) => handleChange("parkingOptions", e.target.value)}
+    />
+  </div>
+  <div>
+    <Label>Amenities</Label>
+    <Input
+      value={property.amenities || ""}
+      onChange={(e) => handleChange("amenities", e.target.value)}
+    />
+  </div>
+
+  {/* Switches */}
+  <div className="flex items-center gap-2">
+    <Switch
+      checked={property.petsAllowed || false}
+      onCheckedChange={(v) => handleChange("petsAllowed", v)}
+    />
+    <Label>Pets Allowed</Label>
+  </div>
+
+  <div className="flex items-center gap-2">
+    <Switch
+      checked={property.furnished || false}
+      onCheckedChange={(v) => handleChange("furnished", v)}
+    />
+    <Label>Furnished</Label>
+  </div>
+
+  <div className="col-span-2">
+    <Label>Notes</Label>
+    <Textarea
+      value={property.notes || ""}
+      onChange={(e) => handleChange("notes", e.target.value)}
+      rows={3}
+    />
+  </div>
 </div>
 
-
-        <div>
-          <Label>Utilities Included</Label>
-          <Input
-            value={property.utilitiesIncluded || ""}
-            onChange={(e) => handleChange("utilitiesIncluded", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Pet Policy</Label>
-          <Input
-            value={property.petPolicy || ""}
-            onChange={(e) => handleChange("petPolicy", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Parking Options</Label>
-          <Input
-            value={property.parkingOptions || ""}
-            onChange={(e) => handleChange("parkingOptions", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Amenities</Label>
-          <Input
-            value={property.amenities || ""}
-            onChange={(e) => handleChange("amenities", e.target.value)}
-          />
-        </div>
-
-        {/* Switches */}
-        <div className="flex items-center gap-2">
-          <Switch
-            checked={property.petsAllowed || false}
-            onCheckedChange={(v) => handleChange("petsAllowed", v)}
-          />
-          <Label>Pets Allowed</Label>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Switch
-            checked={property.furnished || false}
-            onCheckedChange={(v) => handleChange("furnished", v)}
-          />
-          <Label>Furnished</Label>
-        </div>
-
-        <div className="col-span-2">
-          <Label>Notes</Label>
-          <Textarea
-            value={property.notes || ""}
-            onChange={(e) => handleChange("notes", e.target.value)}
-            rows={3}
-          />
-        </div>
-      </div>
 
       <Button onClick={handleSave} disabled={saving}>
         {saving ? "Saving…" : "Save Changes"}
