@@ -19,6 +19,3 @@ export function Badge({ className = "", children }) {
     </span>
   );
 }
-
-// ✅ Add this line — it fixes the import in page.jsx
-export default Badge;

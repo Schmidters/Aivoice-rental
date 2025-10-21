@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import ThemeToggle from '@/components/ThemeToggle';
-import Button from '@/components/ui/button';
+import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import PropertyDrawer from '@/components/PropertyDrawer';
 

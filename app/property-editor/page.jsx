@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import Button from "@/components/ui/button";
+import {Button} from "@/components/ui/button";
 import { toast } from "sonner";
 
 const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
