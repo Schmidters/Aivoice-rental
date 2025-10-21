@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { Calendar, dateFnsLocalizer } from "react-big-calendar";
 import { format, parse, startOfWeek, getDay } from "date-fns";
 import enUS from "date-fns/locale/en-US";
-import { parseISO } from "date-fns";
 import "react-big-calendar/lib/css/react-big-calendar.css";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
-// --- Calendar localization setup ---
 const locales = { "en-US": enUS };
 const localizer = dateFnsLocalizer({
   format,
@@ -20,6 +22,10 @@ const localizer = dateFnsLocalizer({
 export default function BookingsCalendar() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [newSlot, setNewSlot] = useState(null);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [notes, setNotes] = useState("");
 
   const BACKEND = (process.env.NEXT_PUBLIC_AI_BACKEND_URL || "").replace(/\/$/, "");
 
@@ -34,7 +40,6 @@ export default function BookingsCalendar() {
       const bookings = (await bookingsRes.json()).data || [];
       const availability = (await availabilityRes.json()).data || [];
 
-      // 🟣 Convert bookings into calendar events
       const bookingEvents = bookings.map((b) => ({
         id: `booking-${b.id}`,
         title: `Showing: ${b.property?.facts?.buildingName || b.property?.address || "Unit"} (${b.lead?.phone})`,
@@ -44,7 +49,6 @@ export default function BookingsCalendar() {
         type: "booking",
       }));
 
-      // 🟢 Convert availability slots into events
       const availabilityEvents = availability.map((a) => ({
         id: `avail-${a.id}`,
         title: a.isBlocked ? "⛔ Blocked" : "🕓 Available",
@@ -63,37 +67,27 @@ export default function BookingsCalendar() {
 
   useEffect(() => {
     loadAll();
-
-    // --- Optional: SSE live updates ---
     const es = new EventSource(`${BACKEND}/api/bookings/events`);
-    es.onmessage = (e) => {
-      try {
-        const b = JSON.parse(e.data);
-        if (b?.datetime) {
-          loadAll(); // re-sync calendar
-        }
-      } catch {}
-    };
+    es.onmessage = () => loadAll();
     return () => es.close();
   }, []);
 
-  async function handleSelectSlot(slotInfo) {
-    const startTime = slotInfo.start;
-    const endTime = slotInfo.end;
+  function handleSelectSlot(slotInfo) {
+    setNewSlot(slotInfo);
+    setModalOpen(true);
+  }
 
-    const isBlocked = !window.confirm(
-      "Add this as an available time? (Cancel to block)"
-    );
-
-    const notes = prompt("Optional notes for this slot:") || "";
+  async function handleSave() {
+    if (!newSlot) return;
+    const { start, end } = newSlot;
 
     const res = await fetch(`${BACKEND}/api/availability`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        propertySlug: "215-16-street-southeast", // ✅ Temporary — later tie to selected property
-        startTime,
-        endTime,
+        propertySlug: "215-16-street-southeast",
+        startTime: start,
+        endTime: end,
         isBlocked,
         notes,
       }),
@@ -101,10 +95,12 @@ export default function BookingsCalendar() {
 
     const j = await res.json();
     if (j.ok) {
-      alert("✅ Slot added successfully!");
-      loadAll();
+      setModalOpen(false);
+      setNotes("");
+      setIsBlocked(false);
+      await loadAll();
     } else {
-      alert("❌ Failed to save slot: " + j.error);
+      alert("❌ Failed to save: " + j.error);
     }
   }
 
@@ -142,6 +138,46 @@ export default function BookingsCalendar() {
           },
         })}
       />
+
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Add Time Slot</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="status">Type:</Label>
+              <select
+                id="status"
+                className="border rounded p-2 w-full bg-gray-50 dark:bg-gray-800"
+                value={isBlocked ? "blocked" : "available"}
+                onChange={(e) => setIsBlocked(e.target.value === "blocked")}
+              >
+                <option value="available">Available</option>
+                <option value="blocked">Blocked</option>
+              </select>
+            </div>
+
+            <div>
+              <Label htmlFor="notes">Notes</Label>
+              <Input
+                id="notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="e.g., Owner away, key pickup..."
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSave}>Save</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
