@@ -82,8 +82,9 @@ export default function PropertyDataPage() {
               </tr>
             ) : (
               properties.map((p, i) => {
-                const facts = p.facts || {};
-                const units = facts.units || [];
+                const facts = p?.facts ?? {};
+                const units = Array.isArray(facts.units) ? facts.units : [];
+
 
                 const rentValues = units
                   .map((u) => parseFloat(u.rent))
