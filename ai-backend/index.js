@@ -11,6 +11,9 @@ import OpenAI from "openai";
 import twilio from "twilio";
 import { PrismaClient } from "@prisma/client";
 import cors from "cors";
+import bookingsRouter from "./routes/bookings.js";
+import availabilityRouter from "./routes/availability.js";
+
 
 dotenv.config();
 
@@ -43,7 +46,8 @@ app.use(
 // Middleware setup
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
-
+app.use("/api/bookings", bookingsRouter);
+app.use("/api/availability", availabilityRouter);
 
 
 
@@ -711,64 +715,102 @@ console.log("🧩 Using property for", from, "→", property?.slug || "none");
 
     const intent = await detectIntent(incomingText);
 
-    // Booking short-circuit (kept from V6 but simplified)
-    if (
-      intent === "book_showing" ||
-      /\b(?:am|pm|tomorrow|today|\b\d{1,2}[: ]?\d{0,2}\b)\b/i.test(incomingText)
-    ) {
-      const { DateTime } = await import("luxon");
-      const tz = "America/Edmonton"; // Keep simple default for V7; you can refine by city later
+    // =======================================================
+// 🧩 AI scheduling flow — checks availability, books via DB
+// =======================================================
+if (
+  intent === "book_showing" ||
+  /\b(?:am|pm|tomorrow|today|\b\d{1,2}[: ]?\d{0,2}\b)\b/i.test(incomingText)
+) {
+  const { DateTime } = await import("luxon");
+  const tz = "America/Edmonton"; // default; can be refined later per property
+  const now = DateTime.now().setZone(tz);
 
-      // naive time parse
-      const m = incomingText.match(/\b(\d{1,2})(?::?(\d{2}))?\s*(am|pm)?\b/i);
-      if (!m) {
-        await sendSms(from, "What time works best for you? (e.g., 'Sat 10:30am')");
-        return res.status(200).end();
-      }
-      let hour = parseInt(m[1], 10);
-      const minute = parseInt(m[2] || "0", 10);
-      const mer = (m[3] || "").toLowerCase();
-      if (mer === "pm" && hour < 12) hour += 12;
-      if (mer === "am" && hour === 12) hour = 0;
+  // 🧠 Step 1: Try to detect a date/time from the message
+  const match = incomingText.match(
+    /\b(?:(mon|tue|wed|thu|fri|sat|sun)\w*)?\s*(\d{1,2})(?::?(\d{2}))?\s*(am|pm)?\b/i
+  );
+  if (!match) {
+    await sendSms(from, "What day and time works best for you?");
+    return res.status(200).end();
+  }
 
-      let when = DateTime.now().setZone(tz);
-      if (incomingText.toLowerCase().includes("tomorrow")) when = when.plus({ days: 1 });
+  const weekday = match[1]?.toLowerCase();
+  let hour = parseInt(match[2], 10);
+  const minute = parseInt(match[3] || "0", 10);
+  const meridian = (match[4] || "").toLowerCase();
+  if (meridian === "pm" && hour < 12) hour += 12;
+  if (meridian === "am" && hour === 12) hour = 0;
 
-      const startAt = when.set({ hour, minute }).startOf("minute");
+  let date = now;
+  if (weekday) {
+    const target = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"].indexOf(weekday.slice(0, 3));
+    const diff = (target - date.weekday + 7) % 7 || 7;
+    date = date.plus({ days: diff });
+  } else if (incomingText.toLowerCase().includes("tomorrow")) {
+    date = date.plus({ days: 1 });
+  }
 
-      const created = await prisma.booking.create({
-        data: {
-          phone: from,
-          property: property ? { connect: { id: property.id } } : undefined,
-          datetime: startAt.toJSDate(),
-          source: "sms",
-        },
-      });
+  const requestedStart = date.set({ hour, minute, second: 0, millisecond: 0 }).toJSDate();
 
-      await saveMessage({
-        phone: from,
-        role: "user",
-        content: incomingText,
-        propertyId: property?.id,
-      });
-      await saveMessage({
-        phone: from,
-        role: "assistant",
-        content: `Booked ${startAt.toFormat("cccc, LLL d 'at' h:mm a")} (${tz.replace("America/", "")}).`,
-        propertyId: property?.id,
-      });
+  // 🧠 Step 2: Check if that time slot is available
+  const availabilityResp = await fetch(`${process.env.NEXT_PUBLIC_AI_BACKEND_URL || "https://aivoice-rental.onrender.com"}/api/bookings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      leadPhone: from,
+      propertySlug: property?.slug,
+      datetime: requestedStart,
+    }),
+  });
 
-      await sendSms(
-        from,
-        `Perfect — you're booked for ${startAt.toFormat("cccc, LLL d 'at' h:mm a")} (${tz.replace(
-          "America/",
-          ""
-        )}).`
-      );
+  const json = await availabilityResp.json();
 
-      console.log(`✅ Booking created for ${from} at ${startAt.toISO()}`);
-      return res.status(200).end();
+  if (json.conflict) {
+    // Slot is busy — fetch next available options
+    const nextSlots = await prisma.availability.findMany({
+      where: { propertyId: property.id, isBlocked: false, startTime: { gte: new Date() } },
+      orderBy: { startTime: "asc" },
+      take: 3,
+    });
+
+    if (nextSlots.length) {
+      const options = nextSlots
+        .map((s) =>
+          DateTime.fromJSDate(s.startTime).setZone(tz).toFormat("ccc, LLL d 'at' h:mm a")
+        )
+        .join(", ");
+      await sendSms(from, `That time's booked, but I can do ${options}. What works best?`);
+    } else {
+      await sendSms(from, "That time isn't open — when else works for you?");
     }
+    return res.status(200).end();
+  }
+
+  // 🧠 Step 3: Confirm success
+  if (json.ok) {
+    const startFmt = DateTime.fromJSDate(new Date(json.data.datetime))
+      .setZone(tz)
+      .toFormat("ccc, LLL d 'at' h:mm a");
+
+    await saveMessage({
+      phone: from,
+      role: "assistant",
+      content: `Perfect — you're booked for ${startFmt}.`,
+      propertyId: property?.id,
+    });
+
+    await sendSms(from, `Perfect — you're booked for ${startFmt}. See you then!`);
+    console.log(`✅ Booking confirmed for ${from} at ${startFmt}`);
+    return res.status(200).end();
+  }
+
+  // 🧠 Step 4: Fallback (error)
+  console.error("❌ Booking API error:", json.error);
+  await sendSms(from, "Sorry, I couldn’t confirm that time. Can you try another?");
+  return res.status(200).end();
+}
+
 
     // Normal AI reply (manual facts only)
     const reply = await aiReply({ incomingText, property, intent });

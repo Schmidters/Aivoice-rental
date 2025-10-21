@@ -92,7 +92,10 @@ model Message {
 model Booking {
   id          Int        @id @default(autoincrement())
   datetime    DateTime
-  source      String?
+  duration    Int?       // minutes (default 30–60)
+  status      String     @default("pending") // pending | confirmed | cancelled
+  source      String?    // "sms", "dashboard", "manual"
+  notes       String?
   createdAt   DateTime   @default(now())
 
   leadId      Int
@@ -100,6 +103,19 @@ model Booking {
   lead        Lead       @relation(fields: [leadId], references: [id])
   property    Property?  @relation(fields: [propertyId], references: [id])
 }
+
+model Availability {
+  id           Int        @id @default(autoincrement())
+  propertyId   Int
+  startTime    DateTime
+  endTime      DateTime
+  isBlocked    Boolean    @default(false)
+  notes        String?
+  createdAt    DateTime   @default(now())
+
+  property     Property   @relation(fields: [propertyId], references: [id])
+}
+
 
 model LeadProperty {
   leadId      Int
