@@ -16,19 +16,29 @@ dotenv.config();
 
 const app = express();
 const prisma = new PrismaClient();
+// ---------- CORS CONFIG ----------
+const allowedOrigins = [
+  "https://ai-leasing-dashboard.onrender.com", // dashboard on Render
+  "http://localhost:3000",                     // local dev
+  "https://app.aivoicerental.com",             // future production domain
+  "https://www.aivoicerental.com"
+];
 
-// ✅ Allow your dashboard origin
 app.use(
   cors({
-    origin: [
-      "https://ai-leasing-dashboard.onrender.com", // your Next.js dashboard
-      "http://localhost:3000", // for local dev
-    ],
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn("❌ Blocked by CORS:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     methods: ["GET", "POST", "PUT", "OPTIONS"],
-    allowedHeaders: ["Content-Type"],
-    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
 
 // Middleware setup
 app.use(bodyParser.json());
@@ -73,13 +83,7 @@ app.use((req, _res, next) => {
   next();
 });
 
-// CORS (for dashboard)
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", DASHBOARD_ORIGIN);
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
-  next();
-});
+
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -265,6 +269,15 @@ app.get("/api/properties", async (_req, res) => {
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
+
+app.get("/api/health", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "ai-backend-v7",
+    time: new Date().toISOString(),
+  });
+});
+
 
 // Property Editor — GET single property (for editing)
 app.get("/api/property-editor/:slug", async (req, res) => {

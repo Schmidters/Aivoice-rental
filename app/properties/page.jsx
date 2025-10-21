@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import Badge from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
+
 
 const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
 
@@ -13,25 +14,55 @@ export default function PropertyDataPage() {
   const [error, setError] = useState(null);
 
   async function loadData() {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${BACKEND}/api/property-editor`, {
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      if (json.ok && Array.isArray(json.data)) {
-        setProperties(json.data);
-      } else {
-        throw new Error("Invalid data format");
-      }
-    } catch (err) {
-      console.error("❌ Error loading properties:", err);
-      setError("Failed to load property data");
+  setLoading(true);
+  setError(null);
+  try {
+    console.log("🔍 Fetching properties from:", `${BACKEND}/api/property-editor`);
+
+    const res = await fetch(`${BACKEND}/api/property-editor`, { cache: "no-store" });
+
+    if (!res.ok) {
+      const hint =
+        res.status === 502
+          ? "Backend unreachable (502 Bad Gateway)"
+          : res.status === 404
+          ? "Property data route not found (404)"
+          : `HTTP ${res.status}`;
+      throw new Error(hint);
     }
+
+    // Try parsing JSON safely
+    let json;
+    try {
+      json = await res.json();
+    } catch (parseErr) {
+      const text = await res.text();
+      console.error("⚠️ Response was not valid JSON:", text);
+      throw new Error("Invalid JSON response from backend");
+    }
+
+    // Validate format
+    if (json.ok && Array.isArray(json.data)) {
+      setProperties(json.data);
+      console.log(`✅ Loaded ${json.data.length} properties`);
+    } else {
+      console.error("⚠️ Invalid response structure:", json);
+      throw new Error("Unexpected data format from backend");
+    }
+  } catch (err) {
+    console.error("❌ Error loading properties:", err);
+    const msg =
+      err.message?.includes("Failed to fetch") ||
+      err.message?.includes("502") ||
+      err.message?.includes("CORS")
+        ? "Backend is unreachable — check Render status or CORS config."
+        : err.message || "Unknown error";
+    setError(`Failed to load property data: ${msg}`);
+  } finally {
     setLoading(false);
   }
+}
+
 
   useEffect(() => {
     loadData();
