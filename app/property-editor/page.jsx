@@ -71,6 +71,7 @@ function PropertyEditorContent() {
             petPolicy: facts.petPolicy || "",
             parkingOptions: facts.parkingOptions || "",
             amenities: facts.amenities || "",
+            units: facts.units || [], 
           });
         } else {
           toast.error("Property not found");
@@ -113,6 +114,7 @@ function PropertyEditorContent() {
         petPolicy: "",
         parkingOptions: "",
         amenities: "",
+        units: [],
       });
     }
   }, [slugFromUrl]);
@@ -148,8 +150,7 @@ const handleSave = async () => {
         petsAllowed: property.petsAllowed ?? null,
         furnished: property.furnished ?? null,
         availability: property.availability || null,
-        notes: property.notes || null,
-        // ✅ fixed field names
+        notes: property.notes || null, // ✅ fixed field names
         buildingName: property.buildingName || null,
         buildingType: property.buildingType || null,
         description: property.description || null,
@@ -309,85 +310,7 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
           />
         </div>
 
-        {/* 🏘️ Multiple Unit Types */}
-<div className="col-span-2 mt-6 border-t pt-4">
-  <h2 className="text-lg font-semibold mb-2">Unit Types</h2>
 
-  {(property.units || []).map((u, i) => (
-    <div key={i} className="grid grid-cols-5 gap-3 mb-3 p-3 border rounded-lg">
-      <div>
-        <Label>Unit Type</Label>
-        <Input
-          value={u.unitType || ""}
-          onChange={(e) => {
-            const copy = [...property.units];
-            copy[i].unitType = e.target.value;
-            setProperty({ ...property, units: copy });
-          }}
-        />
-      </div>
-      <div>
-        <Label>Rent</Label>
-        <Input
-          value={u.rent || ""}
-          onChange={(e) => {
-            const copy = [...property.units];
-            copy[i].rent = e.target.value;
-            setProperty({ ...property, units: copy });
-          }}
-        />
-      </div>
-      <div>
-        <Label>Bedrooms</Label>
-        <Input
-          value={u.bedrooms || ""}
-          onChange={(e) => {
-            const copy = [...property.units];
-            copy[i].bedrooms = e.target.value;
-            setProperty({ ...property, units: copy });
-          }}
-        />
-      </div>
-      <div>
-        <Label>Bathrooms</Label>
-        <Input
-          value={u.bathrooms || ""}
-          onChange={(e) => {
-            const copy = [...property.units];
-            copy[i].bathrooms = e.target.value;
-            setProperty({ ...property, units: copy });
-          }}
-        />
-      </div>
-      <div>
-        <Label>Sqft</Label>
-        <Input
-          value={u.sqft || ""}
-          onChange={(e) => {
-            const copy = [...property.units];
-            copy[i].sqft = e.target.value;
-            setProperty({ ...property, units: copy });
-          }}
-        />
-      </div>
-    </div>
-  ))}
-
-  <button
-    onClick={() =>
-      setProperty({
-        ...property,
-        units: [
-          ...(property.units || []),
-          { unitType: "", rent: "", bedrooms: "", bathrooms: "", sqft: "" },
-        ],
-      })
-    }
-    className="bg-gray-100 px-3 py-1 rounded-md text-sm hover:bg-gray-200"
-  >
-    + Add Unit Type
-  </button>
-</div>
 
 
         {/* Extra Info */}
@@ -439,6 +362,79 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
         </div>
 
         {/* Extra structured fields */}
+        {/* 🏢 Units Section — multiple unit types */}
+<div className="col-span-2 border-t pt-4 mt-4">
+  <h2 className="text-lg font-semibold mb-2">Unit Types</h2>
+
+  {Array.isArray(property.units) && property.units.length > 0 ? (
+    property.units.map((unit, i) => (
+      <div key={i} className="border rounded-lg p-3 mb-3 bg-gray-50">
+        <div className="grid grid-cols-4 gap-2">
+          <div>
+            <Label>Unit Type</Label>
+            <Input
+              value={unit.unitType || ""}
+              onChange={(e) =>
+                handleChange("units", property.units.map((u, j) =>
+                  j === i ? { ...u, unitType: e.target.value } : u
+                ))
+              }
+            />
+          </div>
+          <div>
+            <Label>Bedrooms</Label>
+            <Input
+              value={unit.bedrooms || ""}
+              onChange={(e) =>
+                handleChange("units", property.units.map((u, j) =>
+                  j === i ? { ...u, bedrooms: e.target.value } : u
+                ))
+              }
+            />
+          </div>
+          <div>
+            <Label>Bathrooms</Label>
+            <Input
+              value={unit.bathrooms || ""}
+              onChange={(e) =>
+                handleChange("units", property.units.map((u, j) =>
+                  j === i ? { ...u, bathrooms: e.target.value } : u
+                ))
+              }
+            />
+          </div>
+          <div>
+            <Label>Rent</Label>
+            <Input
+              value={unit.rent || ""}
+              onChange={(e) =>
+                handleChange("units", property.units.map((u, j) =>
+                  j === i ? { ...u, rent: e.target.value } : u
+                ))
+              }
+            />
+          </div>
+        </div>
+      </div>
+    ))
+  ) : (
+    <div className="text-gray-500 text-sm mb-3">No units added yet.</div>
+  )}
+
+  <button
+    type="button"
+    onClick={() =>
+      handleChange("units", [
+        ...(property.units || []),
+        { unitType: "", bedrooms: "", bathrooms: "", rent: "" },
+      ])
+    }
+    className="bg-blue-500 text-white px-3 py-1 rounded-md text-sm"
+  >
+    + Add Unit Type
+  </button>
+</div>
+
         <div>
           <Label>Utilities Included</Label>
           <Input
