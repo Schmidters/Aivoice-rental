@@ -168,26 +168,70 @@ async function findBestPropertyForLeadFromDB(phone) {
   return any ?? null;
 }
 
+// ===========================================================
+// 🧠 Try to detect property reference from message text
+// ===========================================================
+async function findPropertyFromMessage(text) {
+  if (!text) return null;
+
+  const allProps = await prisma.property.findMany({
+    include: { facts: true },
+  });
+
+  const t = text.toLowerCase();
+
+  for (const p of allProps) {
+    const addr = (p.address || "").toLowerCase();
+    const name = (p.facts?.buildingName || "").toLowerCase();
+
+    // Match if message mentions address number or building name
+    if (
+      (addr && t.includes(addr.split(" ")[0])) ||
+      (name && t.includes(name))
+    ) {
+      console.log(`🔍 Matched property by text: ${p.slug}`);
+      return p;
+    }
+  }
+
+  // Fallback to most recently updated property
+  const latest = await prisma.property.findFirst({
+    include: { facts: true },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+  });
+
+  console.log("⚙️ Fallback to latest property:", latest?.slug);
+  return latest;
+}
+
 function buildContextFromProperty(property) {
-  // property.facts contains manual fields (address, rent, bedrooms, etc.)
   const f = property?.facts || {};
   const lines = [];
-  const safe = (v, fallback = "N/A") => (v == null || v === "" ? fallback : v);
+  const unknown = (v) => (v == null || v === "" ? "Unknown" : v);
 
-  lines.push(`Address: ${safe(f.address, property?.address ?? "N/A")}`);
-  lines.push(`Rent: ${safe(f.rent)}`);
-  lines.push(`Bedrooms: ${safe(f.bedrooms)}`);
-  lines.push(`Bathrooms: ${safe(f.bathrooms)}`);
-  lines.push(`Size: ${safe(f.sqft)}`);
-  lines.push(`Parking: ${safe(f.parking)}`);
-  lines.push(`Utilities: ${safe(f.utilities)}`);
-  lines.push(`Pets allowed: ${f.petsAllowed === true ? "Yes" : f.petsAllowed === false ? "No" : "N/A"}`);
-  lines.push(`Furnished: ${f.furnished === true ? "Yes" : f.furnished === false ? "No" : "N/A"}`);
-  lines.push(`Availability: ${safe(f.availability)}`);
-  lines.push(`Notes: ${safe(f.notes, "-")}`);
+  lines.push(`Building Name: ${unknown(f.buildingName)}`);
+  lines.push(`Address: ${unknown(f.address || property?.address)}`);
+  lines.push(`Rent: ${unknown(f.rent)}`);
+  lines.push(`Bedrooms: ${unknown(f.bedrooms)}`);
+  lines.push(`Bathrooms: ${unknown(f.bathrooms)}`);
+  lines.push(`Size: ${unknown(f.sqft)}`);
+  lines.push(`Parking: ${unknown(f.parking)}`);
+  lines.push(`Utilities: ${unknown(f.utilities)}`);
+  lines.push(`Pets Allowed: ${
+    f.petsAllowed === true ? "Yes" : f.petsAllowed === false ? "No" : "Unknown"
+  }`);
+  lines.push(`Furnished: ${
+    f.furnished === true ? "Yes" : f.furnished === false ? "No" : "Unknown"
+  }`);
+  lines.push(`Availability: ${unknown(f.availability)}`);
+  lines.push(`Managed By: ${unknown(f.managedBy)}`);
+  lines.push(`Notes: ${unknown(f.notes)}`);
 
-  return `Property Facts (human-entered):\n${lines.join("\n")}`;
+  return `PROPERTY FACTS (from database, human-entered):
+${lines.join("\n")}
+Only use facts that appear here. If a detail is missing, say "I'm not sure."`;
 }
+
 
 async function detectIntent(text) {
   const labels = [
@@ -203,6 +247,7 @@ async function detectIntent(text) {
   ];
   try {
     const sys = `Classify into: ${labels.join(", ")}. Return ONLY the label.`;
+    console.log("🧠 Context used for AI reply:\n", context);
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       temperature: 0,
@@ -227,7 +272,7 @@ Keep replies concise (1–2 sentences). Never say you're an AI.`;
   try {
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
-      temperature: 0.4,
+      temperature: 0.0,
       messages: [
         { role: "system", content: system },
         {
@@ -250,6 +295,7 @@ async function sendSms(to, body) {
 }
 
 // ---------- ROUTES ----------
+
 
 // Health
 app.get("/", (req, res) => {
@@ -278,6 +324,53 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+// ===========================================================
+// 🔹 INIT FACTS — Link new leads (from Zapier / Email Parser)
+// ===========================================================
+
+app.post("/init/facts", async (req, res) => {
+  try {
+    const { leadName, leadPhone, property, slug, message } = req.body;
+
+    if (!leadPhone || !slug) {
+      return res.status(400).json({ ok: false, error: "Missing phone or slug" });
+    }
+
+    const phone = normalizePhone(leadPhone);
+    const propSlug = slugify(slug);
+
+    // 🔍 Find or create the lead
+    const lead = await upsertLeadByPhone(phone);
+
+    // 🔍 Find the property in DB
+    const propertyRecord = await prisma.property.findUnique({
+      where: { slug: propSlug },
+    });
+
+    if (!propertyRecord) {
+      return res.status(404).json({ ok: false, error: "Property not found" });
+    }
+
+    // ✅ Link this lead to the property
+    await linkLeadToProperty(lead.id, propertyRecord.id);
+
+    // ✅ Log the “welcome” or initial message (if any)
+    if (message) {
+      await saveMessage({
+        phone,
+        role: "assistant",
+        content: message,
+        propertyId: propertyRecord.id,
+      });
+    }
+
+    console.log(`📎 Linked ${phone} → ${propSlug}`);
+    res.json({ ok: true, linked: true });
+  } catch (err) {
+    console.error("❌ /init/facts error:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+  }
+});
 
 // Property Editor — GET single property (for editing)
 app.get("/api/property-editor/:slug", async (req, res) => {
@@ -551,7 +644,16 @@ app.post("/twilio/sms", async (req, res) => {
     const lead = await upsertLeadByPhone(from);
 
     // Choose property for this lead
-    const property = await findBestPropertyForLeadFromDB(from);
+let property = await findBestPropertyForLeadFromDB(from);
+
+// 🔍 Fallback: if lead isn’t linked yet, try to detect from message text
+if (!property) {
+  property = await findPropertyFromMessage(incomingText);
+}
+
+// 🧩 Log which property Ava is using
+console.log("🧩 Using property for", from, "→", property?.slug || "none");
+
 
     // If no property linked yet but message mentions an address-like snippet, you could:
     // - parse and link here (omitted for V7 minimalism)
