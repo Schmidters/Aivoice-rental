@@ -293,13 +293,7 @@ return (
             onChange={(e) => handleChange("address", e.target.value)}
           />
         </div>
-        <div>
-          <Label>Availability</Label>
-          <Input
-            value={property.availability || ""}
-            onChange={(e) => handleChange("availability", e.target.value)}
-          />
-        </div>
+    
         <div>
           <Label>Lease Type</Label>
           <Input
