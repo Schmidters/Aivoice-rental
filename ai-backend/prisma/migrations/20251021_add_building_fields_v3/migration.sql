@@ -73,3 +73,16 @@ ALTER COLUMN "duration" SET DEFAULT 30;
 ------------------------------------------------------------
 -- ✅ END
 ------------------------------------------------------------
+
+------------------------------------------------------------
+-- 🔄 Fix missing reverse relation for Availability.property
+------------------------------------------------------------
+-- Add reverse relation column to Property if not already present
+-- (Prisma requires this for schema validation but the DB table itself is fine)
+
+-- No actual DB schema change is needed — this is just a note.
+-- Prisma expects the relation to be declared in the schema file, not SQL.
+-- So the fix is purely in `schema.prisma`:
+--   model Property { ... availability Availability[] }
+
+-- ✅ Nothing to alter here, just leaving a comment for version tracking.
