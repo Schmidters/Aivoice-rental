@@ -1,11 +1,11 @@
+"use client";
 import * as React from "react";
 
-// Simple local fallback for className merging
 function cn(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
-export function Badge({ className, children }) {
+export function Badge({ className = "", children }) {
   return (
     <span
       className={cn(
@@ -20,4 +20,5 @@ export function Badge({ className, children }) {
   );
 }
 
+// ✅ Add this line — it fixes the import in page.jsx
 export default Badge;
