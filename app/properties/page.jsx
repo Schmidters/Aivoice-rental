@@ -16,7 +16,7 @@ export default function PropertyDataPage() {
   async function loadData() {
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND}/api/property-editor`);
+      const res = await fetch(`${process.env.NEXT_PUBLIC_AI_BACKEND_URL}/api/property-editor`);
       const json = await res.json();
       if (json.ok) setProperties(json.data);
     } catch (err) {
