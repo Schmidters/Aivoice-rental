@@ -116,10 +116,14 @@ export default function PropertyDataPage() {
                     </td>
                     <td className="px-4 py-2 text-gray-700">{rentRange}</td>
                     <td className="px-4 py-2 text-gray-600">
-                      {facts.updatedAt
-                        ? new Date(facts.updatedAt).toLocaleDateString()
-                        : "—"}
-                    </td>
+  {facts?.updatedAt
+    ? new Date(facts.updatedAt).toLocaleDateString()
+    : p.updatedAt
+    ? new Date(p.updatedAt).toLocaleDateString()
+    : "—"}
+</td>
+
+
                     <td className="px-4 py-2">
                       <Link
                         href={`/property-editor?slug=${p.slug}`}
