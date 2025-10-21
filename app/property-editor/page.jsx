@@ -362,22 +362,46 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
         </div>
 
         {/* Extra structured fields */}
-        {/* 🏢 Units Section — multiple unit types */}
-<div className="col-span-2 border-t pt-4 mt-4">
-  <h2 className="text-lg font-semibold mb-2">Unit Types</h2>
+{/* 🏢 Units Section — multiple unit types */}
+<div className="col-span-2 border-t pt-6 mt-6">
+  <h2 className="text-lg font-semibold mb-3">🏘️ Unit Types</h2>
 
   {Array.isArray(property.units) && property.units.length > 0 ? (
     property.units.map((unit, i) => (
-      <div key={i} className="border rounded-lg p-3 mb-3 bg-gray-50">
-        <div className="grid grid-cols-4 gap-2">
+      <div
+        key={i}
+        className="rounded-xl border border-gray-200 bg-white shadow-sm mb-4 p-4 space-y-3"
+      >
+        <div className="flex justify-between items-center">
+          <h3 className="font-medium text-gray-700">
+            Unit {i + 1} — {unit.unitType || "Untitled"}
+          </h3>
+          <button
+            type="button"
+            onClick={() =>
+              handleChange(
+                "units",
+                property.units.filter((_, j) => j !== i)
+              )
+            }
+            className="text-red-500 text-sm hover:underline"
+          >
+            Remove
+          </button>
+        </div>
+
+        <div className="grid grid-cols-4 gap-3">
           <div>
             <Label>Unit Type</Label>
             <Input
               value={unit.unitType || ""}
               onChange={(e) =>
-                handleChange("units", property.units.map((u, j) =>
-                  j === i ? { ...u, unitType: e.target.value } : u
-                ))
+                handleChange(
+                  "units",
+                  property.units.map((u, j) =>
+                    j === i ? { ...u, unitType: e.target.value } : u
+                  )
+                )
               }
             />
           </div>
@@ -386,9 +410,12 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
             <Input
               value={unit.bedrooms || ""}
               onChange={(e) =>
-                handleChange("units", property.units.map((u, j) =>
-                  j === i ? { ...u, bedrooms: e.target.value } : u
-                ))
+                handleChange(
+                  "units",
+                  property.units.map((u, j) =>
+                    j === i ? { ...u, bedrooms: e.target.value } : u
+                  )
+                )
               }
             />
           </div>
@@ -397,9 +424,12 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
             <Input
               value={unit.bathrooms || ""}
               onChange={(e) =>
-                handleChange("units", property.units.map((u, j) =>
-                  j === i ? { ...u, bathrooms: e.target.value } : u
-                ))
+                handleChange(
+                  "units",
+                  property.units.map((u, j) =>
+                    j === i ? { ...u, bathrooms: e.target.value } : u
+                  )
+                )
               }
             />
           </div>
@@ -408,9 +438,71 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
             <Input
               value={unit.rent || ""}
               onChange={(e) =>
-                handleChange("units", property.units.map((u, j) =>
-                  j === i ? { ...u, rent: e.target.value } : u
-                ))
+                handleChange(
+                  "units",
+                  property.units.map((u, j) =>
+                    j === i ? { ...u, rent: e.target.value } : u
+                  )
+                )
+              }
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-3 mt-2">
+          <div>
+            <Label>Sqft</Label>
+            <Input
+              value={unit.sqft || ""}
+              onChange={(e) =>
+                handleChange(
+                  "units",
+                  property.units.map((u, j) =>
+                    j === i ? { ...u, sqft: e.target.value } : u
+                  )
+                )
+              }
+            />
+          </div>
+          <div>
+            <Label>Deposit</Label>
+            <Input
+              value={unit.deposit || ""}
+              onChange={(e) =>
+                handleChange(
+                  "units",
+                  property.units.map((u, j) =>
+                    j === i ? { ...u, deposit: e.target.value } : u
+                  )
+                )
+              }
+            />
+          </div>
+          <div>
+            <Label>Availability</Label>
+            <Input
+              value={unit.availability || ""}
+              onChange={(e) =>
+                handleChange(
+                  "units",
+                  property.units.map((u, j) =>
+                    j === i ? { ...u, availability: e.target.value } : u
+                  )
+                )
+              }
+            />
+          </div>
+          <div>
+            <Label>Notes</Label>
+            <Input
+              value={unit.notes || ""}
+              onChange={(e) =>
+                handleChange(
+                  "units",
+                  property.units.map((u, j) =>
+                    j === i ? { ...u, notes: e.target.value } : u
+                  )
+                )
               }
             />
           </div>
@@ -418,7 +510,9 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
       </div>
     ))
   ) : (
-    <div className="text-gray-500 text-sm mb-3">No units added yet.</div>
+    <div className="text-gray-500 text-sm mb-3">
+      No unit types added yet.
+    </div>
   )}
 
   <button
@@ -426,14 +520,24 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
     onClick={() =>
       handleChange("units", [
         ...(property.units || []),
-        { unitType: "", bedrooms: "", bathrooms: "", rent: "" },
+        {
+          unitType: "",
+          bedrooms: "",
+          bathrooms: "",
+          rent: "",
+          sqft: "",
+          deposit: "",
+          availability: "",
+          notes: "",
+        },
       ])
     }
-    className="bg-blue-500 text-white px-3 py-1 rounded-md text-sm"
+    className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm hover:bg-blue-700"
   >
-    + Add Unit Type
+    + Add Another Unit
   </button>
 </div>
+
 
         <div>
           <Label>Utilities Included</Label>
