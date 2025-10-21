@@ -1,5 +1,9 @@
 import * as React from "react";
-import { cn } from "@/lib/utils";
+
+// Simple local fallback for className merging
+function cn(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
 
 export function Badge({ className, children }) {
   return (
