@@ -69,7 +69,7 @@ function PropertyEditorContent() {
             listingUrl: facts.listingUrl || "",
             utilitiesIncluded: facts.utilitiesIncluded || "",
             petPolicy: facts.petPolicy || "",
-            parkingOptions: facts.parkingOptions || "",
+            parking: facts.parking || "",
             amenities: facts.amenities || "",
             units: facts.units || [], 
           });
@@ -160,7 +160,7 @@ const handleSave = async () => {
         listingUrl: property.listingUrl || null,
         includedUtilities: property.utilitiesIncluded || null, // 🔥 correct field name
         petPolicy: property.petPolicy || null,
-        parkingOptions: property.parkingOptions || null,
+        parking: property.parking || null,
         amenities: property.amenities || null,
         units: property.units || [], // 🧩 new multi-unit data
       },
@@ -498,40 +498,42 @@ return (
 
     {/* ⚙️ PROPERTY-WIDE INFO */}
     <section className="border border-gray-200 rounded-xl p-5 bg-white shadow-sm">
-      <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-        ⚙️ Property-wide Info
-      </h2>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <Label>Utilities Included</Label>
-          <Input
-            value={property.utilitiesIncluded || ""}
-            onChange={(e) => handleChange("utilitiesIncluded", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Pet Policy</Label>
-          <Input
-            value={property.petPolicy || ""}
-            onChange={(e) => handleChange("petPolicy", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Parking Options</Label>
-          <Input
-            value={property.parkingOptions || ""}
-            onChange={(e) => handleChange("parkingOptions", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Amenities</Label>
-          <Input
-            value={property.amenities || ""}
-            onChange={(e) => handleChange("amenities", e.target.value)}
-          />
-        </div>
-      </div>
-    </section>
+  <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+    ⚙️ Property-wide Info
+  </h2>
+  <div className="grid grid-cols-2 gap-4">
+    <div>
+      <Label>Utilities Included</Label>
+      <Input
+        value={property.utilitiesIncluded || ""}
+        onChange={(e) => handleChange("utilitiesIncluded", e.target.value)}
+      />
+    </div>
+    <div>
+      <Label>Pet Policy</Label>
+      <Input
+        value={property.petPolicy || ""}
+        onChange={(e) => handleChange("petPolicy", e.target.value)}
+      />
+    </div>
+    <div>
+      <Label>Parking</Label>
+      <Input
+        name="parking"
+        value={property.parking || ""}
+        onChange={(e) => handleChange("parking", e.target.value)}
+      />
+    </div>
+    <div>
+      <Label>Amenities</Label>
+      <Input
+        value={property.amenities || ""}
+        onChange={(e) => handleChange("amenities", e.target.value)}
+      />
+    </div>
+  </div>
+</section>
+
 
     {/* 🐾 TOGGLES + NOTES */}
     <section className="border border-gray-200 rounded-xl p-5 bg-white shadow-sm">

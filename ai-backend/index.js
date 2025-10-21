@@ -218,30 +218,31 @@ async function findPropertyFromMessage(text) {
 function buildContextFromProperty(property) {
   const f = property?.facts || {};
   const lines = [];
-  const unknown = (v) => (v == null || v === "" ? "Unknown" : v);
 
-  lines.push(`Building Name: ${unknown(f.buildingName)}`);
-  lines.push(`Address: ${unknown(f.address || property?.address)}`);
-  lines.push(`Rent: ${unknown(f.rent)}`);
-  lines.push(`Bedrooms: ${unknown(f.bedrooms)}`);
-  lines.push(`Bathrooms: ${unknown(f.bathrooms)}`);
-  lines.push(`Size: ${unknown(f.sqft)}`);
-  lines.push(`Parking: ${unknown(f.parking)}`);
-  lines.push(`Utilities: ${unknown(f.utilities)}`);
-  lines.push(`Pets Allowed: ${
-    f.petsAllowed === true ? "Yes" : f.petsAllowed === false ? "No" : "Unknown"
-  }`);
-  lines.push(`Furnished: ${
-    f.furnished === true ? "Yes" : f.furnished === false ? "No" : "Unknown"
-  }`);
-  lines.push(`Availability: ${unknown(f.availability)}`);
-  lines.push(`Managed By: ${unknown(f.managedBy)}`);
-  lines.push(`Notes: ${unknown(f.notes)}`);
+  const add = (label, value) => {
+    if (value != null && value !== "") lines.push(`${label}: ${value}`);
+  };
 
-  return `PROPERTY FACTS (from database, human-entered):
+  add("Building Name", f.buildingName);
+  add("Address", f.address || property?.address);
+  add("Rent", f.rent);
+  add("Bedrooms", f.bedrooms);
+  add("Bathrooms", f.bathrooms);
+  add("Size", f.sqft);
+  add("Parking", f.parking);
+  add("Utilities", f.utilities);
+  add("Pets Allowed", f.petsAllowed ? "Yes" : f.petsAllowed === false ? "No" : "");
+  add("Furnished", f.furnished ? "Yes" : f.furnished === false ? "No" : "");
+  add("Availability", f.availability);
+  add("Managed By", f.managedBy);
+  add("Notes", f.notes);
+
+  return `PROPERTY FACTS (human-entered data only):
 ${lines.join("\n")}
-Only use facts that appear here. If a detail is missing, say "I'm not sure."`;
+
+If something isn’t listed here, you don’t know it. Never guess.`;
 }
+
 
 
 async function detectIntent(text) {
@@ -277,9 +278,10 @@ async function detectIntent(text) {
 async function aiReply({ incomingText, property, intent }) {
   const context = buildContextFromProperty(property);
   const system = `
-You are a friendly, professional leasing assistant.
-Use the provided property facts EXACTLY as written. If a detail is not present, don't invent it.
-Keep replies concise (1–2 sentences). Never say you're an AI.`;
+You are Ava, a friendly, professional leasing assistant.
+Use ONLY the property facts provided below — they come directly from the database.
+If something is listed as "Unknown", respond naturally (e.g. "I’ll need to check on that for you" or "I don’t have that info right now"), but never make up details.
+Keep replies brief (1–2 sentences) and conversational. Never say you're an AI.`;
   try {
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
