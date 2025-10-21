@@ -223,6 +223,7 @@ function buildContextFromProperty(property) {
     if (value != null && value !== "") lines.push(`${label}: ${value}`);
   };
 
+  // Build factual dataset
   add("Building Name", f.buildingName);
   add("Address", f.address || property?.address);
   add("Rent", f.rent);
@@ -236,12 +237,27 @@ function buildContextFromProperty(property) {
   add("Availability", f.availability);
   add("Managed By", f.managedBy);
   add("Notes", f.notes);
+  add("Deposit", f.deposit);
+  add("Lease Type", f.leaseType);
+  add("Amenities", f.amenities);
+  add("Pet Policy", f.petPolicy);
+  add("Utilities Included", f.utilitiesIncluded);
 
-  return `PROPERTY FACTS (human-entered data only):
+  const knownFacts = lines.length;
+
+  return `
+PROPERTY FACTS (verified data entered by a human):
 ${lines.join("\n")}
 
-If something isn’t listed here, you don’t know it. Never guess.`;
+You can trust and confidently refer to any of these facts in conversation.
+If a question involves something not listed here, respond naturally with:
+"I'm not sure about that, but I can find out for you."
+
+There are ${knownFacts} known facts provided — assume they are accurate and current.
+Never say “I think” or “I don’t have that info” when the data is listed above.
+`;
 }
+
 
 
 
