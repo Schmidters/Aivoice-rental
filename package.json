@@ -24,6 +24,8 @@
     "class-variance-authority": "^0.7.0",
     "sonner": "^1.4.1",
     "tailwind-variants": "^0.2.1",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "framer-motion": "^11.3.9"
+
   }
 }
