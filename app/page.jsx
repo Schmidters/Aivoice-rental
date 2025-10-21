@@ -15,47 +15,56 @@ export default function Page() {
   const [rows, setRows] = useState([]); // always an array
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const [convRes, leadRes, bookRes] = await Promise.all([
-          fetch('/api/conversations', { cache: 'no-store' }),
-          fetch('/api/leads', { cache: 'no-store' }),
-          fetch('/api/bookings', { cache: 'no-store' }),
-        ]);
-        const [convData, leadData, bookData] = await Promise.all([
-          convRes.json(),
-          leadRes.json(),
-          bookRes.json(),
-        ]);
+useEffect(() => {
+  async function load() {
+    try {
+      const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
 
-        const convs = Array.isArray(convData?.conversations) ? convData.conversations : [];
-        const leadsCount = Number.isFinite(leadData?.count) ? leadData.count : 0;
-        const bookings = Number.isFinite(bookData?.count) ? bookData.count : 0;
+      const [convRes, leadRes, bookRes] = await Promise.all([
+        fetch(`${BACKEND}/api/conversations`, { cache: 'no-store' }),
+        fetch(`${BACKEND}/api/leads`, { cache: 'no-store' }),
+        fetch(`${BACKEND}/api/bookings`, { cache: 'no-store' }),
+      ]);
 
-        setRows(convs);
+      const [convData, leadData, bookData] = await Promise.all([
+        convRes.json(),
+        leadRes.json(),
+        bookRes.json(),
+      ]);
 
-        const rate =
-          leadsCount > 0
-            ? Math.round(((bookings / leadsCount) * 100 + Number.EPSILON) * 10) / 10
-            : 0;
+      const convs = Array.isArray(convData?.conversations)
+        ? convData.conversations
+        : [];
+      const leadsCount = Number.isFinite(leadData?.count)
+        ? leadData.count
+        : 0;
+      const bookings = Number.isFinite(bookData?.count)
+        ? bookData.count
+        : 0;
 
-        setM({
-          leads: leadsCount,
-          conversations: convs.length,
-          bookings,
-          rate,
-        });
-      } catch (e) {
-        console.error('Failed to load dashboard data:', e);
-        setRows([]);
-        setM({ leads: 0, conversations: 0, bookings: 0, rate: 0 });
-      } finally {
-        setLoading(false);
-      }
+      setRows(convs);
+      const rate =
+        leadsCount > 0
+          ? Math.round(((bookings / leadsCount) * 100 + Number.EPSILON) * 10) / 10
+          : 0;
+
+      setM({
+        leads: leadsCount,
+        conversations: convs.length,
+        bookings,
+        rate,
+      });
+    } catch (e) {
+      console.error('Failed to load dashboard data:', e);
+      setRows([]);
+      setM({ leads: 0, conversations: 0, bookings: 0, rate: 0 });
+    } finally {
+      setLoading(false);
     }
-    load();
-  }, []);
+  }
+
+  load();
+}, []);
 
   // placeholder chart data (swap with real analytics later)
   const d = [
