@@ -96,18 +96,28 @@ const normalizePhone = (num) => {
   return s;
 };
 const slugify = (s) =>
-  (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
+  (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "");
 
-// Link a lead to a property (if not already)
+// ✅ Always re-link a lead to the latest property they inquire about
 async function linkLeadToProperty(leadId, propertyId) {
   try {
-    await prisma.leadProperty.upsert({
-      where: { leadId_propertyId: { leadId, propertyId } },
-      update: {},
-      create: { leadId, propertyId },
+    // 🧹 Remove any old property links for this lead
+    await prisma.leadProperty.deleteMany({ where: { leadId } });
+
+    // 🔗 Create a fresh link to the latest property
+    await prisma.leadProperty.create({
+      data: { leadId, propertyId },
     });
-  } catch {}
+
+    console.log(`📎 Linked lead ${leadId} → property ${propertyId}`);
+  } catch (err) {
+    console.error("❌ Error linking lead to property:", err);
+  }
 }
+
 
 async function upsertLeadByPhone(phone) {
   return prisma.lead.upsert({
@@ -116,6 +126,7 @@ async function upsertLeadByPhone(phone) {
     create: { phone },
   });
 }
+
 async function upsertPropertyBySlug(slug, address) {
   return prisma.property.upsert({
     where: { slug },
