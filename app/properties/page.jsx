@@ -5,6 +5,9 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { motion, AnimatePresence } from "framer-motion"; // ✅ <— add this line
+import { ChevronRight } from "lucide-react";
+
+
 
 const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
 
@@ -118,15 +121,19 @@ export default function PropertyDataPage() {
                       className="border-t hover:bg-gray-50 transition-all cursor-pointer"
                       onClick={() => setExpandedIndex(isExpanded ? null : i)}
                     >
-                      <td className="px-4 py-2 font-medium text-gray-900 flex items-center gap-2">
-                        <motion.span
-                          animate={{ rotate: isExpanded ? 90 : 0 }}
-                          transition={{ duration: 0.2 }}
-                        >
-                          ▶
-                        </motion.span>
-                        {facts?.buildingName || "—"}
-                      </td>
+                      <td
+  className="px-4 py-2 font-medium text-gray-900 flex items-center gap-2 select-none"
+>
+  <motion.div
+    animate={{ rotate: isExpanded ? 90 : 0 }}
+    transition={{ duration: 0.2 }}
+    className="text-gray-500"
+  >
+    <ChevronRight size={16} />
+  </motion.div>
+  <span>{facts?.buildingName || "—"}</span>
+</td>
+
                       <td className="px-4 py-2 text-gray-700">
                         {facts?.address || p?.address || "—"}
                       </td>
