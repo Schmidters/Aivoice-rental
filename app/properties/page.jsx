@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import Badge from "@/components/ui/badge";
 
 const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
 
