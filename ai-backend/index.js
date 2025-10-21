@@ -301,6 +301,50 @@ app.get("/api/property-editor", async (_req, res) => {
 }
 });
 
+// 🔹 Leads API — used for dashboard metrics
+app.get("/api/leads", async (_req, res) => {
+  try {
+    const leads = await prisma.lead.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    res.json({ ok: true, count: leads.length, data: leads });
+  } catch (err) {
+    console.error("GET /api/leads failed:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+  }
+});
+
+// 🔹 Conversations API — used for dashboard activity feed
+app.get("/api/conversations", async (_req, res) => {
+  try {
+    const messages = await prisma.message.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 30,
+    });
+
+    // Group messages by conversation ID (usually phone number)
+    const convMap = {};
+    for (const m of messages) {
+      if (!convMap[m.conversationId]) {
+        convMap[m.conversationId] = {
+          id: m.conversationId,
+          property: m.propertySlug || null,
+          lastMessage: m.content,
+          lastTime: m.createdAt,
+        };
+      }
+    }
+
+    const conversations = Object.values(convMap);
+    res.json({ ok: true, conversations });
+  } catch (err) {
+    console.error("GET /api/conversations failed:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+  }
+});
+
+
 // ===========================================================
 // Property Editor — create or update property + all facts (Ava V7)
 // ===========================================================
