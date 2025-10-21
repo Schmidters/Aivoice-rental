@@ -2,91 +2,99 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-
-console.log("NEXT_PUBLIC_AI_BACKEND_URL =", process.env.NEXT_PUBLIC_AI_BACKEND_URL);
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 
 const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
 
 export default function PropertyDataPage() {
   const [properties, setProperties] = useState([]);
-  const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(null);
 
   async function loadData() {
     setLoading(true);
     try {
-      // 🧩 Force fresh data, never use cache
-      const res = await fetch(`${BACKEND}/api/property-editor`, { cache: "no-store" });
+      const res = await fetch(`${BACKEND}/api/property-editor`);
       const json = await res.json();
       if (json.ok) setProperties(json.data);
-      else console.error("Failed to load properties:", json);
     } catch (err) {
       console.error("Error fetching properties:", err);
     }
     setLoading(false);
   }
 
-  // ✅ Single clean refresh system
   useEffect(() => {
-    const handleRefresh = () => loadData();
-    window.addEventListener("propertyDataUpdated", handleRefresh);
-
-    // 🧩 If user navigated back from Property Editor
-    if (sessionStorage.getItem("propertyDataNeedsRefresh") === "true") {
-      sessionStorage.removeItem("propertyDataNeedsRefresh");
-      loadData(); // force fresh DB fetch
-    } else {
-      loadData(); // normal first load
-    }
-
-    return () => window.removeEventListener("propertyDataUpdated", handleRefresh);
+    loadData();
+    // Listen for save events from the editor
+    const handler = () => loadData();
+    window.addEventListener("propertyDataUpdated", handler);
+    return () => window.removeEventListener("propertyDataUpdated", handler);
   }, []);
+
+  if (loading) return <div className="p-6 text-gray-500">Loading properties…</div>;
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Property Data</h1>
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-semibold text-gray-800">🏢 Property Data</h1>
         <div className="flex gap-2">
-          <Link
-            href="/property-editor"
-            className="bg-green-500 text-white px-3 py-1.5 rounded-md text-sm hover:bg-green-600"
-          >
-            + New Property
-          </Link>
-          <button
-            onClick={loadData}
-            className="bg-blue-500 text-white px-3 py-1.5 rounded-md text-sm hover:bg-blue-600"
-          >
+          <Button onClick={loadData} variant="secondary">
             Refresh
-          </button>
+          </Button>
+          <Link href="/property-editor">
+            <Button className="bg-green-600 hover:bg-green-700 text-white">
+              + New Property
+            </Button>
+          </Link>
         </div>
       </div>
 
-      {/* Loading state */}
-      {loading ? (
-        <div className="text-sm text-gray-500">Loading properties…</div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Property List */}
-          <div className="lg:col-span-2 rounded-xl border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="px-4 py-2 text-left">Address</th>
-                  <th className="px-4 py-2 text-left">Rent</th>
-                  <th className="px-4 py-2 text-left">Bedrooms</th>
-                  <th className="px-4 py-2 text-left">Bathrooms</th>
-                  <th className="px-4 py-2 text-left">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {properties.map((p) => (
-                  <tr key={p.slug} className="border-t">
-                    <td className="px-4 py-2">{p.facts?.address || p.address}</td>
-                    <td className="px-4 py-2">{p.facts?.rent || "-"}</td>
-                    <td className="px-4 py-2">{p.facts?.bedrooms || "-"}</td>
-                    <td className="px-4 py-2">{p.facts?.bathrooms || "-"}</td>
+      {/* Main table */}
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm border border-gray-200 rounded-lg bg-white shadow-sm">
+          <thead className="bg-gray-100 text-gray-700">
+            <tr>
+              <th className="px-4 py-2 text-left">Building</th>
+              <th className="px-4 py-2 text-left">Address</th>
+              <th className="px-4 py-2 text-left">Lease Type</th>
+              <th className="px-4 py-2 text-left">Managed By</th>
+              <th className="px-4 py-2 text-left">Units</th>
+              <th className="px-4 py-2 text-left">Last Updated</th>
+              <th className="px-4 py-2 text-left">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {properties.map((p, i) => {
+              const facts = p.facts || {};
+              const isExpanded = expanded === i;
+              const updatedTime = p.updatedAt
+                ? new Date(p.updatedAt).toLocaleTimeString()
+                : "";
+
+              return (
+                <React.Fragment key={p.slug}>
+                  <tr
+                    className="border-t hover:bg-gray-50 cursor-pointer"
+                    onClick={() => setExpanded(isExpanded ? null : i)}
+                  >
+                    <td className="px-4 py-2 font-medium">{facts.buildingName || "-"}</td>
+                    <td className="px-4 py-2">{facts.address || p.address || "-"}</td>
+                    <td className="px-4 py-2">{facts.leaseType || "-"}</td>
+                    <td className="px-4 py-2">{facts.managedBy || "-"}</td>
+                    <td className="px-4 py-2">
+                      {Array.isArray(facts.units) ? facts.units.length : 0}
+                    </td>
+                    <td className="px-4 py-2">
+                      {p.updatedAt ? (
+                        <Badge className="bg-green-100 text-green-700">
+                          {updatedTime}
+                        </Badge>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
                     <td className="px-4 py-2">
                       <Link
                         href={`/property-editor?slug=${p.slug}`}
@@ -96,12 +104,48 @@ export default function PropertyDataPage() {
                       </Link>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+
+                  {isExpanded && (
+                    <tr className="bg-gray-50">
+                      <td colSpan="7" className="p-4">
+                        <Card className="bg-white border shadow-inner">
+                          <CardContent className="space-y-3 text-gray-700">
+                            <p>
+                              <strong>Description:</strong>{" "}
+                              {facts.description || "—"}
+                            </p>
+                            <p>
+                              <strong>Amenities:</strong>{" "}
+                              {facts.amenities || "—"}
+                            </p>
+                            <p>
+                              <strong>Pet Policy:</strong>{" "}
+                              {facts.petPolicy || "—"}
+                            </p>
+                            {Array.isArray(facts.units) && facts.units.length > 0 && (
+                              <div className="mt-3">
+                                <strong>Unit Types:</strong>
+                                <ul className="list-disc list-inside mt-1 space-y-1">
+                                  {facts.units.map((u, idx) => (
+                                    <li key={idx}>
+                                      {u.unitType || "Unit"} — {u.bedrooms || "?"} bd /{" "}
+                                      {u.bathrooms || "?"} ba — ${u.rent || "?"}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
