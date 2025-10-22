@@ -8,13 +8,13 @@ const router = express.Router();
 // 🔹 In-memory list of SSE clients
 const clients = new Set();
 
+
 // --- GET /api/availability ---
+// Returns all availability slots + global open hours
 router.get("/", async (req, res) => {
   try {
     const { propertySlug } = req.query;
-    const where = propertySlug
-      ? { property: { slug: propertySlug } }
-      : undefined;
+    const where = propertySlug ? { property: { slug: propertySlug } } : undefined;
 
     const availability = await prisma.availability.findMany({
       where,
@@ -22,7 +22,22 @@ router.get("/", async (req, res) => {
       orderBy: { startTime: "asc" },
     });
 
-    res.json({ ok: true, data: availability });
+    // 🧠 Fetch global open hours (fallback if missing)
+    let settings = await prisma.globalSettings.findFirst();
+    if (!settings) {
+      settings = await prisma.globalSettings.create({
+        data: { openStart: "08:00", openEnd: "17:00" },
+      });
+    }
+
+    res.json({
+      ok: true,
+      data: {
+        openStart: settings.openStart,
+        openEnd: settings.openEnd,
+        slots: availability,
+      },
+    });
   } catch (err) {
     console.error("❌ GET /api/availability:", err);
     res.status(500).json({ ok: false, error: err.message });
@@ -30,9 +45,27 @@ router.get("/", async (req, res) => {
 });
 
 // --- POST /api/availability ---
+// Handles open hour updates + slot creation
 router.post("/", async (req, res) => {
   try {
-    const { propertySlug, startTime, endTime, isBlocked, notes } = req.body;
+    const { propertySlug, startTime, endTime, isBlocked, notes, openStart, openEnd } = req.body;
+
+    // Case 1: Dashboard "open hours" update
+    if (openStart && openEnd && !startTime) {
+      console.log("🕒 [API] Persisting open hours:", openStart, openEnd);
+      const settings = await prisma.globalSettings.upsert({
+        where: { id: 1 },
+        update: { openStart, openEnd, updatedAt: new Date() },
+        create: { openStart, openEnd },
+      });
+      return res.json({ ok: true, data: settings });
+    }
+
+    // Case 2: Property-level availability slot
+    if (!propertySlug) {
+      return res.status(400).json({ ok: false, error: "Missing propertySlug" });
+    }
+
     const property = await prisma.property.findUnique({ where: { slug: propertySlug } });
     if (!property) return res.status(404).json({ ok: false, error: "Property not found" });
 
@@ -46,7 +79,6 @@ router.post("/", async (req, res) => {
       },
     });
 
-    // Broadcast to all SSE clients
     const msg = JSON.stringify({ type: "created", data: slot });
     clients.forEach((res) => res.write(`data: ${msg}\n\n`));
 
@@ -56,6 +88,7 @@ router.post("/", async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
 
 // --- DELETE /api/availability/:id ---
 router.delete("/:id", async (req, res) => {

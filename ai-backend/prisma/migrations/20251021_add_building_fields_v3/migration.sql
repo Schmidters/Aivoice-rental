@@ -105,3 +105,14 @@ CREATE TABLE IF NOT EXISTS "AgentPreference" (
 INSERT INTO "AgentPreference" ("openStart", "openEnd")
 SELECT '08:00', '17:00'
 WHERE NOT EXISTS (SELECT 1 FROM "AgentPreference");
+
+------------------------------------------------------------
+-- 🕓 GLOBAL OPEN HOURS (persistent calendar defaults)
+------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS "GlobalSettings" (
+  "id" SERIAL PRIMARY KEY,
+  "openStart" TEXT DEFAULT '08:00',
+  "openEnd"   TEXT DEFAULT '17:00',
+  "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+
