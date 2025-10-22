@@ -107,12 +107,52 @@ SELECT '08:00', '17:00'
 WHERE NOT EXISTS (SELECT 1 FROM "AgentPreference");
 
 ------------------------------------------------------------
--- 🕓 GLOBAL OPEN HOURS (persistent calendar defaults)
+-- 🕓 GLOBAL OPEN HOURS (persistent calendar defaults, per-day support)
 ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS "GlobalSettings" (
   "id" SERIAL PRIMARY KEY,
+  -- Global fallback hours
   "openStart" TEXT DEFAULT '08:00',
   "openEnd"   TEXT DEFAULT '17:00',
+
+  -- Per-day custom hours
+  "mondayStart" TEXT DEFAULT '08:00',
+  "mondayEnd"   TEXT DEFAULT '17:00',
+  "tuesdayStart" TEXT DEFAULT '08:00',
+  "tuesdayEnd"   TEXT DEFAULT '17:00',
+  "wednesdayStart" TEXT DEFAULT '08:00',
+  "wednesdayEnd"   TEXT DEFAULT '17:00',
+  "thursdayStart" TEXT DEFAULT '08:00',
+  "thursdayEnd"   TEXT DEFAULT '17:00',
+  "fridayStart" TEXT DEFAULT '08:00',
+  "fridayEnd"   TEXT DEFAULT '17:00',
+  "saturdayStart" TEXT DEFAULT '10:00',
+  "saturdayEnd"   TEXT DEFAULT '14:00',
+  "sundayStart" TEXT DEFAULT '00:00',
+  "sundayEnd"   TEXT DEFAULT '00:00',
+
   "updatedAt" TIMESTAMP DEFAULT NOW()
 );
 
+------------------------------------------------------------
+-- 🧩 Ensure at least one default record exists
+------------------------------------------------------------
+INSERT INTO "GlobalSettings" (
+  "openStart", "openEnd",
+  "mondayStart", "mondayEnd",
+  "tuesdayStart", "tuesdayEnd",
+  "wednesdayStart", "wednesdayEnd",
+  "thursdayStart", "thursdayEnd",
+  "fridayStart", "fridayEnd",
+  "saturdayStart", "saturdayEnd",
+  "sundayStart", "sundayEnd"
+)
+SELECT
+  '08:00', '17:00',
+  '08:00', '17:00',
+  '08:00', '17:00',
+  '08:00', '17:00',
+  '08:00', '17:00',
+  '10:00', '14:00',
+  '00:00', '00:00'
+WHERE NOT EXISTS (SELECT 1 FROM "GlobalSettings");

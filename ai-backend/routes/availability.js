@@ -8,9 +8,10 @@ const router = express.Router();
 // 🔹 In-memory list of SSE clients
 const clients = new Set();
 
-
-// --- GET /api/availability ---
-// Returns all availability slots + global open hours
+/* -------------------------------------------------------------
+   📅 GET /api/availability
+   Returns global open hours + all availability slots
+------------------------------------------------------------- */
 router.get("/", async (req, res) => {
   try {
     const { propertySlug } = req.query;
@@ -22,11 +23,28 @@ router.get("/", async (req, res) => {
       orderBy: { startTime: "asc" },
     });
 
-    // 🧠 Fetch global open hours (fallback if missing)
+    // 🧠 Ensure GlobalSettings row exists
     let settings = await prisma.globalSettings.findFirst();
     if (!settings) {
       settings = await prisma.globalSettings.create({
-        data: { openStart: "08:00", openEnd: "17:00" },
+        data: {
+          openStart: "08:00",
+          openEnd: "17:00",
+          mondayStart: "08:00",
+          mondayEnd: "17:00",
+          tuesdayStart: "08:00",
+          tuesdayEnd: "17:00",
+          wednesdayStart: "08:00",
+          wednesdayEnd: "17:00",
+          thursdayStart: "08:00",
+          thursdayEnd: "17:00",
+          fridayStart: "08:00",
+          fridayEnd: "17:00",
+          saturdayStart: "10:00",
+          saturdayEnd: "14:00",
+          sundayStart: "00:00",
+          sundayEnd: "00:00",
+        },
       });
     }
 
@@ -35,6 +53,15 @@ router.get("/", async (req, res) => {
       data: {
         openStart: settings.openStart,
         openEnd: settings.openEnd,
+        days: {
+          monday: { start: settings.mondayStart, end: settings.mondayEnd },
+          tuesday: { start: settings.tuesdayStart, end: settings.tuesdayEnd },
+          wednesday: { start: settings.wednesdayStart, end: settings.wednesdayEnd },
+          thursday: { start: settings.thursdayStart, end: settings.thursdayEnd },
+          friday: { start: settings.fridayStart, end: settings.fridayEnd },
+          saturday: { start: settings.saturdayStart, end: settings.saturdayEnd },
+          sunday: { start: settings.sundayStart, end: settings.sundayEnd },
+        },
         slots: availability,
       },
     });
@@ -44,24 +71,57 @@ router.get("/", async (req, res) => {
   }
 });
 
-// --- POST /api/availability ---
-// Handles open hour updates + slot creation
+/* -------------------------------------------------------------
+   💾 POST /api/availability
+   Updates per-day open hours or adds property availability
+------------------------------------------------------------- */
 router.post("/", async (req, res) => {
   try {
-    const { propertySlug, startTime, endTime, isBlocked, notes, openStart, openEnd } = req.body;
+    const {
+      propertySlug,
+      startTime,
+      endTime,
+      isBlocked,
+      notes,
+      openStart,
+      openEnd,
+      days,
+    } = req.body;
 
-    // Case 1: Dashboard "open hours" update
-    if (openStart && openEnd && !startTime) {
-      console.log("🕒 [API] Persisting open hours:", openStart, openEnd);
+    // 🕒 Case 1: Update global open hours (including per-day)
+    if (days || openStart || openEnd) {
+      console.log("🕓 [API] Saving global calendar settings:", req.body);
+
+      const updateData = {
+        openStart: openStart ?? "08:00",
+        openEnd: openEnd ?? "17:00",
+        mondayStart: days?.monday?.start ?? "08:00",
+        mondayEnd: days?.monday?.end ?? "17:00",
+        tuesdayStart: days?.tuesday?.start ?? "08:00",
+        tuesdayEnd: days?.tuesday?.end ?? "17:00",
+        wednesdayStart: days?.wednesday?.start ?? "08:00",
+        wednesdayEnd: days?.wednesday?.end ?? "17:00",
+        thursdayStart: days?.thursday?.start ?? "08:00",
+        thursdayEnd: days?.thursday?.end ?? "17:00",
+        fridayStart: days?.friday?.start ?? "08:00",
+        fridayEnd: days?.friday?.end ?? "17:00",
+        saturdayStart: days?.saturday?.start ?? "10:00",
+        saturdayEnd: days?.saturday?.end ?? "14:00",
+        sundayStart: days?.sunday?.start ?? "00:00",
+        sundayEnd: days?.sunday?.end ?? "00:00",
+        updatedAt: new Date(),
+      };
+
       const settings = await prisma.globalSettings.upsert({
         where: { id: 1 },
-        update: { openStart, openEnd, updatedAt: new Date() },
-        create: { openStart, openEnd },
+        update: updateData,
+        create: updateData,
       });
+
       return res.json({ ok: true, data: settings });
     }
 
-    // Case 2: Property-level availability slot
+    // 🏘️ Case 2: Create property-level availability slot
     if (!propertySlug) {
       return res.status(400).json({ ok: false, error: "Missing propertySlug" });
     }
@@ -89,14 +149,14 @@ router.post("/", async (req, res) => {
   }
 });
 
-
-// --- DELETE /api/availability/:id ---
+/* -------------------------------------------------------------
+   ❌ DELETE /api/availability/:id
+------------------------------------------------------------- */
 router.delete("/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const deleted = await prisma.availability.delete({ where: { id } });
 
-    // Broadcast deletion to SSE clients
     const msg = JSON.stringify({ type: "deleted", data: { id } });
     clients.forEach((res) => res.write(`data: ${msg}\n\n`));
 
@@ -107,7 +167,9 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// --- SSE stream: /api/availability/events ---
+/* -------------------------------------------------------------
+   📡 SSE Stream — /api/availability/events
+------------------------------------------------------------- */
 router.get("/events", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -116,6 +178,7 @@ router.get("/events", (req, res) => {
 
   clients.add(res);
   console.log("📡 [SSE] Client connected (availability)");
+
   req.on("close", () => {
     clients.delete(res);
     console.log("❌ [SSE] Client disconnected (availability)");
