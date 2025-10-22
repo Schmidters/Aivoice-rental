@@ -55,9 +55,27 @@ export default function BookingsPage() {
     console.warn("[BookingsPage] ℹ️ Availability returned an array, normalizing...");
     // You can later use this data for blocked time logic
     hours = { openStart: "08:00", openEnd: "17:00" }; // fallback
-  } else {
-    hours = json.data;
+    } else {
+    const d = json.data.days || {};
+    hours = {
+      ...json.data,
+      mondayStart: d.monday?.start,
+      mondayEnd: d.monday?.end,
+      tuesdayStart: d.tuesday?.start,
+      tuesdayEnd: d.tuesday?.end,
+      wednesdayStart: d.wednesday?.start,
+      wednesdayEnd: d.wednesday?.end,
+      thursdayStart: d.thursday?.start,
+      thursdayEnd: d.thursday?.end,
+      fridayStart: d.friday?.start,
+      fridayEnd: d.friday?.end,
+      saturdayStart: d.saturday?.start,
+      saturdayEnd: d.saturday?.end,
+      sundayStart: d.sunday?.start,
+      sundayEnd: d.sunday?.end,
+    };
   }
+
   setOpenHours(hours);
   console.log("[BookingsPage] ✅ Loaded normalized openHours:", hours);
 } else {
@@ -73,7 +91,28 @@ export default function BookingsPage() {
     loadAvailability();
   }, []);
 
+    // 🔁 Listen for global availability update events (e.g., when settings are saved)
+  useEffect(() => {
+    function refreshAvailability() {
+      console.log("[BookingsPage] 🔄 Refreshing availability due to external update");
+      fetch(`${BACKEND}/api/availability`)
+        .then((r) => r.json())
+        .then((json) => {
+          if (json.ok) {
+            setOpenHours(json.data);
+            console.log("[BookingsPage] ✅ Updated openHours:", json.data);
+          }
+        })
+        .catch((err) => console.error("[BookingsPage] ❌ Failed refreshing availability:", err));
+    }
+
+    window.addEventListener("availabilityUpdated", refreshAvailability);
+    return () => window.removeEventListener("availabilityUpdated", refreshAvailability);
+  }, []);
+
+
   // Helper to generate "closed" events outside per-day open hours
+// Helper to generate "closed" events outside per-day open hours
 const generateBlockedHours = () => {
   const blocks = [];
 
@@ -81,57 +120,52 @@ const generateBlockedHours = () => {
   const defaultStart = openHours?.openStart || "08:00";
   const defaultEnd = openHours?.openEnd || "17:00";
 
-  // Try to use per-day settings if present
+  // ✅ Pull from nested days if present
+  const days = openHours?.days || {};
   const dayHours = {
-    0: { start: openHours?.sundayStart || defaultStart, end: openHours?.sundayEnd || defaultEnd },
-    1: { start: openHours?.mondayStart || defaultStart, end: openHours?.mondayEnd || defaultEnd },
-    2: { start: openHours?.tuesdayStart || defaultStart, end: openHours?.tuesdayEnd || defaultEnd },
-    3: { start: openHours?.wednesdayStart || defaultStart, end: openHours?.wednesdayEnd || defaultEnd },
-    4: { start: openHours?.thursdayStart || defaultStart, end: openHours?.thursdayEnd || defaultEnd },
-    5: { start: openHours?.fridayStart || defaultStart, end: openHours?.fridayEnd || defaultEnd },
-    6: { start: openHours?.saturdayStart || defaultStart, end: openHours?.saturdayEnd || defaultEnd },
+    0: days.sunday || { start: defaultStart, end: defaultEnd },
+    1: days.monday || { start: defaultStart, end: defaultEnd },
+    2: days.tuesday || { start: defaultStart, end: defaultEnd },
+    3: days.wednesday || { start: defaultStart, end: defaultEnd },
+    4: days.thursday || { start: defaultStart, end: defaultEnd },
+    5: days.friday || { start: defaultStart, end: defaultEnd },
+    6: days.saturday || { start: defaultStart, end: defaultEnd },
   };
 
   const today = moment().startOf("week");
 
-  // Generate for 90 days (≈3 months)
   for (let i = 0; i < 90; i++) {
     const day = today.clone().add(i, "days");
-    const dow = day.day(); // 0 = Sunday ... 6 = Saturday
+    const dow = day.day();
     const { start, end } = dayHours[dow];
 
     const [openH, openM] = start.split(":").map(Number);
     const [closeH, closeM] = end.split(":").map(Number);
 
-    // Skip “closed all day” (start=end=00:00)
     if (start === "00:00" && end === "00:00") {
       blocks.push({
         title: "Closed All Day",
         start: day.clone().startOf("day").toDate(),
         end: day.clone().endOf("day").toDate(),
         allDay: true,
-        color: "#e5e7eb", // gray-200
+        color: "#e5e7eb",
         type: "closed",
       });
       continue;
     }
 
-    // Closed before opening
     blocks.push({
       title: "Closed",
       start: day.clone().hour(0).minute(0).toDate(),
       end: day.clone().hour(openH).minute(openM).toDate(),
-      allDay: false,
-      color: "#d1d5db", // gray-300
+      color: "#d1d5db",
       type: "closed",
     });
 
-    // Closed after closing
     blocks.push({
       title: "Closed",
       start: day.clone().hour(closeH).minute(closeM).toDate(),
       end: day.clone().hour(23).minute(59).toDate(),
-      allDay: false,
       color: "#d1d5db",
       type: "closed",
     });
@@ -212,19 +246,23 @@ const generateBlockedHours = () => {
     setSettingsOpen(false);
   }}
   onSave={async (settings) => {
-    console.log("[BookingsPage] 💾 Saving openHours:", settings);
-    try {
-      await fetch(`${BACKEND}/api/availability`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
-      });
-      setOpenHours(settings);
-      setSettingsOpen(false);
-    } catch (err) {
-      console.error("[BookingsPage] ❌ Failed to save open hours:", err);
-    }
-  }}
+  console.log("[BookingsPage] 💾 Saving openHours:", settings);
+  try {
+    await fetch(`${BACKEND}/api/availability`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+    setOpenHours(settings);
+    setSettingsOpen(false);
+
+    // 🔁 Trigger dashboard-wide refresh so BookingsPage updates immediately
+    window.dispatchEvent(new Event("availabilityUpdated"));
+  } catch (err) {
+    console.error("[BookingsPage] ❌ Failed to save open hours:", err);
+  }
+}}
+
   defaults={openHours}
 />
 
