@@ -73,45 +73,74 @@ export default function BookingsPage() {
     loadAvailability();
   }, []);
 
-  // Helper to generate "blocked" events outside open hours
-  const generateBlockedHours = () => {
-    const blocks = [];
+  // Helper to generate "closed" events outside per-day open hours
+const generateBlockedHours = () => {
+  const blocks = [];
 
-    // 🧠 Fallback defaults if openHours is not yet loaded
-    const start = openHours?.openStart || "08:00";
-    const end = openHours?.openEnd || "17:00";
+  // Fallback global defaults
+  const defaultStart = openHours?.openStart || "08:00";
+  const defaultEnd = openHours?.openEnd || "17:00";
 
-    // Log whenever openHours changes or is missing
-    if (!openHours?.openStart || !openHours?.openEnd) {
-      console.warn("[BookingsPage] ⚠️ openHours missing values:", openHours);
-    }
+  // Try to use per-day settings if present
+  const dayHours = {
+    0: { start: openHours?.sundayStart || defaultStart, end: openHours?.sundayEnd || defaultEnd },
+    1: { start: openHours?.mondayStart || defaultStart, end: openHours?.mondayEnd || defaultEnd },
+    2: { start: openHours?.tuesdayStart || defaultStart, end: openHours?.tuesdayEnd || defaultEnd },
+    3: { start: openHours?.wednesdayStart || defaultStart, end: openHours?.wednesdayEnd || defaultEnd },
+    4: { start: openHours?.thursdayStart || defaultStart, end: openHours?.thursdayEnd || defaultEnd },
+    5: { start: openHours?.fridayStart || defaultStart, end: openHours?.fridayEnd || defaultEnd },
+    6: { start: openHours?.saturdayStart || defaultStart, end: openHours?.saturdayEnd || defaultEnd },
+  };
+
+  const today = moment().startOf("week");
+
+  // Generate for 90 days (≈3 months)
+  for (let i = 0; i < 90; i++) {
+    const day = today.clone().add(i, "days");
+    const dow = day.day(); // 0 = Sunday ... 6 = Saturday
+    const { start, end } = dayHours[dow];
 
     const [openH, openM] = start.split(":").map(Number);
     const [closeH, closeM] = end.split(":").map(Number);
 
-    const today = moment().startOf("week");
-    for (let i = 0; i < 90; i++) {
-  const day = startDate.clone().add(i, "days");
+    // Skip “closed all day” (start=end=00:00)
+    if (start === "00:00" && end === "00:00") {
       blocks.push({
-  title: "Closed",
-  start: day.clone().hour(0).minute(0).toDate(),
-  end: day.clone().hour(openH).minute(openM).toDate(),
-  allDay: false,
-  color: "#9ca3af", // Tailwind gray-400
-  type: "closed",
-});
-
-      blocks.push({
-        title: "Blocked",
-        start: day.clone().hour(closeH).minute(closeM).toDate(),
-        end: day.clone().hour(23).minute(59).toDate(),
-        allDay: false,
-        color: "red",
-        type: "blocked",
+        title: "Closed All Day",
+        start: day.clone().startOf("day").toDate(),
+        end: day.clone().endOf("day").toDate(),
+        allDay: true,
+        color: "#e5e7eb", // gray-200
+        type: "closed",
       });
+      continue;
     }
-    return blocks;
-  };
+
+    // Closed before opening
+    blocks.push({
+      title: "Closed",
+      start: day.clone().hour(0).minute(0).toDate(),
+      end: day.clone().hour(openH).minute(openM).toDate(),
+      allDay: false,
+      color: "#d1d5db", // gray-300
+      type: "closed",
+    });
+
+    // Closed after closing
+    blocks.push({
+      title: "Closed",
+      start: day.clone().hour(closeH).minute(closeM).toDate(),
+      end: day.clone().hour(23).minute(59).toDate(),
+      allDay: false,
+      color: "#d1d5db",
+      type: "closed",
+    });
+  }
+
+  return blocks;
+};
+
+
 
   const allEvents = [...events, ...generateBlockedHours()];
 
