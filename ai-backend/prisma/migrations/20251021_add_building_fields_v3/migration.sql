@@ -150,3 +150,27 @@ BEGIN
     ADD COLUMN IF NOT EXISTS "sundayEnd" TEXT DEFAULT '00:00';
   END IF;
 END $$;
+
+------------------------------------------------------------
+-- 🧩 Ensure GlobalSettings includes new daily open/close fields (Ava V8.3 patch)
+------------------------------------------------------------
+DO $$
+BEGIN
+  IF to_regclass('"GlobalSettings"') IS NOT NULL THEN
+    ALTER TABLE "GlobalSettings"
+    ADD COLUMN IF NOT EXISTS "mondayStart" TEXT DEFAULT '08:00',
+    ADD COLUMN IF NOT EXISTS "mondayEnd" TEXT DEFAULT '17:00',
+    ADD COLUMN IF NOT EXISTS "tuesdayStart" TEXT DEFAULT '08:00',
+    ADD COLUMN IF NOT EXISTS "tuesdayEnd" TEXT DEFAULT '17:00',
+    ADD COLUMN IF NOT EXISTS "wednesdayStart" TEXT DEFAULT '08:00',
+    ADD COLUMN IF NOT EXISTS "wednesdayEnd" TEXT DEFAULT '17:00',
+    ADD COLUMN IF NOT EXISTS "thursdayStart" TEXT DEFAULT '08:00',
+    ADD COLUMN IF NOT EXISTS "thursdayEnd" TEXT DEFAULT '17:00',
+    ADD COLUMN IF NOT EXISTS "fridayStart" TEXT DEFAULT '08:00',
+    ADD COLUMN IF NOT EXISTS "fridayEnd" TEXT DEFAULT '17:00',
+    ADD COLUMN IF NOT EXISTS "saturdayStart" TEXT DEFAULT '10:00',
+    ADD COLUMN IF NOT EXISTS "saturdayEnd" TEXT DEFAULT '14:00',
+    ADD COLUMN IF NOT EXISTS "sundayStart" TEXT DEFAULT '00:00',
+    ADD COLUMN IF NOT EXISTS "sundayEnd" TEXT DEFAULT '00:00';
+  END IF;
+END $$;

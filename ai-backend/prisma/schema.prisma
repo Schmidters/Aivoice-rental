@@ -135,9 +135,25 @@ model AgentPreference {
 }
 
 model GlobalSettings {
-  id         Int      @id @default(autoincrement())
-  openStart  String   @default("08:00")
-  openEnd    String   @default("17:00")
-  updatedAt  DateTime @updatedAt
-}
+  id             Int      @id @default(autoincrement())
+  openStart      String   @default("08:00")
+  openEnd        String   @default("17:00")
 
+  mondayStart    String   @default("08:00")
+  mondayEnd      String   @default("17:00")
+  tuesdayStart   String   @default("08:00")
+  tuesdayEnd     String   @default("17:00")
+  wednesdayStart String   @default("08:00")
+  wednesdayEnd   String   @default("17:00")
+  thursdayStart  String   @default("08:00")
+  thursdayEnd    String   @default("17:00")
+  fridayStart    String   @default("08:00")
+  fridayEnd      String   @default("17:00")
+  saturdayStart  String   @default("10:00")
+  saturdayEnd    String   @default("14:00")
+  sundayStart    String   @default("00:00")
+  sundayEnd      String   @default("00:00")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
