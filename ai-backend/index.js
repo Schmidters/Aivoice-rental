@@ -13,6 +13,8 @@ import { PrismaClient } from "@prisma/client";
 import cors from "cors";
 import bookingsRouter from "./routes/bookings.js";
 import availabilityRouter from "./routes/availability.js";
+import { getAvailabilityContext } from "./utils/getAvailabilityContext.js";
+
 
 
 dotenv.config();
@@ -279,7 +281,6 @@ async function detectIntent(text) {
   ];
   try {
     const sys = `Classify into: ${labels.join(", ")}. Return ONLY the label.`;
-    console.log("🧠 Context used for AI reply:\n", context);
     const resp = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       temperature: 0,
@@ -295,39 +296,41 @@ async function detectIntent(text) {
   }
 }
 
-async function aiReply({ incomingText, property, intent }) {
+async function aiReply({ incomingText, property, intent, availabilityContext }) {
   const context = buildContextFromProperty(property);
+
+  const hours = availabilityContext?.globalHours || {};
+  const availableSlots = availabilityContext?.availableSlots || [];
+  const blockedSlots = availabilityContext?.blockedSlots || [];
+
   const system = `
 You are "Ava", a professional and personable leasing assistant for a real estate company.
 
 You speak like a real person who works in property management — warm, confident, and natural in tone. 
-You never sound robotic or overly formal, and you do not repeat the same phrasing. 
+You never sound robotic or overly formal.
 
-Your goal is to help leads inquire about rental properties, answer questions about units, and assist with showings.
+Your goal is to help renters inquire about properties and book showings.
 
 ### RULES:
-- Base every answer *only* on the provided PROPERTY FACTS and message context. 
-- If a fact is missing, say something natural like "I'm not sure about that, but I can find out for you."
-- Never guess, hallucinate, or assume. Missing info is acceptable.
-- If there are multiple units, clarify which one they're interested in (“1-bed or 2-bed?”).
-- When asked to book a showing, always confirm the date/time (“Does Saturday at 11am work?”).
-- Keep SMS replies short and friendly (1–2 sentences).
-- If someone sends a long or detailed message (multiple questions), you can reply in 2–4 sentences.
-- Avoid repeating the same property name unless needed for clarity.
-- Never include internal notes, database terms, or special formatting in your messages.
-- Always sound human — like a leasing agent texting from their phone.
+- Base answers only on the provided PROPERTY FACTS and AVAILABILITY INFO below.
+- Offer showing times only within open hours and unblocked slots.
+- If a slot is unavailable, suggest the next available open slot.
+- Never promise times outside open hours.
+- Keep SMS replies short, conversational, and natural.
 
-### PERSONALITY:
-- Friendly, responsive, and slightly casual (“Sure thing!”, “Absolutely!”, “Happy to help!”)
-- Professional, never overly chatty or emoji-heavy.
-- Treat every lead with respect — they could be a potential tenant.
-
-### OUTPUT FORMAT:
-Respond in plain text only. Do not include markdown, bullet points, or code formatting.
-
-PROPERTY FACTS:
+### PROPERTY FACTS:
 ${context}
+
+### GLOBAL OPEN HOURS:
+${JSON.stringify(hours, null, 2)}
+
+### AVAILABLE SLOTS:
+${JSON.stringify(availableSlots.slice(0, 5), null, 2)}
+
+### BLOCKED SLOTS:
+${JSON.stringify(blockedSlots.slice(0, 5), null, 2)}
 `;
+
 
   const resp = await openai.chat.completions.create({
     model: OPENAI_MODEL,
@@ -812,8 +815,17 @@ if (
 }
 
 
-    // Normal AI reply (manual facts only)
-    const reply = await aiReply({ incomingText, property, intent });
+// 🧠 Fetch live availability context
+const availabilityContext = await getAvailabilityContext(property?.slug);
+
+// 🧩 Combine property facts and showing availability
+const reply = await aiReply({
+  incomingText,
+  property,
+  intent,
+  availabilityContext,
+});
+
 
     await saveMessage({ phone: from, role: "user", content: incomingText, propertyId: property?.id });
     await saveMessage({ phone: from, role: "assistant", content: reply, propertyId: property?.id });
@@ -831,33 +843,6 @@ if (
 // Availability (open hours)
 // -----------------------------
 
-app.get("/api/availability", async (req, res) => {
-  try {
-    const prefs = await prisma.agentPreference.findFirst();
-    res.json({
-      ok: true,
-      data: prefs || { openStart: "08:00", openEnd: "17:00" },
-    });
-  } catch (err) {
-    console.error("Error fetching availability:", err);
-    res.json({ ok: false, error: err.message });
-  }
-});
-
-app.post("/api/availability", async (req, res) => {
-  try {
-    const { openStart, openEnd } = req.body;
-    const updated = await prisma.agentPreference.upsert({
-      where: { id: 1 },
-      update: { openStart, openEnd },
-      create: { id: 1, openStart, openEnd },
-    });
-    res.json({ ok: true, data: updated });
-  } catch (err) {
-    console.error("Error saving availability:", err);
-    res.json({ ok: false, error: err.message });
-  }
-});
 
 
 // ---------- Server start ----------
