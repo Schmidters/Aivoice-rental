@@ -1,183 +1,151 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Calendar, dateFnsLocalizer } from "react-big-calendar";
-import { format, parse, startOfWeek, getDay } from "date-fns";
-import enUS from "date-fns/locale/en-US";
+import React, { useState, useEffect } from "react";
+import { Calendar, momentLocalizer } from "react-big-calendar";
+import moment from "moment";
 import "react-big-calendar/lib/css/react-big-calendar.css";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import CalendarSettings from "@/components/CalendarSettings";
+import BookingDetailsDrawer from "@/components/BookingDetailsDrawer";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
+import AddBookingModal from "@/components/AddBookingModal";
+import ReactTooltip from "react-tooltip";
 
-const locales = { "en-US": enUS };
-const localizer = dateFnsLocalizer({
-  format,
-  parse,
-  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 0 }),
-  getDay,
-  locales,
-});
 
-export default function BookingsCalendar() {
+const localizer = momentLocalizer(moment);
+const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
+
+export default function BookingsPage() {
   const [events, setEvents] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [newSlot, setNewSlot] = useState(null);
-  const [isBlocked, setIsBlocked] = useState(false);
-  const [notes, setNotes] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [openHours, setOpenHours] = useState({ openStart: "08:00", openEnd: "17:00" });
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [addModalOpen, setAddModalOpen] = useState(false);
 
-  const BACKEND = (process.env.NEXT_PUBLIC_AI_BACKEND_URL || "").replace(/\/$/, "");
 
-  async function loadAll() {
-    setLoading(true);
+  async function loadBookings() {
     try {
-      const [bookingsRes, availabilityRes] = await Promise.all([
-        fetch(`${BACKEND}/api/bookings`, { cache: "no-store" }),
-        fetch(`${BACKEND}/api/availability`, { cache: "no-store" }),
-      ]);
-
-      const bookings = (await bookingsRes.json()).data || [];
-      const availability = (await availabilityRes.json()).data || [];
-
-      const bookingEvents = bookings.map((b) => ({
-        id: `booking-${b.id}`,
-        title: `Showing: ${b.property?.facts?.buildingName || b.property?.address || "Unit"} (${b.lead?.phone})`,
-        start: new Date(b.datetime),
-        end: new Date(new Date(b.datetime).getTime() + (b.duration || 30) * 60000),
-        allDay: false,
-        type: "booking",
-      }));
-
-      const availabilityEvents = availability.map((a) => ({
-        id: `avail-${a.id}`,
-        title: a.isBlocked ? "⛔ Blocked" : "🕓 Available",
-        start: new Date(a.startTime),
-        end: new Date(a.endTime),
-        allDay: false,
-        type: a.isBlocked ? "blocked" : "available",
-      }));
-
-      setEvents([...bookingEvents, ...availabilityEvents]);
+      const res = await fetch(`${BACKEND}/api/bookings`);
+      const data = await res.json();
+      if (data.ok) setEvents(data.data);
     } catch (err) {
-      console.error("❌ Calendar load failed:", err);
+      console.error("Error loading bookings:", err);
     }
-    setLoading(false);
   }
 
   useEffect(() => {
-    loadAll();
-    const es = new EventSource(`${BACKEND}/api/bookings/events`);
-    es.onmessage = () => loadAll();
-    return () => es.close();
+    loadBookings();
   }, []);
 
-  function handleSelectSlot(slotInfo) {
-    setNewSlot(slotInfo);
-    setModalOpen(true);
-  }
-
-  async function handleSave() {
-    if (!newSlot) return;
-    const { start, end } = newSlot;
-
-    const res = await fetch(`${BACKEND}/api/availability`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        propertySlug: "215-16-street-southeast",
-        startTime: start,
-        endTime: end,
-        isBlocked,
-        notes,
-      }),
-    });
-
-    const j = await res.json();
-    if (j.ok) {
-      setModalOpen(false);
-      setNotes("");
-      setIsBlocked(false);
-      await loadAll();
-    } else {
-      alert("❌ Failed to save: " + j.error);
+  // Helper to generate "blocked" events outside open hours
+  const generateBlockedHours = () => {
+    const blocks = [];
+    const [openH, openM] = openHours.openStart.split(":").map(Number);
+    const [closeH, closeM] = openHours.openEnd.split(":").map(Number);
+    const today = moment().startOf("week");
+    for (let i = 0; i < 7; i++) {
+      const day = today.clone().add(i, "days");
+      blocks.push({
+        title: "Blocked",
+        start: day.clone().hour(0).minute(0).toDate(),
+        end: day.clone().hour(openH).minute(openM).toDate(),
+        allDay: false,
+        color: "red",
+        type: "blocked",
+      });
+      blocks.push({
+        title: "Blocked",
+        start: day.clone().hour(closeH).minute(closeM).toDate(),
+        end: day.clone().hour(23).minute(59).toDate(),
+        allDay: false,
+        color: "red",
+        type: "blocked",
+      });
     }
-  }
+    return blocks;
+  };
+
+  const allEvents = [...events, ...generateBlockedHours()];
 
   return (
-    <div className="p-6 h-[calc(100vh-80px)] bg-gray-50 dark:bg-gray-900">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
-          📅 Showings & Availability
-        </h1>
-        <span className="text-sm text-gray-500">
-          {loading ? "Loading..." : `${events.length} events`}
-        </span>
-      </div>
+    <div className="p-6">
+      <div className="flex justify-between items-center mb-4">
+  <div>
+    <h1 className="text-xl font-semibold">Showings & Availability</h1>
+    <p className="text-sm text-gray-500">Manage your booked showings and open hours</p>
+  </div>
+  <div className="flex gap-2">
+    <Button variant="outline" onClick={() => setSettingsOpen(true)}>Calendar Settings</Button>
+    <Button onClick={() => setAddModalOpen(true)}>+ Add Showing</Button>
+  </div>
+</div>
+
+{/* Legend */}
+<div className="flex gap-4 mb-4 text-sm text-gray-600">
+  <div className="flex items-center gap-2">
+    <span className="w-3 h-3 bg-indigo-600 rounded-sm"></span> Showing
+  </div>
+  <div className="flex items-center gap-2">
+    <span className="w-3 h-3 bg-red-600 rounded-sm"></span> Blocked
+  </div>
+</div>
+
 
       <Calendar
-        selectable
         localizer={localizer}
-        events={events}
+        events={allEvents}
         startAccessor="start"
         endAccessor="end"
-        onSelectSlot={handleSelectSlot}
-        style={{ height: "calc(100vh - 160px)" }}
+        style={{ height: "80vh" }}
         eventPropGetter={(event) => ({
           style: {
-            backgroundColor:
-              event.type === "booking"
-                ? "#4F46E5"
-                : event.type === "available"
-                ? "#16A34A"
-                : "#DC2626",
-            borderRadius: "6px",
-            color: "white",
-            border: "none",
-            padding: "2px 4px",
+            backgroundColor: event.type === "blocked" ? "#dc2626" : "#4f46e5",
+            opacity: event.type === "blocked" ? 0.8 : 1,
           },
         })}
+        onSelectEvent={(event) => {
+          if (event.type !== "blocked") {
+            setSelectedBooking(event);
+            setDrawerOpen(true);
+          }
+        }}
       />
 
-      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>Add Time Slot</DialogTitle>
-          </DialogHeader>
+      <CalendarSettings
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onSave={(settings) => {
+          setOpenHours(settings);
+          setSettingsOpen(false);
+        }}
+        defaults={openHours}
+      />
 
-          <div className="space-y-4 py-2">
-            <div className="flex items-center gap-2">
-              <Label htmlFor="status">Type:</Label>
-              <select
-                id="status"
-                className="border rounded p-2 w-full bg-gray-50 dark:bg-gray-800"
-                value={isBlocked ? "blocked" : "available"}
-                onChange={(e) => setIsBlocked(e.target.value === "blocked")}
-              >
-                <option value="available">Available</option>
-                <option value="blocked">Blocked</option>
-              </select>
-            </div>
+      <BookingDetailsDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        booking={selectedBooking}
+      />
+      <AddBookingModal
+  open={addModalOpen}
+  onClose={() => setAddModalOpen(false)}
+  onSave={async (form) => {
+    try {
+      const res = await fetch(`${BACKEND}/api/bookings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      if (res.ok) {
+        loadBookings();
+        setAddModalOpen(false);
+      }
+    } catch (err) {
+      console.error("Failed to add booking:", err);
+    }
+  }}
+/>
 
-            <div>
-              <Label htmlFor="notes">Notes</Label>
-              <Input
-                id="notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="e.g., Owner away, key pickup..."
-              />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleSave}>Save</Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
