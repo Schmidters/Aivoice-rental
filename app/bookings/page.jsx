@@ -50,11 +50,20 @@ export default function BookingsPage() {
         const res = await fetch(`${BACKEND}/api/availability`);
         const json = await res.json();
         if (json.ok && json.data) {
-          setOpenHours(json.data);
-          console.log("[BookingsPage] ✅ Loaded openHours:", json.data);
-        } else {
-          console.warn("[BookingsPage] ⚠️ Missing openHours data:", json);
-        }
+  let hours;
+  if (Array.isArray(json.data)) {
+    console.warn("[BookingsPage] ℹ️ Availability returned an array, normalizing...");
+    // You can later use this data for blocked time logic
+    hours = { openStart: "08:00", openEnd: "17:00" }; // fallback
+  } else {
+    hours = json.data;
+  }
+  setOpenHours(hours);
+  console.log("[BookingsPage] ✅ Loaded normalized openHours:", hours);
+} else {
+  console.warn("[BookingsPage] ⚠️ Missing openHours data:", json);
+}
+
       } catch (err) {
         console.error("[BookingsPage] ❌ Error loading availability:", err);
       }
