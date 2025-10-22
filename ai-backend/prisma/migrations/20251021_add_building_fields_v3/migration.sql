@@ -5,30 +5,30 @@
 ------------------------------------------------------------
 -- 🩹 Pre-patch: Ensure GlobalSettings columns exist before Prisma runs
 ------------------------------------------------------------
+------------------------------------------------------------
+-- ✅ Safe insert for GlobalSettings default record
+------------------------------------------------------------
 DO $$
 BEGIN
-  IF to_regclass('"GlobalSettings"') IS NOT NULL THEN
-    -- Add missing per-day columns if this table was created by older versions
-    BEGIN
-      ALTER TABLE "GlobalSettings"
-      ADD COLUMN IF NOT EXISTS "mondayStart" TEXT DEFAULT '08:00',
-      ADD COLUMN IF NOT EXISTS "mondayEnd" TEXT DEFAULT '17:00',
-      ADD COLUMN IF NOT EXISTS "tuesdayStart" TEXT DEFAULT '08:00',
-      ADD COLUMN IF NOT EXISTS "tuesdayEnd" TEXT DEFAULT '17:00',
-      ADD COLUMN IF NOT EXISTS "wednesdayStart" TEXT DEFAULT '08:00',
-      ADD COLUMN IF NOT EXISTS "wednesdayEnd" TEXT DEFAULT '17:00',
-      ADD COLUMN IF NOT EXISTS "thursdayStart" TEXT DEFAULT '08:00',
-      ADD COLUMN IF NOT EXISTS "thursdayEnd" TEXT DEFAULT '17:00',
-      ADD COLUMN IF NOT EXISTS "fridayStart" TEXT DEFAULT '08:00',
-      ADD COLUMN IF NOT EXISTS "fridayEnd" TEXT DEFAULT '17:00',
-      ADD COLUMN IF NOT EXISTS "saturdayStart" TEXT DEFAULT '10:00',
-      ADD COLUMN IF NOT EXISTS "saturdayEnd" TEXT DEFAULT '14:00',
-      ADD COLUMN IF NOT EXISTS "sundayStart" TEXT DEFAULT '00:00',
-      ADD COLUMN IF NOT EXISTS "sundayEnd" TEXT DEFAULT '00:00';
-    EXCEPTION
-      WHEN others THEN
-        RAISE NOTICE 'Skipping column add – already exists';
-    END;
+  IF NOT EXISTS (SELECT 1 FROM "GlobalSettings") THEN
+    INSERT INTO "GlobalSettings" (
+      "openStart", "openEnd",
+      "mondayStart", "mondayEnd",
+      "tuesdayStart", "tuesdayEnd",
+      "wednesdayStart", "wednesdayEnd",
+      "thursdayStart", "thursdayEnd",
+      "fridayStart", "fridayEnd",
+      "saturdayStart", "saturdayEnd",
+      "sundayStart", "sundayEnd"
+    ) VALUES (
+      '08:00', '17:00',
+      '08:00', '17:00',
+      '08:00', '17:00',
+      '08:00', '17:00',
+      '08:00', '17:00',
+      '10:00', '14:00',
+      '00:00', '00:00'
+    );
   END IF;
 END $$;
 
