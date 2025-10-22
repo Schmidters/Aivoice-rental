@@ -90,16 +90,17 @@ export default function BookingsPage() {
     const [closeH, closeM] = end.split(":").map(Number);
 
     const today = moment().startOf("week");
-    for (let i = 0; i < 7; i++) {
-      const day = today.clone().add(i, "days");
+    for (let i = 0; i < 90; i++) {
+  const day = startDate.clone().add(i, "days");
       blocks.push({
-        title: "Blocked",
-        start: day.clone().hour(0).minute(0).toDate(),
-        end: day.clone().hour(openH).minute(openM).toDate(),
-        allDay: false,
-        color: "red",
-        type: "blocked",
-      });
+  title: "Closed",
+  start: day.clone().hour(0).minute(0).toDate(),
+  end: day.clone().hour(openH).minute(openM).toDate(),
+  allDay: false,
+  color: "#9ca3af", // Tailwind gray-400
+  type: "closed",
+});
+
       blocks.push({
         title: "Blocked",
         start: day.clone().hour(closeH).minute(closeM).toDate(),
@@ -156,11 +157,16 @@ export default function BookingsPage() {
         endAccessor="end"
         style={{ height: "80vh" }}
         eventPropGetter={(event) => ({
-          style: {
-            backgroundColor: event.type === "blocked" ? "#dc2626" : "#4f46e5",
-            opacity: event.type === "blocked" ? 0.8 : 1,
-          },
-        })}
+  style: {
+    backgroundColor:
+      event.type === "closed" ? "#d1d5db" : "#4f46e5", // light gray vs indigo
+    color: event.type === "closed" ? "#374151" : "white",
+    opacity: 0.9,
+    borderRadius: "6px",
+    border: event.type === "closed" ? "1px solid #9ca3af" : "none",
+  },
+})}
+
         onSelectEvent={(event) => {
           console.log("[BookingsPage] 🖱️ Selected event:", event);
           if (event.type !== "blocked") {
