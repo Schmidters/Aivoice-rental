@@ -1,144 +1,69 @@
 "use client";
-
 import React, { useState, useEffect } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 export default function CalendarSettings({ open, onClose, onSave, defaults }) {
-  const defaultTimes = {
-    mondayStart: "08:00", mondayEnd: "17:00",
-    tuesdayStart: "08:00", tuesdayEnd: "17:00",
-    wednesdayStart: "08:00", wednesdayEnd: "17:00",
-    thursdayStart: "08:00", thursdayEnd: "17:00",
-    fridayStart: "08:00", fridayEnd: "17:00",
-    saturdayStart: "10:00", saturdayEnd: "14:00",
-    sundayStart: "00:00", sundayEnd: "00:00",
-  };
+  const [days, setDays] = useState(defaults?.days || {});
 
-  const [form, setForm] = useState(defaultTimes);
-
-  // 🔄 Load defaults from backend
   useEffect(() => {
-    if (defaults?.days) {
-      const newForm = {};
-      for (const [day, value] of Object.entries(defaults.days)) {
-        newForm[`${day}Start`] = value.start;
-        newForm[`${day}End`] = value.end;
-      }
-      setForm((prev) => ({ ...prev, ...newForm }));
-    }
+    if (defaults?.days) setDays(defaults.days);
   }, [defaults]);
 
   const handleChange = (day, key, value) => {
-    setForm((prev) => ({ ...prev, [`${day}${key}`]: value }));
+    // Always store in HH:mm format (adds leading zero if needed)
+    const normalized = value.padStart(5, "0");
+    setDays((prev) => ({
+      ...prev,
+      [day]: { ...(prev[day] || {}), [key]: normalized },
+    }));
   };
 
   const handleSave = () => {
-    const days = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
-      .reduce((acc, day) => ({
-        ...acc,
-        [day]: {
-          start: form[`${day}Start`],
-          end: form[`${day}End`],
-        },
-      }), {});
-    console.log("[CalendarSettings] 💾 Saving per-day form:", days);
     onSave({ days });
   };
 
-  const copyMondayToAll = () => {
-    setForm((prev) => {
-      const { mondayStart, mondayEnd } = prev;
-      const updated = { ...prev };
-      [
-        "tuesday","wednesday","thursday","friday","saturday","sunday"
-      ].forEach((day) => {
-        updated[`${day}Start`] = mondayStart;
-        updated[`${day}End`] = mondayEnd;
-      });
-      return updated;
-    });
-  };
-
-  const resetDefaults = () => {
-    setForm(defaultTimes);
-  };
+  if (!open) return null;
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg bg-white rounded-lg shadow-xl p-6">
-        <DialogHeader>
-          <DialogTitle>Calendar Settings</DialogTitle>
-        </DialogHeader>
+    <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
+      <div className="bg-white rounded-2xl shadow-xl p-6 w-[420px]">
+        <h2 className="text-lg font-semibold mb-4">Calendar Settings</h2>
 
-        <div className="space-y-5 mt-2">
-          <div className="grid grid-cols-3 text-sm font-semibold text-gray-600 border-b pb-2">
-            <span>Day</span>
-            <span>Open</span>
-            <span>Close</span>
-          </div>
-
-          {[
-            "monday","tuesday","wednesday","thursday","friday","saturday","sunday"
-          ].map((day) => (
+        <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+          {Object.keys(days).map((day) => (
             <div
               key={day}
-              className="grid grid-cols-3 items-center gap-3 border-b py-2 text-sm"
+              className="flex items-center justify-between border-b border-gray-200 py-2"
             >
-              <span className="capitalize">{day}</span>
-              <Input
-                type="time"
-                value={form[`${day}Start`]}
-                onChange={(e) => handleChange(day, "Start", e.target.value)}
-                className="w-28"
-              />
-              <Input
-                type="time"
-                value={form[`${day}End`]}
-                onChange={(e) => handleChange(day, "End", e.target.value)}
-                className="w-28"
-              />
+              <span className="capitalize w-24">{day}</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="time"
+                  step="900" // 15-minute increments
+                  value={days[day]?.start || "08:00"}
+                  onChange={(e) => handleChange(day, "start", e.target.value)}
+                  className="border rounded px-2 py-1 text-sm w-28 focus:ring focus:ring-indigo-200"
+                />
+                <span className="text-gray-400">–</span>
+                <input
+                  type="time"
+                  step="900"
+                  value={days[day]?.end || "17:00"}
+                  onChange={(e) => handleChange(day, "end", e.target.value)}
+                  className="border rounded px-2 py-1 text-sm w-28 focus:ring focus:ring-indigo-200"
+                />
+              </div>
             </div>
           ))}
         </div>
 
-        {/* Utility Buttons */}
-        <div className="flex justify-between mt-5">
-          <Button
-            variant="outline"
-            onClick={copyMondayToAll}
-            className="text-sm border-gray-300 hover:bg-gray-100"
-          >
-            Copy Monday to All
-          </Button>
-          <Button
-            variant="outline"
-            onClick={resetDefaults}
-            className="text-sm border-gray-300 hover:bg-gray-100"
-          >
-            Reset Defaults
-          </Button>
-        </div>
-
-        <DialogFooter className="flex justify-end gap-3 mt-6">
+        <div className="mt-5 flex justify-end gap-3">
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            onClick={handleSave}
-            className="bg-indigo-600 text-white hover:bg-indigo-700"
-          >
-            Save Changes
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <Button onClick={handleSave}>Save</Button>
+        </div>
+      </div>
+    </div>
   );
 }
