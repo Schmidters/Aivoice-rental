@@ -26,6 +26,7 @@
     "tailwind-variants": "^0.2.1",
     "cors": "^2.8.5",
     "framer-motion": "^11.3.9",
-    "@radix-ui/react-dialog": "^1.0.5"
+    "@radix-ui/react-dialog": "^1.0.5",
+    "react-tooltip": "^5.27.0"
   }
 }
