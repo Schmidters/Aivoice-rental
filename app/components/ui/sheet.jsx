@@ -12,9 +12,10 @@ export function Sheet({ open, onOpenChange, children }) {
 }
 
 export function SheetContent({ children, side = "right", className = "" }) {
-  const sideClass = side === "right"
-    ? "fixed right-0 top-0 h-full w-80 bg-white dark:bg-gray-900 shadow-lg p-6 overflow-y-auto"
-    : "fixed left-0 top-0 h-full w-80 bg-white dark:bg-gray-900 shadow-lg p-6 overflow-y-auto";
+  const sideClass =
+    side === "right"
+      ? "fixed right-0 top-0 h-full w-96 bg-white dark:bg-gray-900 shadow-xl transition-transform p-6 overflow-y-auto"
+      : "fixed left-0 top-0 h-full w-96 bg-white dark:bg-gray-900 shadow-xl transition-transform p-6 overflow-y-auto";
 
   return <DialogContent className={`${sideClass} ${className}`}>{children}</DialogContent>;
 }
