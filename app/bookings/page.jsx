@@ -51,31 +51,38 @@ export default function BookingsPage() {
 
   // Helper to generate "blocked" events outside open hours
   const generateBlockedHours = () => {
-    const blocks = [];
-    const [openH, openM] = openHours.openStart.split(":").map(Number);
-    const [closeH, closeM] = openHours.openEnd.split(":").map(Number);
-    const today = moment().startOf("week");
-    for (let i = 0; i < 7; i++) {
-      const day = today.clone().add(i, "days");
-      blocks.push({
-        title: "Blocked",
-        start: day.clone().hour(0).minute(0).toDate(),
-        end: day.clone().hour(openH).minute(openM).toDate(),
-        allDay: false,
-        color: "red",
-        type: "blocked",
-      });
-      blocks.push({
-        title: "Blocked",
-        start: day.clone().hour(closeH).minute(closeM).toDate(),
-        end: day.clone().hour(23).minute(59).toDate(),
-        allDay: false,
-        color: "red",
-        type: "blocked",
-      });
-    }
-    return blocks;
-  };
+  const blocks = [];
+
+  // 🧠 Fallback defaults if openHours is not yet loaded
+  const start = openHours?.openStart || "08:00";
+  const end = openHours?.openEnd || "17:00";
+
+  const [openH, openM] = start.split(":").map(Number);
+  const [closeH, closeM] = end.split(":").map(Number);
+
+  const today = moment().startOf("week");
+  for (let i = 0; i < 7; i++) {
+    const day = today.clone().add(i, "days");
+    blocks.push({
+      title: "Blocked",
+      start: day.clone().hour(0).minute(0).toDate(),
+      end: day.clone().hour(openH).minute(openM).toDate(),
+      allDay: false,
+      color: "red",
+      type: "blocked",
+    });
+    blocks.push({
+      title: "Blocked",
+      start: day.clone().hour(closeH).minute(closeM).toDate(),
+      end: day.clone().hour(23).minute(59).toDate(),
+      allDay: false,
+      color: "red",
+      type: "blocked",
+    });
+  }
+  return blocks;
+};
+
 
   const allEvents = [...events, ...generateBlockedHours()];
 
