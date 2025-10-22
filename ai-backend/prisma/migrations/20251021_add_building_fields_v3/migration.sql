@@ -1,36 +1,6 @@
--- Migration: add_building_fields_and_scheduling (Ava V8)
+-- Migration: add_building_fields_and_scheduling (Ava V8.2)
 -- Purpose: Expand PropertyFacts + introduce Booking scheduling + Availability support
--- Safe for repeated runs (uses IF NOT EXISTS)
-
-------------------------------------------------------------
--- 🩹 Pre-patch: Ensure GlobalSettings columns exist before Prisma runs
-------------------------------------------------------------
-------------------------------------------------------------
--- ✅ Safe insert for GlobalSettings default record
-------------------------------------------------------------
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM "GlobalSettings") THEN
-    INSERT INTO "GlobalSettings" (
-      "openStart", "openEnd",
-      "mondayStart", "mondayEnd",
-      "tuesdayStart", "tuesdayEnd",
-      "wednesdayStart", "wednesdayEnd",
-      "thursdayStart", "thursdayEnd",
-      "fridayStart", "fridayEnd",
-      "saturdayStart", "saturdayEnd",
-      "sundayStart", "sundayEnd"
-    ) VALUES (
-      '08:00', '17:00',
-      '08:00', '17:00',
-      '08:00', '17:00',
-      '08:00', '17:00',
-      '08:00', '17:00',
-      '10:00', '14:00',
-      '00:00', '00:00'
-    );
-  END IF;
-END $$;
+-- Safe for repeated runs (uses IF NOT EXISTS and guarded inserts)
 
 ------------------------------------------------------------
 -- 🏢 PROPERTY FACTS (Ava V7 compatibility)
@@ -129,44 +99,37 @@ CREATE TABLE IF NOT EXISTS "GlobalSettings" (
   "openEnd" TEXT DEFAULT '17:00',
 
   "mondayStart" TEXT DEFAULT '08:00',
-  "mondayEnd" TEXT DEFAULT '17:00',
+  "mondayEnd"   TEXT DEFAULT '17:00',
   "tuesdayStart" TEXT DEFAULT '08:00',
-  "tuesdayEnd" TEXT DEFAULT '17:00',
+  "tuesdayEnd"   TEXT DEFAULT '17:00',
   "wednesdayStart" TEXT DEFAULT '08:00',
-  "wednesdayEnd" TEXT DEFAULT '17:00',
+  "wednesdayEnd"   TEXT DEFAULT '17:00',
   "thursdayStart" TEXT DEFAULT '08:00',
-  "thursdayEnd" TEXT DEFAULT '17:00',
+  "thursdayEnd"   TEXT DEFAULT '17:00',
   "fridayStart" TEXT DEFAULT '08:00',
-  "fridayEnd" TEXT DEFAULT '17:00',
+  "fridayEnd"   TEXT DEFAULT '17:00',
   "saturdayStart" TEXT DEFAULT '10:00',
-  "saturdayEnd" TEXT DEFAULT '14:00',
+  "saturdayEnd"   TEXT DEFAULT '14:00',
   "sundayStart" TEXT DEFAULT '00:00',
-  "sundayEnd" TEXT DEFAULT '00:00',
+  "sundayEnd"   TEXT DEFAULT '00:00',
 
   "updatedAt" TIMESTAMP DEFAULT NOW()
 );
 
-INSERT INTO "GlobalSettings" (
-  "openStart", "openEnd",
-  "mondayStart", "mondayEnd",
-  "tuesdayStart", "tuesdayEnd",
-  "wednesdayStart", "wednesdayEnd",
-  "thursdayStart", "thursdayEnd",
-  "fridayStart", "fridayEnd",
-  "saturdayStart", "saturdayEnd",
-  "sundayStart", "sundayEnd"
-)
-SELECT
-  '08:00', '17:00',
-  '08:00', '17:00',
-  '08:00', '17:00',
-  '08:00', '17:00',
-  '08:00', '17:00',
-  '10:00', '14:00',
-  '00:00', '00:00'
-WHERE NOT EXISTS (SELECT 1 FROM "GlobalSettings");
+------------------------------------------------------------
+-- ✅ Ensure at least one default GlobalSettings record exists
+------------------------------------------------------------
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM "GlobalSettings") THEN
+    INSERT INTO "GlobalSettings" ("openStart", "openEnd")
+    VALUES ('08:00', '17:00');
+  END IF;
+END $$;
 
+------------------------------------------------------------
 -- 🩵 Ensure per-day columns exist
+------------------------------------------------------------
 DO $$
 BEGIN
   IF to_regclass('"GlobalSettings"') IS NOT NULL THEN
