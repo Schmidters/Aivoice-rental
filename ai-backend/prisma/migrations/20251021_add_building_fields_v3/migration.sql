@@ -41,26 +41,15 @@ ADD COLUMN IF NOT EXISTS "units" JSONB;
 ------------------------------------------------------------
 -- 🗓️ BOOKING (Scheduling upgrades)
 ------------------------------------------------------------
--- Add scheduling-related columns if missing
 ALTER TABLE "Booking"
-ADD COLUMN IF NOT EXISTS "duration"  INTEGER DEFAULT 30,   -- minutes
-ADD COLUMN IF NOT EXISTS "status"    TEXT DEFAULT 'pending',  -- pending|confirmed|cancelled
-ADD COLUMN IF NOT EXISTS "notes"     TEXT;
-
--- Ensure "source" column exists for origin tracking (sms/dashboard)
-ALTER TABLE "Booking"
+ADD COLUMN IF NOT EXISTS "duration"  INTEGER DEFAULT 30,
+ADD COLUMN IF NOT EXISTS "status"    TEXT DEFAULT 'pending',
+ADD COLUMN IF NOT EXISTS "notes"     TEXT,
 ADD COLUMN IF NOT EXISTS "source"    TEXT;
 
 ------------------------------------------------------------
 -- 🕒 AVAILABILITY (New table)
 ------------------------------------------------------------
--- 🧹 Rename old lowercase table if it exists (safe)
-DO $$ BEGIN
-  IF to_regclass('globalsettings') IS NOT NULL AND to_regclass('"GlobalSettings"') IS NULL THEN
-    ALTER TABLE globalsettings RENAME TO "GlobalSettings";
-  END IF;
-END $$;
-
 CREATE TABLE IF NOT EXISTS "Availability" (
   "id"           SERIAL PRIMARY KEY,
   "propertyId"   INTEGER NOT NULL REFERENCES "Property"("id") ON DELETE CASCADE,
@@ -78,27 +67,7 @@ ALTER TABLE "Booking"
 ALTER COLUMN "duration" SET DEFAULT 30;
 
 ------------------------------------------------------------
--- ✅ END
-------------------------------------------------------------
-
-------------------------------------------------------------
--- 🔄 Fix missing reverse relation for Availability.property
-------------------------------------------------------------
--- Add reverse relation column to Property if not already present
--- (Prisma requires this for schema validation but the DB table itself is fine)
-
--- No actual DB schema change is needed — this is just a note.
--- Prisma expects the relation to be declared in the schema file, not SQL.
--- So the fix is purely in `schema.prisma`:
---   model Property { ... availability Availability[] }
-
--- ✅ Nothing to alter here, just leaving a comment for version tracking.
-
-------------------------------------------------------------
 -- 👤 AGENT PREFERENCE (Open Hours Settings)
-------------------------------------------------------------
--- Stores global or per-agent open/close hours for scheduling UI
--- Safe for repeated runs (uses IF NOT EXISTS)
 ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS "AgentPreference" (
   "id"         SERIAL PRIMARY KEY,
@@ -108,7 +77,6 @@ CREATE TABLE IF NOT EXISTS "AgentPreference" (
   "updatedAt"  TIMESTAMP DEFAULT NOW()
 );
 
--- Optional: ensure at least one default record exists
 INSERT INTO "AgentPreference" ("openStart", "openEnd")
 SELECT '08:00', '17:00'
 WHERE NOT EXISTS (SELECT 1 FROM "AgentPreference");
@@ -116,13 +84,20 @@ WHERE NOT EXISTS (SELECT 1 FROM "AgentPreference");
 ------------------------------------------------------------
 -- 🕓 GLOBAL OPEN HOURS (persistent calendar defaults, per-day support)
 ------------------------------------------------------------
+-- 🧹 Rename lowercase table if it exists (safe)
+DO $$
+BEGIN
+  IF to_regclass('globalsettings') IS NOT NULL AND to_regclass('"GlobalSettings"') IS NULL THEN
+    ALTER TABLE globalsettings RENAME TO "GlobalSettings";
+  END IF;
+END $$;
+
+-- ✅ Create GlobalSettings if missing
 CREATE TABLE IF NOT EXISTS "GlobalSettings" (
   "id" SERIAL PRIMARY KEY,
-  -- Global fallback hours
   "openStart" TEXT DEFAULT '08:00',
   "openEnd"   TEXT DEFAULT '17:00',
 
-  -- Per-day custom hours
   "mondayStart" TEXT DEFAULT '08:00',
   "mondayEnd"   TEXT DEFAULT '17:00',
   "tuesdayStart" TEXT DEFAULT '08:00',
@@ -141,9 +116,6 @@ CREATE TABLE IF NOT EXISTS "GlobalSettings" (
   "updatedAt" TIMESTAMP DEFAULT NOW()
 );
 
-------------------------------------------------------------
--- 🧩 Ensure at least one default record exists
-------------------------------------------------------------
 INSERT INTO "GlobalSettings" (
   "openStart", "openEnd",
   "mondayStart", "mondayEnd",
@@ -164,28 +136,11 @@ SELECT
   '00:00', '00:00'
 WHERE NOT EXISTS (SELECT 1 FROM "GlobalSettings");
 
--- 🩵 Safe patch: ensure per-day columns exist (case-insensitive)
+-- 🩵 Ensure per-day columns exist
 DO $$
 BEGIN
-  -- Handle both possible naming cases
   IF to_regclass('"GlobalSettings"') IS NOT NULL THEN
     ALTER TABLE "GlobalSettings"
-    ADD COLUMN IF NOT EXISTS "mondayStart" TEXT DEFAULT '08:00',
-    ADD COLUMN IF NOT EXISTS "mondayEnd" TEXT DEFAULT '17:00',
-    ADD COLUMN IF NOT EXISTS "tuesdayStart" TEXT DEFAULT '08:00',
-    ADD COLUMN IF NOT EXISTS "tuesdayEnd" TEXT DEFAULT '17:00',
-    ADD COLUMN IF NOT EXISTS "wednesdayStart" TEXT DEFAULT '08:00',
-    ADD COLUMN IF NOT EXISTS "wednesdayEnd" TEXT DEFAULT '17:00',
-    ADD COLUMN IF NOT EXISTS "thursdayStart" TEXT DEFAULT '08:00',
-    ADD COLUMN IF NOT EXISTS "thursdayEnd" TEXT DEFAULT '17:00',
-    ADD COLUMN IF NOT EXISTS "fridayStart" TEXT DEFAULT '08:00',
-    ADD COLUMN IF NOT EXISTS "fridayEnd" TEXT DEFAULT '17:00',
-    ADD COLUMN IF NOT EXISTS "saturdayStart" TEXT DEFAULT '10:00',
-    ADD COLUMN IF NOT EXISTS "saturdayEnd" TEXT DEFAULT '14:00',
-    ADD COLUMN IF NOT EXISTS "sundayStart" TEXT DEFAULT '00:00',
-    ADD COLUMN IF NOT EXISTS "sundayEnd" TEXT DEFAULT '00:00';
-  ELSIF to_regclass('globalsettings') IS NOT NULL THEN
-    ALTER TABLE globalsettings
     ADD COLUMN IF NOT EXISTS "mondayStart" TEXT DEFAULT '08:00',
     ADD COLUMN IF NOT EXISTS "mondayEnd" TEXT DEFAULT '17:00',
     ADD COLUMN IF NOT EXISTS "tuesdayStart" TEXT DEFAULT '08:00',
