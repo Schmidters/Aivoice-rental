@@ -134,13 +134,10 @@ model AgentPreference {
   openEnd   String
 }
 
-------------------------------------------------------------
--- 🕓 GLOBAL OPEN HOURS (persistent calendar defaults)
-------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS "GlobalSettings" (
-  "id" SERIAL PRIMARY KEY,
-  "openStart" TEXT DEFAULT '08:00',
-  "openEnd"   TEXT DEFAULT '17:00',
-  "updatedAt" TIMESTAMP DEFAULT NOW()
-);
+model GlobalSettings {
+  id         Int      @id @default(autoincrement())
+  openStart  String   @default("08:00")
+  openEnd    String   @default("17:00")
+  updatedAt  DateTime @updatedAt
+}
 
