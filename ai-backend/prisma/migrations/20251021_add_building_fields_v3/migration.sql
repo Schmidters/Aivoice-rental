@@ -174,3 +174,14 @@ BEGIN
     ADD COLUMN IF NOT EXISTS "sundayEnd" TEXT DEFAULT '00:00';
   END IF;
 END $$;
+
+------------------------------------------------------------
+-- 🩶 Ava V8.4 patch: Ensure createdAt column exists in GlobalSettings
+------------------------------------------------------------
+DO $$
+BEGIN
+  IF to_regclass('"GlobalSettings"') IS NOT NULL THEN
+    ALTER TABLE "GlobalSettings"
+    ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP DEFAULT NOW();
+  END IF;
+END $$;
