@@ -827,6 +827,37 @@ if (
   }
 });
 
+// -----------------------------
+// Availability (open hours)
+// -----------------------------
+
+app.get("/api/availability", async (req, res) => {
+  try {
+    const prefs = await prisma.agentPreference.findFirst();
+    res.json({
+      ok: true,
+      data: prefs || { openStart: "08:00", openEnd: "17:00" },
+    });
+  } catch (err) {
+    console.error("Error fetching availability:", err);
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+app.post("/api/availability", async (req, res) => {
+  try {
+    const { openStart, openEnd } = req.body;
+    const updated = await prisma.agentPreference.upsert({
+      where: { id: 1 },
+      update: { openStart, openEnd },
+      create: { id: 1, openStart, openEnd },
+    });
+    res.json({ ok: true, data: updated });
+  } catch (err) {
+    console.error("Error saving availability:", err);
+    res.json({ ok: false, error: err.message });
+  }
+});
 
 
 // ---------- Server start ----------

@@ -86,3 +86,22 @@ ALTER COLUMN "duration" SET DEFAULT 30;
 --   model Property { ... availability Availability[] }
 
 -- ✅ Nothing to alter here, just leaving a comment for version tracking.
+
+------------------------------------------------------------
+-- 👤 AGENT PREFERENCE (Open Hours Settings)
+------------------------------------------------------------
+-- Stores global or per-agent open/close hours for scheduling UI
+-- Safe for repeated runs (uses IF NOT EXISTS)
+------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS "AgentPreference" (
+  "id"         SERIAL PRIMARY KEY,
+  "openStart"  TEXT NOT NULL DEFAULT '08:00',
+  "openEnd"    TEXT NOT NULL DEFAULT '17:00',
+  "createdAt"  TIMESTAMP DEFAULT NOW(),
+  "updatedAt"  TIMESTAMP DEFAULT NOW()
+);
+
+-- Optional: ensure at least one default record exists
+INSERT INTO "AgentPreference" ("openStart", "openEnd")
+SELECT '08:00', '17:00'
+WHERE NOT EXISTS (SELECT 1 FROM "AgentPreference");

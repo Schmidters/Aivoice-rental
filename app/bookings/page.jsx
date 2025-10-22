@@ -34,8 +34,20 @@ export default function BookingsPage() {
   }
 
   useEffect(() => {
-    loadBookings();
-  }, []);
+  async function loadAvailability() {
+    try {
+      const res = await fetch(`${BACKEND}/api/availability`);
+      const json = await res.json();
+      if (json.ok && json.data) setOpenHours(json.data);
+    } catch (err) {
+      console.error("Error loading availability:", err);
+    }
+  }
+
+  loadBookings();
+  loadAvailability();
+}, []);
+
 
   // Helper to generate "blocked" events outside open hours
   const generateBlockedHours = () => {
@@ -112,14 +124,24 @@ export default function BookingsPage() {
       />
 
       <CalendarSettings
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onSave={(settings) => {
-          setOpenHours(settings);
-          setSettingsOpen(false);
-        }}
-        defaults={openHours}
-      />
+  open={settingsOpen}
+  onClose={() => setSettingsOpen(false)}
+  onSave={async (settings) => {
+    try {
+      await fetch(`${BACKEND}/api/availability`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      setOpenHours(settings);
+      setSettingsOpen(false);
+    } catch (err) {
+      console.error("Failed to save open hours:", err);
+    }
+  }}
+  defaults={openHours}
+/>
+
 
       <BookingDetailsDrawer
         open={drawerOpen}

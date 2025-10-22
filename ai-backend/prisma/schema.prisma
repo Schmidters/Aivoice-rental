@@ -127,3 +127,10 @@ model LeadProperty {
 
   @@id([leadId, propertyId])
 }
+
+model AgentPreference {
+  id        Int     @id @default(autoincrement())
+  openStart String
+  openEnd   String
+}
+
