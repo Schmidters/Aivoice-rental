@@ -171,27 +171,28 @@ export default function BookingsPage() {
       />
 
       <CalendarSettings
-        open={settingsOpen}
-        onClose={() => {
-          console.log("[BookingsPage] 🔒 Closing CalendarSettings");
-          setSettingsOpen(false);
-        }}
-        onSave={async (settings) => {
-          console.log("[BookingsPage] 💾 Saving openHours:", settings);
-          try {
-            await fetch(`${BACKEND}/api/availability`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(settings),
-            });
-            setOpenHours(settings);
-            setSettingsOpen(false);
-          } catch (err) {
-            console.error("[BookingsPage] ❌ Failed to save open hours:", err);
-          }
-        }}
-        defaults={openHours}
-      />
+  open={settingsOpen}
+  onClose={() => {
+    console.log("[BookingsPage] 🔒 Closing CalendarSettings");
+    setSettingsOpen(false);
+  }}
+  onSave={async (settings) => {
+    console.log("[BookingsPage] 💾 Saving openHours:", settings);
+    try {
+      await fetch(`${BACKEND}/api/availability`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      setOpenHours(settings);
+      setSettingsOpen(false);
+    } catch (err) {
+      console.error("[BookingsPage] ❌ Failed to save open hours:", err);
+    }
+  }}
+  defaults={openHours}
+/>
+
 
       <BookingDetailsDrawer
         open={drawerOpen}
