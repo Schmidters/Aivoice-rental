@@ -17,9 +17,9 @@ import cookieParser from "cookie-parser";
 import bookingsRouter from "./routes/bookings.js";
 import availabilityRouter from "./routes/availability.js";
 import outlookAuthRouter from "./routes/outlookAuth.js";   // OAuth connect/callback
-import outlookSyncRouter from "./routes/outlook.js";       // availability + event creation
+import outlookRouter from "./routes/outlook.js";           // availability + event creation
+import outlookSyncRouter from "./routes/outlook-sync.js";  // webhook + sync
 import { getAvailabilityContext } from "./utils/getAvailabilityContext.js";
-import outlookSyncRouter from "./routes/outlook-sync.js";
 
 
 dotenv.config();
@@ -90,12 +90,10 @@ app.use((req, _res, next) => {
 // ---------- Routes ----------
 app.use("/api/bookings", bookingsRouter);
 app.use("/api/availability", availabilityRouter);
-app.use("/api/outlook-sync", outlookSyncRouter);
+app.use("/api/outlook", outlookRouter);             // availability + event creation
+app.use("/api/outlook-auth", outlookAuthRouter);    // OAuth connect/callback
+app.use("/api/outlook-sync", outlookSyncRouter);    // webhook + Graph sync
 
-
-// Outlook integration
-app.use("/api/outlook", outlookAuthRouter);   // handles /auth + /callback
-app.use("/api/outlook-sync", outlookSyncRouter); // handles /availability + /create-event
 
 // ---------- Healthcheck ----------
 app.get("/health", (req, res) => {
