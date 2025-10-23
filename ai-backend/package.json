@@ -35,6 +35,10 @@
   },
   "devDependencies": {
     "prisma": "^6.17.1",
-    "cookie-parser": "^1.4.6"
+    "cookie-parser": "^1.4.6",
+    "@fullcalendar/react": "^6.1.11",
+  "@fullcalendar/daygrid": "^6.1.11",
+  "@fullcalendar/timegrid": "^6.1.11",
+  "@fullcalendar/interaction": "^6.1.11"
   }
 }
