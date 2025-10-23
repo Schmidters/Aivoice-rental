@@ -126,7 +126,13 @@ h1, h2, h3 {
   overflow-y: auto;
 }
 
-/* === Optional: Light “glass” backdrop === */
+/* Frosted glass calendar effect */
 .calendar-glass {
   @apply backdrop-blur-md bg-white/70 border border-white/30 rounded-xl shadow-sm;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.calendar-glass:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05);
 }

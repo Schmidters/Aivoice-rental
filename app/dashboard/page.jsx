@@ -68,7 +68,7 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* Sidebar */}
-      <div className="w-80 bg-white border-r p-6 space-y-6">
+<div className="w-80 calendar-glass p-6 space-y-6 border-none shadow-md">
         <h2 className="text-xl font-semibold">Calendar</h2>
         <button className="flex items-center justify-center w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 transition">
           <Plus className="w-4 h-4 mr-2" /> Add New Event
@@ -107,38 +107,41 @@ export default function DashboardPage() {
       </div>
 
       {/* Main Calendar */}
-      <div className="flex-1 p-8">
-        <div className="bg-white rounded-xl shadow-sm border p-4">
-          <FullCalendar
-            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-            initialView="dayGridMonth"
-            headerToolbar={{
-              left: "prev,next today",
-              center: "title",
-              right: "dayGridMonth,timeGridWeek,timeGridDay",
-            }}
-            height="calc(100vh - 160px)"
-            events={events}
-            eventClick={(info) => {
-              const ev = events.find((e) => e.id === info.event.id);
-              setSelected(ev);
-              setDrawerOpen(true);
-            }}
-            eventContent={(arg) => (
-              <motion.div
-                whileHover={{ scale: 1.05 }}
-                className={`text-white text-xs px-2 py-1 rounded-md shadow-sm ${
-                  arg.event.extendedProps.source === "AI"
-                    ? "bg-gradient-to-r from-green-400 to-green-600"
-                    : "bg-gradient-to-r from-blue-400 to-blue-600"
-                }`}
-              >
-                {arg.event.title}
-              </motion.div>
-            )}
-          />
-        </div>
-      </div>
+      {/* Main Calendar */}
+<div className="flex-1 p-8">
+  <div className="calendar-glass p-6 sm:p-8 shadow-xl">
+    <FullCalendar
+      plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+      initialView="dayGridMonth"
+      headerToolbar={{
+        left: "prev,next today",
+        center: "title",
+        right: "dayGridMonth,timeGridWeek,timeGridDay",
+      }}
+      height="calc(100vh - 160px)"
+      events={events}
+      nowIndicator={true}
+      eventClick={(info) => {
+        const ev = events.find((e) => e.id === info.event.id);
+        setSelected(ev);
+        setDrawerOpen(true);
+      }}
+      eventContent={(arg) => (
+        <motion.div
+          whileHover={{ scale: 1.05 }}
+          className={`text-white text-xs px-2 py-1 rounded-md shadow-sm ${
+            arg.event.extendedProps.source === "AI"
+              ? "bg-gradient-to-r from-green-400 to-green-600"
+              : "bg-gradient-to-r from-blue-400 to-blue-600"
+          }`}
+        >
+          {arg.event.title}
+        </motion.div>
+      )}
+    />
+  </div>
+</div>
+
 
       {/* Drawer for event details */}
       <Drawer open={drawerOpen} onOpenChange={setDrawerOpen} title="Event Details">
