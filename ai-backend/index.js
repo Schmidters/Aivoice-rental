@@ -799,23 +799,59 @@ if (
     return res.status(200).end();
   }
 
-  // 🧠 Step 3: Confirm success
   if (json.ok) {
-    const startFmt = DateTime.fromJSDate(new Date(json.data.datetime))
-      .setZone(tz)
-      .toFormat("ccc, LLL d 'at' h:mm a");
+  const startTime = new Date(json.data.datetime);
+  const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // 30 min slot
+  const startFmt = DateTime.fromJSDate(startTime)
+    .setZone(tz)
+    .toFormat("ccc, LLL d 'at' h:mm a");
 
-    await saveMessage({
-      phone: from,
-      role: "assistant",
-      content: `Perfect — you're booked for ${startFmt}.`,
-      propertyId: property?.id,
+  // 💬 Confirm via SMS + DB
+  await saveMessage({
+    phone: from,
+    role: "assistant",
+    content: `Perfect — you're booked for ${startFmt}.`,
+    propertyId: property?.id,
+  });
+
+  await sendSms(from, `Perfect — you're booked for ${startFmt}. See you then!`);
+  console.log(`✅ Booking confirmed for ${from} at ${startFmt}`);
+
+  // 📅 Also create event in Outlook calendar
+  try {
+    const outlookUrl = `${process.env.NEXT_PUBLIC_AI_BACKEND_URL || "https://aivoice-rental.onrender.com"}/api/outlook-sync/create-event`;
+    const outlookPayload = {
+      subject: `Showing — ${property?.facts?.buildingName || property?.address || "Property"}`,
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
+      location: property?.facts?.address || property?.address || "TBD",
+      leadEmail: "renter@example.com" // optional: replace when lead emails are captured
+    };
+
+    const outlookRes = await fetch(outlookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(outlookPayload),
     });
 
-    await sendSms(from, `Perfect — you're booked for ${startFmt}. See you then!`);
-    console.log(`✅ Booking confirmed for ${from} at ${startFmt}`);
-    return res.status(200).end();
+    const outlookData = await outlookRes.json();
+    if (outlookData.success) {
+      console.log("📆 Outlook event created:", outlookData.event.id);
+      // Optional: store the event ID in booking notes for sync
+      await prisma.booking.update({
+        where: { id: json.data.id },
+        data: { notes: `Outlook Event ID: ${outlookData.event.id}` },
+      });
+    } else {
+      console.warn("⚠️ Failed to create Outlook event:", outlookData);
+    }
+  } catch (err) {
+    console.error("❌ Outlook calendar sync failed:", err.message);
   }
+
+  return res.status(200).end();
+}
+
 
   // 🧠 Step 4: Fallback (error)
   console.error("❌ Booking API error:", json.error);
