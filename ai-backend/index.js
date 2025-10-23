@@ -38,7 +38,6 @@ const {
 
 if (!process.env.DATABASE_URL) throw new Error("Missing DATABASE_URL");
 if (!OPENAI_API_KEY) throw new Error("Missing OPENAI_API_KEY");
-if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN)
   throw new Error("Missing Twilio credentials");
 if (!TWILIO_MESSAGING_SERVICE_SID && !TWILIO_PHONE_NUMBER && !ENV_TWILIO_FROM_NUMBER)
   throw new Error(
@@ -104,52 +103,6 @@ app.get("/health", (req, res) => {
   });
 });
 
-// ---------- Start Server ----------
-app.listen(PORT, () => {
-  console.log(`✅ Ava backend running on port ${PORT} (${NODE_ENV})`);
-});
-
-
-// ---------- ENV ----------
-const {
-  PORT = 3000,
-  NODE_ENV = "production",
-  OPENAI_API_KEY,
-  OPENAI_MODEL = "gpt-4o-mini",
-  TWILIO_ACCOUNT_SID,
-  TWILIO_AUTH_TOKEN,
-  TWILIO_MESSAGING_SERVICE_SID,
-  TWILIO_PHONE_NUMBER,
-  TWILIO_FROM_NUMBER: ENV_TWILIO_FROM_NUMBER,
-  DASHBOARD_ORIGIN = "*",
-} = process.env;
-
-const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
-
-// ---------- GUARDS ----------
-if (!process.env.DATABASE_URL) throw new Error("Missing DATABASE_URL");
-if (!OPENAI_API_KEY) throw new Error("Missing OPENAI_API_KEY");
-if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN)
-  throw new Error("Missing Twilio credentials");
-if (!TWILIO_MESSAGING_SERVICE_SID && !TWILIO_FROM_NUMBER)
-  throw new Error(
-    "Provide TWILIO_MESSAGING_SERVICE_SID or TWILIO_PHONE_NUMBER/TWILIO_FROM_NUMBER"
-  );
-
-// ---------- CORE ----------
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
-
-// Simple logs
-app.use((req, _res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  next();
-});
-
-
-
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 // ---------- HELPERS ----------
 const normalizePhone = (num) => {
