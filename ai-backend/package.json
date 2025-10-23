@@ -34,11 +34,17 @@
     "cors": "^2.8.5"
   },
   "devDependencies": {
-    "prisma": "^6.17.1",
-    "cookie-parser": "^1.4.6",
-    "@fullcalendar/react": "^6.1.11",
+  "prisma": "^6.17.1",
+  "cookie-parser": "^1.4.6",
+  "@fullcalendar/react": "^6.1.11",
   "@fullcalendar/daygrid": "^6.1.11",
   "@fullcalendar/timegrid": "^6.1.11",
-  "@fullcalendar/interaction": "^6.1.11"
+  "@fullcalendar/interaction": "^6.1.11",
+  "@fullcalendar/core": "^6.1.11",
+  "@radix-ui/react-dialog": "^1.1.1",
+  "@radix-ui/react-drawer": "^1.0.3",
+  "class-variance-authority": "^0.7.0",
+  "lucide-react": "^0.411.0",
+  "tailwind-variants": "^0.1.20"
   }
 }

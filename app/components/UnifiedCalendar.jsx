@@ -5,11 +5,22 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerDescription,
+} from "@/components/ui/drawer";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 export default function UnifiedCalendar() {
   const [events, setEvents] = useState([]);
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const BACKEND =
     process.env.NEXT_PUBLIC_AI_BACKEND_URL ||
@@ -31,8 +42,12 @@ export default function UnifiedCalendar() {
         id: `ai-${b.id}`,
         title: b.property?.address || "AI Showing",
         start: b.datetime,
-        color: "#4f46e5",
-        extendedProps: { phone: b.phone, source: "ai" },
+        color: "#6366f1",
+        extendedProps: {
+          phone: b.phone,
+          source: "ai",
+          property: b.property?.address || "Unknown",
+        },
       }));
 
       const outlook = (outlookJson.data || []).map((evt) => ({
@@ -42,7 +57,12 @@ export default function UnifiedCalendar() {
         end: evt.end,
         color: "#2563eb",
         url: evt.webLink,
-        extendedProps: { location: evt.location, source: "outlook" },
+        extendedProps: {
+          location: evt.location,
+          source: "outlook",
+          organizer: evt.organizer,
+          attendees: evt.attendees,
+        },
       }));
 
       setEvents([...ai, ...outlook]);
@@ -53,78 +73,57 @@ export default function UnifiedCalendar() {
     }
   }
 
-  // --- Auto-refresh every 5 min + SSE for AI ---
+  // --- Auto-refresh every 5 minutes ---
   useEffect(() => {
     fetchAll();
     const interval = setInterval(fetchAll, 5 * 60 * 1000);
-
-    const evtSource = new EventSource(`${BACKEND}/api/bookings/events`);
-    evtSource.onmessage = (e) => {
-      try {
-        const b = JSON.parse(e.data);
-        setEvents((prev) => [
-          {
-            id: `ai-${b.id}`,
-            title: b.property || "AI Showing",
-            start: b.datetime,
-            color: "#4f46e5",
-            extendedProps: { phone: b.phone, source: "ai" },
-          },
-          ...prev,
-        ]);
-      } catch (err) {
-        console.warn("⚠️ SSE parse error:", err);
-      }
-    };
-
-    return () => {
-      clearInterval(interval);
-      evtSource.close();
-    };
+    return () => clearInterval(interval);
   }, []);
 
-  // --- Filtering ---
+  // --- Filter ---
   const filtered =
     filter === "all"
       ? events
       : events.filter((e) => e.extendedProps.source === filter);
 
+  // --- Event click handler ---
+  function handleEventClick(info) {
+    info.jsEvent.preventDefault();
+    setSelectedEvent({
+      title: info.event.title,
+      start: info.event.start,
+      end: info.event.end,
+      ...info.event.extendedProps,
+      url: info.event.url,
+    });
+    setDrawerOpen(true);
+  }
+
   return (
     <div className="space-y-4">
-      {/* Toolbar */}
+      {/* Filter Bar */}
       <div className="flex items-center gap-4">
         <div className="flex gap-2">
-          <button
-            onClick={() => setFilter("all")}
-            className={`px-3 py-1 rounded-lg ${
-              filter === "all" ? "bg-gray-800 text-white" : "bg-gray-100"
-            }`}
-          >
-            All
-          </button>
-          <button
-            onClick={() => setFilter("ai")}
-            className={`px-3 py-1 rounded-lg ${
-              filter === "ai" ? "bg-indigo-600 text-white" : "bg-gray-100"
-            }`}
-          >
-            AI Bookings
-          </button>
-          <button
-            onClick={() => setFilter("outlook")}
-            className={`px-3 py-1 rounded-lg ${
-              filter === "outlook" ? "bg-blue-600 text-white" : "bg-gray-100"
-            }`}
-          >
-            Outlook Events
-          </button>
+          {["all", "ai", "outlook"].map((type) => (
+            <Button
+              key={type}
+              variant={filter === type ? "default" : "outline"}
+              onClick={() => setFilter(type)}
+            >
+              {type === "all"
+                ? "All"
+                : type === "ai"
+                ? "AI Bookings"
+                : "Outlook Events"}
+            </Button>
+          ))}
         </div>
         <div className="ml-auto flex gap-4 text-sm">
           <span className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded bg-indigo-600"></span> AI Booking
+            <span className="w-3 h-3 rounded bg-indigo-500"></span> AI Booking
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded bg-blue-600"></span> Outlook Event
+            <span className="w-3 h-3 rounded bg-blue-500"></span> Outlook Event
           </span>
         </div>
       </div>
@@ -133,28 +132,78 @@ export default function UnifiedCalendar() {
       {loading ? (
         <p className="text-gray-400">Loading calendar…</p>
       ) : (
-        <FullCalendar
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="dayGridMonth"
-          height="80vh"
-          headerToolbar={{
-            left: "prev,next today",
-            center: "title",
-            right: "dayGridMonth,timeGridWeek,timeGridDay",
-          }}
-          events={filtered}
-          eventClick={(info) => {
-            info.jsEvent.preventDefault();
-            const evt = info.event.extendedProps;
-            alert(
-              `${info.event.title}\n\nSource: ${evt.source}\nLocation: ${
-                evt.location || "N/A"
-              }\nPhone: ${evt.phone || "N/A"}`
-            );
-            if (info.event.url) window.open(info.event.url, "_blank");
-          }}
-        />
+        <Card className="shadow-sm border border-gray-200 overflow-hidden rounded-2xl">
+          <FullCalendar
+            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+            initialView="dayGridMonth"
+            height="80vh"
+            headerToolbar={{
+              left: "prev,next today",
+              center: "title",
+              right: "dayGridMonth,timeGridWeek,timeGridDay",
+            }}
+            events={filtered}
+            eventClick={handleEventClick}
+            eventDisplay="block"
+            eventBorderColor="transparent"
+            dayMaxEvents={3}
+            nowIndicator={true}
+            slotEventOverlap={false}
+          />
+        </Card>
       )}
+
+      {/* Drawer Panel */}
+      <Drawer open={drawerOpen} onOpenChange={setDrawerOpen}>
+        <DrawerContent>
+          {selectedEvent && (
+            <div className="p-6">
+              <DrawerHeader>
+                <DrawerTitle>{selectedEvent.title}</DrawerTitle>
+                <DrawerDescription>
+                  {selectedEvent.source === "ai"
+                    ? "AI Booking"
+                    : "Outlook Calendar Event"}
+                </DrawerDescription>
+              </DrawerHeader>
+
+              <div className="space-y-3 text-gray-700">
+                <p>
+                  <strong>When:</strong>{" "}
+                  {new Date(selectedEvent.start).toLocaleString()}
+                </p>
+                {selectedEvent.location && (
+                  <p>
+                    <strong>Location:</strong> {selectedEvent.location}
+                  </p>
+                )}
+                {selectedEvent.phone && (
+                  <p>
+                    <strong>Lead Phone:</strong> {selectedEvent.phone}
+                  </p>
+                )}
+                {selectedEvent.attendees?.length > 0 && (
+                  <p>
+                    <strong>Attendees:</strong>{" "}
+                    {selectedEvent.attendees.join(", ")}
+                  </p>
+                )}
+              </div>
+
+              {selectedEvent.url && (
+                <div className="mt-6">
+                  <Button
+                    onClick={() => window.open(selectedEvent.url, "_blank")}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    Open in Outlook
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </DrawerContent>
+      </Drawer>
     </div>
   );
 }
