@@ -19,6 +19,8 @@ import availabilityRouter from "./routes/availability.js";
 import outlookAuthRouter from "./routes/outlookAuth.js";   // OAuth connect/callback
 import outlookSyncRouter from "./routes/outlook.js";       // availability + event creation
 import { getAvailabilityContext } from "./utils/getAvailabilityContext.js";
+import outlookSyncRouter from "./routes/outlook-sync.js";
+
 
 dotenv.config();
 
@@ -88,6 +90,8 @@ app.use((req, _res, next) => {
 // ---------- Routes ----------
 app.use("/api/bookings", bookingsRouter);
 app.use("/api/availability", availabilityRouter);
+app.use("/api/outlook-sync", outlookSyncRouter);
+
 
 // Outlook integration
 app.use("/api/outlook", outlookAuthRouter);   // handles /auth + /callback
