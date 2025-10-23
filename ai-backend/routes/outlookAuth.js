@@ -12,7 +12,7 @@ const TENANT_ID = process.env.MS_GRAPH_TENANT_ID || "common";
 const REDIRECT_URI = `${process.env.NEXT_PUBLIC_AI_BACKEND_URL || "https://aivoice-rental.onrender.com"}/api/outlook/callback`;
 
 // Step 1: Microsoft login redirect
-router.get("/auth", (req, res) => {
+router.get("/connect", (req, res) => {
   const authUrl =
     `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/authorize` +
     `?client_id=${CLIENT_ID}` +
