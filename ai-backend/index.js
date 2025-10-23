@@ -1,7 +1,7 @@
 /**
  * Ava V7 — Manual-only backend
  * - Postgres (Prisma) is canonical storage for leads, properties, messages, bookings, property facts
- * - NO BrowseAI / NO Zapier; AI replies only use human-entered PropertyFacts fields
+ * - Outlook integration: OAuth (connect) + sync (availability + event creation)
  */
 
 import express from "express";
@@ -11,25 +11,54 @@ import OpenAI from "openai";
 import twilio from "twilio";
 import { PrismaClient } from "@prisma/client";
 import cors from "cors";
+import cookieParser from "cookie-parser";
+
+// Routers
 import bookingsRouter from "./routes/bookings.js";
 import availabilityRouter from "./routes/availability.js";
+import outlookAuthRouter from "./routes/outlookAuth.js";   // OAuth connect/callback
+import outlookSyncRouter from "./routes/outlook.js";       // availability + event creation
 import { getAvailabilityContext } from "./utils/getAvailabilityContext.js";
-import cookieParser from "cookie-parser";
-import outlookRouter from "./routes/outlook.js"; // OAuth connect flow
-import outlookSyncRouter from "./routes/outlook.js"; // availability + event creation
-
-
 
 dotenv.config();
 
+// ---------- ENV & GUARDS ----------
+const {
+  PORT = 10000,
+  NODE_ENV = "production",
+  OPENAI_API_KEY,
+  OPENAI_MODEL = "gpt-4o-mini",
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_SERVICE_SID,
+  TWILIO_PHONE_NUMBER,
+  TWILIO_FROM_NUMBER: ENV_TWILIO_FROM_NUMBER,
+  DASHBOARD_ORIGIN = "*",
+} = process.env;
+
+if (!process.env.DATABASE_URL) throw new Error("Missing DATABASE_URL");
+if (!OPENAI_API_KEY) throw new Error("Missing OPENAI_API_KEY");
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN)
+  throw new Error("Missing Twilio credentials");
+if (!TWILIO_MESSAGING_SERVICE_SID && !TWILIO_PHONE_NUMBER && !ENV_TWILIO_FROM_NUMBER)
+  throw new Error(
+    "Provide TWILIO_MESSAGING_SERVICE_SID or TWILIO_PHONE_NUMBER/TWILIO_FROM_NUMBER"
+  );
+
+const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
+
+// ---------- CORE SETUP ----------
 const app = express();
 const prisma = new PrismaClient();
-// ---------- CORS CONFIG ----------
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+// ---------- CORS ----------
 const allowedOrigins = [
-  "https://ai-leasing-dashboard.onrender.com", // dashboard on Render
-  "http://localhost:3000",                     // local dev
-  "https://app.aivoicerental.com",             // future production domain
-  "https://www.aivoicerental.com"
+  "https://ai-leasing-dashboard.onrender.com",
+  "http://localhost:3000",
+  "https://app.aivoicerental.com",
+  "https://www.aivoicerental.com",
 ];
 
 app.use(
@@ -47,16 +76,38 @@ app.use(
   })
 );
 
-
-// Middleware setup
+// ---------- Middleware ----------
 app.use(bodyParser.json());
-app.use(cookieParser(process.env.OAUTH_COOKIE_SECRET));
-app.use(outlookRouter);
-app.use(outlookSyncRouter);
 app.use(bodyParser.urlencoded({ extended: false }));
+app.use(cookieParser(process.env.OAUTH_COOKIE_SECRET));
+
+// Simple logs
+app.use((req, _res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
+
+// ---------- Routes ----------
 app.use("/api/bookings", bookingsRouter);
 app.use("/api/availability", availabilityRouter);
 
+// Outlook integration
+app.use("/api/outlook", outlookAuthRouter);   // handles /auth + /callback
+app.use("/api/outlook-sync", outlookSyncRouter); // handles /availability + /create-event
+
+// ---------- Healthcheck ----------
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    env: NODE_ENV,
+    time: new Date().toISOString(),
+  });
+});
+
+// ---------- Start Server ----------
+app.listen(PORT, () => {
+  console.log(`✅ Ava backend running on port ${PORT} (${NODE_ENV})`);
+});
 
 
 // ---------- ENV ----------
