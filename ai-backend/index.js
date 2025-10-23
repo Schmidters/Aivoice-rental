@@ -22,7 +22,7 @@ import { getAvailabilityContext } from "./utils/getAvailabilityContext.js";
 
 dotenv.config();
 
-// ---------- ENV & GUARDS ----------
+// ---------- ENV ----------
 const {
   PORT = 10000,
   NODE_ENV = "production",
@@ -36,13 +36,12 @@ const {
   DASHBOARD_ORIGIN = "*",
 } = process.env;
 
-if (!process.env.DATABASE_URL) throw new Error("Missing DATABASE_URL");
+// ---------- GUARDS ----------
 if (!OPENAI_API_KEY) throw new Error("Missing OPENAI_API_KEY");
-  throw new Error("Missing Twilio credentials");
-if (!TWILIO_MESSAGING_SERVICE_SID && !TWILIO_PHONE_NUMBER && !ENV_TWILIO_FROM_NUMBER)
-  throw new Error(
-    "Provide TWILIO_MESSAGING_SERVICE_SID or TWILIO_PHONE_NUMBER/TWILIO_FROM_NUMBER"
-  );
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN)
+  console.warn("⚠️ Twilio credentials not found yet — retrying later");
+if (!process.env.DATABASE_URL)
+  throw new Error("Missing DATABASE_URL");
 
 const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
 
