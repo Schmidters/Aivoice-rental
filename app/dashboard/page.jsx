@@ -11,8 +11,6 @@ export default function DashboardPage() {
           Unified calendar view combining AI Bookings + Outlook Events.
         </p>
       </div>
-
-      {/* 🗓️ Read-only unified calendar */}
       <UnifiedCalendar />
     </div>
   );

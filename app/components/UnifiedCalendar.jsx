@@ -1,52 +1,51 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import FullCalendar from "@fullcalendar/react";
+import dayGridPlugin from "@fullcalendar/daygrid";
+import timeGridPlugin from "@fullcalendar/timegrid";
+import interactionPlugin from "@fullcalendar/interaction";
 
-export default function DashboardPage() {
-  const [bookings, setBookings] = useState([]);
-  const [outlookEvents, setOutlookEvents] = useState([]);
+export default function UnifiedCalendar() {
+  const [events, setEvents] = useState([]);
+  const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
 
   const BACKEND =
     process.env.NEXT_PUBLIC_AI_BACKEND_URL ||
     "https://aivoice-rental.onrender.com";
 
-  // --- Fetch both AI bookings + Outlook events ---
+  // --- Fetch AI bookings + Outlook events ---
   async function fetchAll() {
     try {
       const [bookingsRes, outlookRes] = await Promise.all([
         fetch(`${BACKEND}/api/bookings`, { cache: "no-store" }),
         fetch(`${BACKEND}/api/outlook-sync/events`, { cache: "no-store" }),
       ]);
-
       const [bookingsJson, outlookJson] = await Promise.all([
         bookingsRes.json(),
         outlookRes.json(),
       ]);
 
-      // Normalize bookings from DB
-      const normalizedBookings = (bookingsJson.data || bookingsJson.items || []).map(
-        (b) => ({
-          id: b.id,
-          title: b.property?.address || "AI Showing",
-          start: b.datetime,
-          phone: b.lead?.phone || "Unknown",
-          source: "manual",
-        })
-      );
-
-      // Normalize Outlook events
-      const normalizedOutlook = (outlookJson.data || []).map((evt) => ({
-        id: evt.id,
-        title: evt.title || "Outlook Event",
-        start: evt.start,
-        location: evt.location,
-        source: "outlook",
-        webLink: evt.webLink,
+      const ai = (bookingsJson.data || bookingsJson.items || []).map((b) => ({
+        id: `ai-${b.id}`,
+        title: b.property?.address || "AI Showing",
+        start: b.datetime,
+        color: "#4f46e5",
+        extendedProps: { phone: b.phone, source: "ai" },
       }));
 
-      setBookings(normalizedBookings);
-      setOutlookEvents(normalizedOutlook);
+      const outlook = (outlookJson.data || []).map((evt) => ({
+        id: `outlook-${evt.id}`,
+        title: evt.title || "Outlook Event",
+        start: evt.start,
+        end: evt.end,
+        color: "#2563eb",
+        url: evt.webLink,
+        extendedProps: { location: evt.location, source: "outlook" },
+      }));
+
+      setEvents([...ai, ...outlook]);
     } catch (err) {
       console.error("❌ Error fetching events:", err);
     } finally {
@@ -54,22 +53,22 @@ export default function DashboardPage() {
     }
   }
 
-  // --- SSE for live AI bookings ---
+  // --- Auto-refresh every 5 min + SSE for AI ---
   useEffect(() => {
     fetchAll();
+    const interval = setInterval(fetchAll, 5 * 60 * 1000);
 
     const evtSource = new EventSource(`${BACKEND}/api/bookings/events`);
-
     evtSource.onmessage = (e) => {
       try {
         const b = JSON.parse(e.data);
-        setBookings((prev) => [
+        setEvents((prev) => [
           {
-            id: b.id,
+            id: `ai-${b.id}`,
             title: b.property || "AI Showing",
             start: b.datetime,
-            phone: b.phone,
-            source: "manual",
+            color: "#4f46e5",
+            extendedProps: { phone: b.phone, source: "ai" },
           },
           ...prev,
         ]);
@@ -78,69 +77,83 @@ export default function DashboardPage() {
       }
     };
 
-    return () => evtSource.close();
+    return () => {
+      clearInterval(interval);
+      evtSource.close();
+    };
   }, []);
 
-  const combined = [...bookings, ...outlookEvents].sort(
-    (a, b) => new Date(b.start) - new Date(a.start)
-  );
+  // --- Filtering ---
+  const filtered =
+    filter === "all"
+      ? events
+      : events.filter((e) => e.extendedProps.source === filter);
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-semibold mb-4">Dashboard</h1>
-      <p className="text-gray-600 mb-6">
-        Unified view of all bookings — AI + Outlook Calendar.
-      </p>
-
-      {loading ? (
-        <p className="text-gray-400">Loading events...</p>
-      ) : combined.length === 0 ? (
-        <p className="text-gray-400">No events found yet.</p>
-      ) : (
-        <div className="grid gap-4">
-          {combined.map((evt) => (
-            <div
-              key={evt.id}
-              className={`p-4 rounded-xl shadow border transition hover:shadow-md ${
-                evt.source === "outlook"
-                  ? "bg-blue-50 border-blue-200"
-                  : "bg-white border-gray-100"
-              }`}
-            >
-              <div className="flex justify-between items-center mb-1">
-                <span className="font-semibold text-gray-800">
-                  {evt.title}
-                </span>
-                <span className="text-sm text-gray-500">
-                  {new Date(evt.start).toLocaleString()}
-                </span>
-              </div>
-
-              {evt.source === "outlook" ? (
-                <p className="text-blue-700 text-sm">
-                  📅 Outlook Event{" "}
-                  {evt.location && (
-                    <span className="text-gray-500">({evt.location})</span>
-                  )}
-                  {evt.webLink && (
-                    <a
-                      href={evt.webLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ml-2 underline text-blue-500"
-                    >
-                      Open
-                    </a>
-                  )}
-                </p>
-              ) : (
-                <p className="text-gray-700 text-sm">
-                  📱 {evt.phone} <span className="text-gray-400">(AI)</span>
-                </p>
-              )}
-            </div>
-          ))}
+    <div className="space-y-4">
+      {/* Toolbar */}
+      <div className="flex items-center gap-4">
+        <div className="flex gap-2">
+          <button
+            onClick={() => setFilter("all")}
+            className={`px-3 py-1 rounded-lg ${
+              filter === "all" ? "bg-gray-800 text-white" : "bg-gray-100"
+            }`}
+          >
+            All
+          </button>
+          <button
+            onClick={() => setFilter("ai")}
+            className={`px-3 py-1 rounded-lg ${
+              filter === "ai" ? "bg-indigo-600 text-white" : "bg-gray-100"
+            }`}
+          >
+            AI Bookings
+          </button>
+          <button
+            onClick={() => setFilter("outlook")}
+            className={`px-3 py-1 rounded-lg ${
+              filter === "outlook" ? "bg-blue-600 text-white" : "bg-gray-100"
+            }`}
+          >
+            Outlook Events
+          </button>
         </div>
+        <div className="ml-auto flex gap-4 text-sm">
+          <span className="flex items-center gap-1">
+            <span className="w-3 h-3 rounded bg-indigo-600"></span> AI Booking
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-3 h-3 rounded bg-blue-600"></span> Outlook Event
+          </span>
+        </div>
+      </div>
+
+      {/* Calendar */}
+      {loading ? (
+        <p className="text-gray-400">Loading calendar…</p>
+      ) : (
+        <FullCalendar
+          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+          initialView="dayGridMonth"
+          height="80vh"
+          headerToolbar={{
+            left: "prev,next today",
+            center: "title",
+            right: "dayGridMonth,timeGridWeek,timeGridDay",
+          }}
+          events={filtered}
+          eventClick={(info) => {
+            info.jsEvent.preventDefault();
+            const evt = info.event.extendedProps;
+            alert(
+              `${info.event.title}\n\nSource: ${evt.source}\nLocation: ${
+                evt.location || "N/A"
+              }\nPhone: ${evt.phone || "N/A"}`
+            );
+            if (info.event.url) window.open(info.event.url, "_blank");
+          }}
+        />
       )}
     </div>
   );
