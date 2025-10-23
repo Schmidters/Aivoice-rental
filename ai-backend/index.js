@@ -14,6 +14,9 @@ import cors from "cors";
 import bookingsRouter from "./routes/bookings.js";
 import availabilityRouter from "./routes/availability.js";
 import { getAvailabilityContext } from "./utils/getAvailabilityContext.js";
+import cookieParser from "cookie-parser";
+import outlookRouter from "./routes/outlook.js"; // OAuth connect flow
+import outlookSyncRouter from "./routes/outlookSync.js"; // availability + event creation
 
 
 
@@ -47,6 +50,9 @@ app.use(
 
 // Middleware setup
 app.use(bodyParser.json());
+app.use(cookieParser(process.env.OAUTH_COOKIE_SECRET));
+app.use(outlookRouter);
+app.use(outlookSyncRouter);
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use("/api/bookings", bookingsRouter);
 app.use("/api/availability", availabilityRouter);
