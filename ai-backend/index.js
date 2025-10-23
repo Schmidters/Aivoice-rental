@@ -852,6 +852,57 @@ const reply = await aiReply({
 // Availability (open hours)
 // -----------------------------
 
+// 🕑 Auto-refresh Outlook tokens daily (every 24 hours)
+import fetch from "node-fetch";
+
+async function refreshOutlookTokens() {
+  const accounts = await prisma.calendarAccount.findMany({
+    where: { provider: "outlook" },
+  });
+
+  for (const account of accounts) {
+    try {
+      const now = new Date();
+      if (now < account.expiresAt) continue; // still valid
+
+      console.log(`🔄 Refreshing Outlook token for ${account.email}...`);
+
+      const params = new URLSearchParams({
+        client_id: process.env.MS_GRAPH_CLIENT_ID,
+        client_secret: process.env.MS_GRAPH_CLIENT_SECRET,
+        grant_type: "refresh_token",
+        refresh_token: account.refreshToken,
+      });
+
+      const res = await fetch(
+        `https://login.microsoftonline.com/${process.env.MS_GRAPH_TENANT_ID}/oauth2/v2.0/token`,
+        { method: "POST", body: params }
+      );
+
+      const tokens = await res.json();
+      if (!tokens.access_token) {
+        console.warn("⚠️ Failed to refresh token for", account.email);
+        continue;
+      }
+
+      await prisma.calendarAccount.update({
+        where: { id: account.id },
+        data: {
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token || account.refreshToken,
+          expiresAt: new Date(Date.now() + (tokens.expires_in - 60) * 1000),
+        },
+      });
+
+      console.log(`✅ Token refreshed successfully for ${account.email}`);
+    } catch (err) {
+      console.error(`❌ Error refreshing token for ${account.email}:`, err);
+    }
+  }
+}
+
+// Run every 24 hours (Render keeps your dyno hot)
+setInterval(refreshOutlookTokens, 24 * 60 * 60 * 1000);
 
 
 // ---------- Server start ----------
