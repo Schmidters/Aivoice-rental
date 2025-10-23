@@ -41,7 +41,7 @@ async function getValidAccessToken(account) {
 // 🕒 GET /api/outlook/availability
 //   → Check the agent’s free/busy schedule
 //
-router.get("/api/outlook/availability", async (req, res) => {
+router.get("/availability", async (req, res) => {
   try {
     const agentId = 1; // Replace later with real authenticated user
     const account = await prisma.calendarAccount.findFirst({
@@ -92,7 +92,7 @@ router.get("/api/outlook/availability", async (req, res) => {
 // 📅 POST /api/outlook/create-event
 //   → Create a tentative showing in the agent’s calendar
 //
-router.post("/api/outlook/create-event", async (req, res) => {
+router.post("/create-event", async (req, res) => {
   try {
     const agentId = 1; // Replace later
     const account = await prisma.calendarAccount.findFirst({
