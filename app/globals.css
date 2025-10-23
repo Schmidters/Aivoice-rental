@@ -3,8 +3,101 @@
 @tailwind components;
 @tailwind utilities;
 
-/* optional nice defaults */
-html { scroll-behavior: smooth; }
-body { @apply bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100; }
-a { @apply text-indigo-600 hover:text-indigo-800; }
-h1,h2,h3 { @apply font-semibold; }
+/* Smooth scroll and clean default styling */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100;
+}
+
+a {
+  @apply text-indigo-600 hover:text-indigo-800;
+}
+
+h1, h2, h3 {
+  @apply font-semibold;
+}
+
+/* === FullCalendar Custom Styling === */
+
+/* Remove thick borders, give soft modern grid */
+.fc-theme-standard td, 
+.fc-theme-standard th {
+  border-color: #f1f5f9 !important; /* Tailwind gray-100 */
+}
+
+.fc .fc-daygrid-day {
+  border: none !important;
+}
+
+/* Highlight today softly */
+.fc .fc-day-today {
+  background-color: #eff6ff !important; /* Tailwind blue-50 */
+  border-radius: 6px;
+}
+
+/* Event item styles */
+.fc-event {
+  border: none !important;
+  border-radius: 6px !important;
+  padding: 4px 6px !important;
+  font-size: 0.8rem !important;
+  font-weight: 500 !important;
+  color: white !important;
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+
+.fc-event:hover {
+  transform: scale(1.03);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+
+/* Toolbar title and buttons */
+.fc .fc-toolbar-title {
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: #111827; /* gray-900 */
+}
+
+.fc .fc-button {
+  background-color: #f9fafb !important; /* gray-50 */
+  border: 1px solid #e5e7eb !important; /* gray-200 */
+  color: #374151 !important; /* gray-700 */
+  border-radius: 6px !important;
+  padding: 6px 10px !important;
+  text-transform: capitalize;
+  transition: all 0.2s ease;
+}
+
+.fc .fc-button:hover {
+  background-color: #e0e7ff !important; /* indigo-100 */
+  color: #1e3a8a !important; /* indigo-900 */
+}
+
+.fc .fc-button-active {
+  background-color: #3b82f6 !important; /* blue-500 */
+  color: white !important;
+  border-color: #2563eb !important; /* blue-600 */
+}
+
+/* Month grid header (Sun–Sat row) */
+.fc-col-header-cell {
+  background: #f8fafc; /* gray-50 */
+  color: #6b7280; /* gray-500 */
+  font-weight: 500;
+  padding: 8px 0;
+  border: none !important;
+}
+
+/* Drawer tweaks (optional, if using shadcn drawer) */
+[data-radix-dialog-content] {
+  @apply rounded-t-2xl shadow-xl border-t border-gray-200;
+}
+
+/* For consistent scroll inside drawers */
+.drawer-content {
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+}
