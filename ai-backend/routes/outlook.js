@@ -133,4 +133,53 @@ router.post("/create-event", async (req, res) => {
   }
 });
 
+//
+// 📥 GET /api/outlook-sync/events
+//   → Fetch existing Outlook calendar events for dashboard display
+//
+router.get("/events", async (req, res) => {
+  try {
+    const agentId = 1; // Replace later with logged-in agent
+    const account = await prisma.calendarAccount.findFirst({
+      where: { userId: agentId, provider: "outlook" },
+    });
+
+    if (!account) return res.status(404).json({ error: "Outlook not connected" });
+
+    const accessToken = await getValidAccessToken(account);
+
+    // Define time window (e.g. 30 days forward)
+    const start = new Date();
+    const end = new Date();
+    end.setDate(start.getDate() + 30);
+
+    const url = `https://graph.microsoft.com/v1.0/me/calendarview?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$top=50`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    const data = await response.json();
+    if (!data.value) throw new Error("Failed to fetch events");
+
+    // Normalize events for dashboard calendar
+    const events = data.value.map(evt => ({
+      id: evt.id,
+      title: evt.subject || "Outlook Event",
+      start: evt.start?.dateTime,
+      end: evt.end?.dateTime,
+      location: evt.location?.displayName || "",
+      source: "outlook",
+      organizer: evt.organizer?.emailAddress?.address,
+      attendees: evt.attendees?.map(a => a.emailAddress?.address) || [],
+      webLink: evt.webLink,
+    }));
+
+    res.json({ ok: true, count: events.length, data: events });
+  } catch (err) {
+    console.error("❌ Outlook events fetch error:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+
 export default router;
