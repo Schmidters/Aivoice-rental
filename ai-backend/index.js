@@ -16,7 +16,7 @@ import availabilityRouter from "./routes/availability.js";
 import { getAvailabilityContext } from "./utils/getAvailabilityContext.js";
 import cookieParser from "cookie-parser";
 import outlookRouter from "./routes/outlook.js"; // OAuth connect flow
-import outlookSyncRouter from "./routes/outlookSync.js"; // availability + event creation
+import outlookSyncRouter from "./routes/outlook.js"; // availability + event creation
 
 
 
