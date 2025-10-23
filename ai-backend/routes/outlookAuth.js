@@ -23,7 +23,7 @@ router.get("/auth", (req, res) => {
   res.redirect(authUrl);
 });
 
-// Step 2: OAuth callback
+// ✅ Step 2: OAuth callback (single version, saves to DB)
 router.get("/callback", async (req, res) => {
   const code = req.query.code;
   if (!code) return res.status(400).json({ ok: false, error: "Missing auth code" });
@@ -42,13 +42,53 @@ router.get("/callback", async (req, res) => {
     });
 
     const tokens = await tokenRes.json();
-    console.log("🔑 Outlook tokens received:", tokens);
-
     if (tokens.error) throw new Error(tokens.error_description);
-    res.json({ ok: true, message: "Outlook connected successfully", tokens });
+
+    // 🔍 Decode email from id_token
+    const payload = tokens.id_token
+      ? JSON.parse(Buffer.from(tokens.id_token.split(".")[1], "base64").toString())
+      : {};
+    const email = payload.preferred_username || payload.email || "unknown@domain.com";
+
+    // 🕒 Calculate expiration
+    const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
+
+    // 💾 Save tokens to DB
+    const { PrismaClient } = await import("@prisma/client");
+    const prisma = new PrismaClient();
+
+    await prisma.calendarAccount.upsert({
+      where: {
+        userId_provider: {
+          userId: 1, // replace later when multi-agent
+          provider: "outlook",
+        },
+      },
+      update: {
+        email,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresAt,
+      },
+      create: {
+        userId: 1,
+        provider: "outlook",
+        email,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresAt,
+      },
+    });
+
+    res.json({
+      ok: true,
+      message: "Outlook connected and tokens saved successfully",
+      email,
+      expiresAt,
+    });
   } catch (err) {
     console.error("❌ Outlook OAuth callback failed:", err);
-    res.status(500).json({ ok: false, error: "OAUTH_ERROR", details: err.message });
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
