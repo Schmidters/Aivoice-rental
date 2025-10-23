@@ -3,7 +3,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Smooth scroll and clean default styling */
+/* === Base clean defaults === */
 html {
   scroll-behavior: smooth;
 }
@@ -41,42 +41,48 @@ h1, h2, h3 {
 /* Event item styles */
 .fc-event {
   border: none !important;
-  border-radius: 6px !important;
-  padding: 4px 6px !important;
+  border-radius: 8px !important;
+  padding: 4px 8px !important;
   font-size: 0.8rem !important;
   font-weight: 500 !important;
   color: white !important;
   transition: transform 0.15s ease, box-shadow 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
 }
 
 .fc-event:hover {
-  transform: scale(1.03);
-  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
 }
 
 /* Toolbar title and buttons */
+.fc .fc-toolbar.fc-header-toolbar {
+  margin-bottom: 1.5rem;
+  align-items: center;
+}
+
 .fc .fc-toolbar-title {
+  font-size: 1rem;
   font-weight: 600;
-  font-size: 1.1rem;
   color: #111827; /* gray-900 */
 }
 
-.fc .fc-button {
+.fc .fc-button-group .fc-button {
   background-color: #f9fafb !important; /* gray-50 */
   border: 1px solid #e5e7eb !important; /* gray-200 */
   color: #374151 !important; /* gray-700 */
-  border-radius: 6px !important;
-  padding: 6px 10px !important;
-  text-transform: capitalize;
+  font-weight: 500 !important;
+  padding: 5px 10px !important;
+  border-radius: 8px !important;
   transition: all 0.2s ease;
 }
 
-.fc .fc-button:hover {
-  background-color: #e0e7ff !important; /* indigo-100 */
-  color: #1e3a8a !important; /* indigo-900 */
+.fc .fc-button-group .fc-button:hover {
+  background-color: #eef2ff !important; /* indigo-100 */
+  color: #1e40af !important; /* indigo-900 */
 }
 
-.fc .fc-button-active {
+.fc .fc-button-group .fc-button-active {
   background-color: #3b82f6 !important; /* blue-500 */
   color: white !important;
   border-color: #2563eb !important; /* blue-600 */
@@ -91,13 +97,36 @@ h1, h2, h3 {
   border: none !important;
 }
 
-/* Drawer tweaks (optional, if using shadcn drawer) */
+/* Subtle grid separators for week/day views */
+.fc-timegrid-slot,
+.fc-daygrid-day-frame {
+  box-shadow: inset 0 -1px 0 0 #f1f5f9;
+}
+
+/* Minimalist calendar container */
+.fc .fc-view-harness {
+  border-radius: 12px;
+  background-color: #fff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  padding: 0.5rem;
+}
+
+.fc .fc-scrollgrid {
+  border: none !important;
+  background-color: transparent;
+}
+
+/* Drawer tweaks (if using shadcn drawer) */
 [data-radix-dialog-content] {
   @apply rounded-t-2xl shadow-xl border-t border-gray-200;
 }
 
-/* For consistent scroll inside drawers */
 .drawer-content {
   max-height: calc(100vh - 80px);
   overflow-y: auto;
+}
+
+/* === Optional: Light “glass” backdrop === */
+.calendar-glass {
+  @apply backdrop-blur-md bg-white/70 border border-white/30 rounded-xl shadow-sm;
 }
