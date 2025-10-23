@@ -44,11 +44,27 @@ router.get("/callback", async (req, res) => {
     const tokens = await tokenRes.json();
     if (tokens.error) throw new Error(tokens.error_description);
 
-    // 🔍 Decode email from id_token
-    const payload = tokens.id_token
-      ? JSON.parse(Buffer.from(tokens.id_token.split(".")[1], "base64").toString())
-      : {};
-    const email = payload.preferred_username || payload.email || "unknown@domain.com";
+    // 🔍 Try to decode email from id_token or fetch from Graph if missing
+let email = "unknown@domain.com";
+
+if (tokens.id_token) {
+  const payload = JSON.parse(Buffer.from(tokens.id_token.split(".")[1], "base64").toString());
+  email = payload.preferred_username || payload.email || email;
+}
+
+// If still unknown, fetch from Microsoft Graph /me
+if (email === "unknown@domain.com") {
+  try {
+    const profileRes = await fetch("https://graph.microsoft.com/v1.0/me", {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+    const profile = await profileRes.json();
+    email = profile.userPrincipalName || profile.mail || email;
+  } catch (err) {
+    console.warn("⚠️ Could not fetch email from Graph:", err.message);
+  }
+}
+
 
     // 🕒 Calculate expiration
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
