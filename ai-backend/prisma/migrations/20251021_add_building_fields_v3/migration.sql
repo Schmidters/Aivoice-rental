@@ -185,3 +185,30 @@ BEGIN
     ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP DEFAULT NOW();
   END IF;
 END $$;
+
+------------------------------------------------------------
+-- 📆 CALENDAR ACCOUNT (Ava Outlook Sync Integration)
+------------------------------------------------------------
+-- Create the CalendarAccount table if it doesn't exist
+CREATE TABLE IF NOT EXISTS "CalendarAccount" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER NOT NULL,
+  "provider" TEXT NOT NULL,
+  "accessToken" TEXT NOT NULL,
+  "refreshToken" TEXT NOT NULL,
+  "expiresAt" TIMESTAMP(3) NOT NULL,
+  "email" TEXT,
+  "createdAt" TIMESTAMP DEFAULT NOW(),
+  "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+
+-- Ensure the unique constraint exists for (userId, provider)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE indexname = 'CalendarAccount_userId_provider_key'
+  ) THEN
+    CREATE UNIQUE INDEX "CalendarAccount_userId_provider_key"
+    ON "CalendarAccount" ("userId", "provider");
+  END IF;
+END $$;
