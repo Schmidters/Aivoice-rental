@@ -42,7 +42,6 @@
   "@fullcalendar/interaction": "^6.1.11",
   "@fullcalendar/core": "^6.1.11",
   "@radix-ui/react-dialog": "^1.1.1",
-  "@radix-ui/react-drawer": "^1.0.3",
   "class-variance-authority": "^0.7.0",
   "lucide-react": "^0.411.0",
   "tailwind-variants": "^0.1.20"
