@@ -6,8 +6,6 @@ import ThemeToggle from '@/components/ThemeToggle';
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import PropertyDrawer from '@/components/PropertyDrawer';
-import FullCalendarStyles from "@/app/fullcalendar-styles"; // 👈 add this
-
 
 export default function Page() {
   // dashboard metric cards (live from APIs)
@@ -79,7 +77,7 @@ useEffect(() => {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <FullCalendarStyles />
+    
       {/* top bar */}
       <div className="border-b border-gray-200 dark:border-gray-800">
         <div className="container flex items-center justify-between py-4">
