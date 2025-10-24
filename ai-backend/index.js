@@ -767,92 +767,96 @@ if (
 
   const requestedStart = date.set({ hour, minute, second: 0, millisecond: 0 }).toJSDate();
 
-  // 🧠 Step 2: Check if that time slot is available
-  const availabilityResp = await fetch(`${process.env.NEXT_PUBLIC_AI_BACKEND_URL || "https://aivoice-rental.onrender.com"}/api/bookings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      leadPhone: from,
-      propertySlug: property?.slug,
-      datetime: requestedStart,
-    }),
-  });
+// 🧠 Step 2: Check if that time slot is available via DB + Outlook
+const availabilityContext = await getAvailabilityContext(property?.id);
+const { availableSlots, blockedSlots } = availabilityContext;
 
-  const json = await availabilityResp.json();
+// Convert requested time to Luxon for comparison
+const requestedDT = DateTime.fromJSDate(requestedStart);
+const isBlocked = blockedSlots.some(
+  (b) =>
+    requestedDT >= DateTime.fromISO(b.start) &&
+    requestedDT < DateTime.fromISO(b.end)
+);
 
-  if (json.conflict) {
-    // Slot is busy — fetch next available options
-    const nextSlots = await prisma.availability.findMany({
-      where: { propertyId: property.id, isBlocked: false, startTime: { gte: new Date() } },
-      orderBy: { startTime: "asc" },
-      take: 3,
-    });
+if (isBlocked) {
+  // Slot is busy — find next 2 available slots after the requested time
+  const nextTwo = availableSlots
+    .filter((s) => DateTime.fromISO(s.start) > requestedDT)
+    .slice(0, 2);
 
-    if (nextSlots.length) {
-      const options = nextSlots
-        .map((s) =>
-          DateTime.fromJSDate(s.startTime).setZone(tz).toFormat("ccc, LLL d 'at' h:mm a")
-        )
-        .join(", ");
-      await sendSms(from, `That time's booked, but I can do ${options}. What works best?`);
-    } else {
-      await sendSms(from, "That time isn't open — when else works for you?");
-    }
-    return res.status(200).end();
+  if (nextTwo.length) {
+    const options = nextTwo
+      .map((s) =>
+        DateTime.fromISO(s.start)
+          .setZone(tz)
+          .toFormat("ccc, LLL d 'at' h:mm a")
+      )
+      .join(" or ");
+    await sendSms(
+      from,
+      `That time’s already booked, but I can do ${options}. What works best?`
+    );
+  } else {
+    await sendSms(from, "That time isn't open — when else works for you?");
   }
-
-  if (json.ok) {
-  const startTime = new Date(json.data.datetime);
-  const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // 30 min slot
-  const startFmt = DateTime.fromJSDate(startTime)
-    .setZone(tz)
-    .toFormat("ccc, LLL d 'at' h:mm a");
-
-  // 💬 Confirm via SMS + DB
-  await saveMessage({
-    phone: from,
-    role: "assistant",
-    content: `Perfect — you're booked for ${startFmt}.`,
-    propertyId: property?.id,
-  });
-
-  await sendSms(from, `Perfect — you're booked for ${startFmt}. See you then!`);
-  console.log(`✅ Booking confirmed for ${from} at ${startFmt}`);
-
-  // 📅 Also create event in Outlook calendar
-  try {
-    const outlookUrl = `${process.env.NEXT_PUBLIC_AI_BACKEND_URL || "https://aivoice-rental.onrender.com"}/api/outlook-sync/create-event`;
-    const outlookPayload = {
-      subject: `Showing — ${property?.facts?.buildingName || property?.address || "Property"}`,
-      startTime: startTime.toISOString(),
-      endTime: endTime.toISOString(),
-      location: property?.facts?.address || property?.address || "TBD",
-      leadEmail: "renter@example.com" // optional: replace when lead emails are captured
-    };
-
-    const outlookRes = await fetch(outlookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(outlookPayload),
-    });
-
-    const outlookData = await outlookRes.json();
-    if (outlookData.success) {
-      console.log("📆 Outlook event created:", outlookData.event.id);
-      // Optional: store the event ID in booking notes for sync
-      await prisma.booking.update({
-        where: { id: json.data.id },
-        data: { notes: `Outlook Event ID: ${outlookData.event.id}` },
-      });
-    } else {
-      console.warn("⚠️ Failed to create Outlook event:", outlookData);
-    }
-  } catch (err) {
-    console.error("❌ Outlook calendar sync failed:", err.message);
-  }
-
   return res.status(200).end();
 }
+
+// ✅ Slot is free — create the booking
+const booking = await prisma.booking.create({
+  data: {
+    leadId: lead.id,
+    propertyId: property.id,
+    datetime: requestedStart,
+    status: "confirmed",
+  },
+});
+
+const startFmt = requestedDT.setZone(tz).toFormat("ccc, LLL d 'at' h:mm a");
+await sendSms(from, `Perfect — you're booked for ${startFmt}. See you then!`);
+console.log(`✅ Booking confirmed for ${from} at ${startFmt}`);
+
+// 💾 Save message record
+await saveMessage({
+  phone: from,
+  role: "assistant",
+  content: `Perfect — you're booked for ${startFmt}.`,
+  propertyId: property?.id,
+});
+
+// 📅 Sync to Outlook
+try {
+  const outlookUrl = `${process.env.NEXT_PUBLIC_AI_BACKEND_URL || "https://aivoice-rental.onrender.com"}/api/outlook-sync/create-event`;
+  const outlookPayload = {
+    subject: `Showing — ${property?.facts?.buildingName || property?.address || "Property"}`,
+    startTime: requestedDT.toISO(),
+    endTime: requestedDT.plus({ minutes: 30 }).toISO(),
+    location: property?.facts?.address || property?.address || "TBD",
+    leadEmail: "renter@example.com",
+  };
+
+  const outlookRes = await fetch(outlookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(outlookPayload),
+  });
+
+  const outlookData = await outlookRes.json();
+  if (outlookData.success) {
+    console.log("📆 Outlook event created:", outlookData.event.id);
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { notes: `Outlook Event ID: ${outlookData.event.id}` },
+    });
+  } else {
+    console.warn("⚠️ Failed to create Outlook event:", outlookData);
+  }
+} catch (err) {
+  console.error("❌ Outlook calendar sync failed:", err.message);
+}
+
+return res.status(200).end();
 
 
   // 🧠 Step 4: Fallback (error)
@@ -863,7 +867,7 @@ if (
 
 
 // 🧠 Fetch live availability context
-const availabilityContext = await getAvailabilityContext(property?.slug);
+const availabilityContext = await getAvailabilityContext(property?.id);
 
 // 🧩 Combine property facts and showing availability
 const reply = await aiReply({
