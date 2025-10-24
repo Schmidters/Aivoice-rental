@@ -240,3 +240,25 @@ router.get("/poll", async (req, res) => {
 
 
 export default router;
+
+// 🔄 Auto-refresh Outlook → Availability every 5 minutes (compact logs)
+if (process.env.NODE_ENV === "production") {
+  setInterval(async () => {
+    const backendUrl =
+      process.env.NEXT_PUBLIC_AI_BACKEND_URL || "https://aivoice-rental.onrender.com";
+    try {
+      const res = await fetch(`${backendUrl}/api/outlook-sync/poll`);
+      const data = await res.json();
+
+      const now = new Date().toLocaleTimeString("en-CA", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      console.log(
+        `🕔 [OutlookSync ${now}] ${data.synced || 0} slots updated${data.error ? " ⚠️ " + data.error : ""}`
+      );
+    } catch (err) {
+      console.warn("⚠️ [OutlookSync] Poll failed:", err.message);
+    }
+  }, 5 * 60 * 1000); // every 5 minutes
+}
