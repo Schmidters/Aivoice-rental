@@ -41,9 +41,10 @@ async function ensureValidOutlookToken() {
 
   const json = await res.json();
   if (!json.access_token) {
-    console.error("❌ Outlook token refresh failed:", json);
-    throw new Error("Outlook token refresh failed");
-  }
+  console.error("❌ Outlook token refresh failed:", JSON.stringify(json, null, 2));
+  throw new Error(json.error_description || "Outlook token refresh failed");
+}
+
 
   await prisma.calendarAccount.update({
     where: { id: account.id },
