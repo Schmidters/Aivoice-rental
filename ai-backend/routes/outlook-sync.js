@@ -238,6 +238,43 @@ router.get("/poll", async (req, res) => {
 });
 
 
+/**
+ * 🔹 5. POST /api/outlook-sync/create-event
+ * Create a new Outlook calendar event
+ */
+router.post("/create-event", async (req, res) => {
+  try {
+    const accessToken = await ensureValidOutlookToken();
+    const { subject, startTime, endTime, location, leadEmail } = req.body;
+
+    const response = await fetch("https://graph.microsoft.com/v1.0/me/events", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        subject,
+        body: { contentType: "HTML", content: "Showing scheduled via Ava AI" },
+        start: { dateTime: startTime, timeZone: "America/Edmonton" },
+        end: { dateTime: endTime, timeZone: "America/Edmonton" },
+        location: { displayName: location || "TBD" },
+        attendees: leadEmail
+          ? [{ emailAddress: { address: leadEmail }, type: "required" }]
+          : [],
+      }),
+    });
+
+    const json = await response.json();
+    if (!response.ok) throw new Error(json.error?.message || "Outlook API error");
+
+    res.json({ success: true, event: json });
+  } catch (err) {
+    console.error("❌ /create-event failed:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 export default router;
 
