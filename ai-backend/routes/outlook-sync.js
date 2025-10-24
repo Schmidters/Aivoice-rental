@@ -7,30 +7,72 @@ const prisma = new PrismaClient();
 const router = express.Router();
 
 /**
+ * 🧠 Helper: Ensure Outlook access token is valid (auto-refresh if expired)
+ */
+async function ensureValidOutlookToken() {
+  const account = await prisma.calendarAccount.findFirst({
+    where: { provider: "outlook" },
+  });
+  if (!account) throw new Error("No Outlook account connected");
+
+  const expiresAt = new Date(account.expiresAt || 0).getTime();
+  const now = Date.now();
+
+  if (expiresAt > now + 60 * 1000) {
+    // Token still valid
+    return account.accessToken;
+  }
+
+  console.log("🔄 Refreshing Outlook access token...");
+
+  const params = new URLSearchParams({
+    client_id: process.env.OUTLOOK_CLIENT_ID,
+    client_secret: process.env.OUTLOOK_CLIENT_SECRET,
+    grant_type: "refresh_token",
+    refresh_token: account.refreshToken,
+    redirect_uri: process.env.OUTLOOK_REDIRECT_URI,
+  });
+
+  const res = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params,
+  });
+
+  const json = await res.json();
+  if (!json.access_token) {
+    console.error("❌ Outlook token refresh failed:", json);
+    throw new Error("Outlook token refresh failed");
+  }
+
+  await prisma.calendarAccount.update({
+    where: { id: account.id },
+    data: {
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token || account.refreshToken,
+      expiresAt: new Date(Date.now() + json.expires_in * 1000),
+    },
+  });
+
+  console.log("✅ Outlook token refreshed");
+  return json.access_token;
+}
+
+/**
  * 🔹 1. GET /api/outlook-sync/events
- * Returns all events (Busy, Tentative, etc.) from Outlook calendar
- * for the next 7 days, used by your dashboard unified calendar.
+ * Returns all Outlook calendar events (including Busy blocks)
  */
 router.get("/events", async (req, res) => {
   try {
-    const account = await prisma.calendarAccount.findFirst({
-      where: { provider: "outlook" },
-    });
-
-    if (!account || !account.accessToken) {
-      return res.status(401).json({
-        ok: false,
-        error: "No Outlook account connected or token missing.",
-      });
-    }
+    const accessToken = await ensureValidOutlookToken();
 
     const now = new Date().toISOString();
     const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const graphUrl = `https://graph.microsoft.com/v1.0/me/calendarview?startdatetime=${now}&enddatetime=${nextWeek}&$select=subject,start,end,location,showAs`;
+    const graphUrl = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${now}&endDateTime=${nextWeek}&$select=id,subject,start,end,location,showAs`;
     const graphRes = await fetch(graphUrl, {
       headers: {
-        Authorization: `Bearer ${account.accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
         Prefer: 'outlook.timezone="America/Edmonton"',
       },
     });
@@ -60,12 +102,10 @@ router.get("/events", async (req, res) => {
 
 /**
  * 🔹 2. POST /api/outlook-sync/subscribe
- * Creates webhook subscriptions (future automation).
  */
 router.post("/subscribe", async (req, res) => {
   try {
-    const { accessToken } = req.body;
-    if (!accessToken) return res.status(400).json({ ok: false, error: "Missing token" });
+    const accessToken = await ensureValidOutlookToken();
 
     const calRes = await fetch("https://graph.microsoft.com/v1.0/me/calendars", {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -93,8 +133,7 @@ router.post("/subscribe", async (req, res) => {
         body: JSON.stringify(payload),
       });
 
-      const subData = await subRes.json();
-      subs.push(subData);
+      subs.push(await subRes.json());
     }
 
     res.json({ ok: true, subs });
@@ -106,42 +145,32 @@ router.post("/subscribe", async (req, res) => {
 
 /**
  * 🔹 3. POST /api/outlook-sync/webhook
- * Handles Microsoft Graph notifications (future use).
  */
 router.post("/webhook", async (req, res) => {
-  // Validation handshake (Microsoft sends this once on subscription)
   if (req.query.validationToken) {
     return res.status(200).send(req.query.validationToken);
   }
-
   const notifications = req.body.value || [];
   for (const note of notifications) {
     console.log("📬 Received Outlook webhook:", note);
-    // You could later fetch event details here if desired
   }
-
   res.sendStatus(202);
 });
 
 /**
  * 🔹 4. GET /api/outlook-sync/poll
- * Manual fallback endpoint — useful for testing token validity.
+ * Manual check
  */
 router.get("/poll", async (req, res) => {
   try {
-    const account = await prisma.calendarAccount.findFirst({
-      where: { provider: "outlook" },
-    });
-    if (!account || !account.accessToken) {
-      return res.status(401).json({ ok: false, error: "No Outlook account" });
-    }
+    const accessToken = await ensureValidOutlookToken();
 
     const start = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const end = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const url = `https://graph.microsoft.com/v1.0/me/calendarview?startdatetime=${start}&enddatetime=${end}`;
+    const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${start}&endDateTime=${end}`;
     const resp = await fetch(url, {
-      headers: { Authorization: `Bearer ${account.accessToken}` },
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
 
     const json = await resp.json();
