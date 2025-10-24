@@ -85,7 +85,7 @@ export default function UnifiedCalendar() {
       </div>
 
       <div className="rounded-xl overflow-hidden shadow border bg-white">
-        <<FullCalendar
+        <FullCalendar
   key="weekly-calendar"   // 👈 Forces re-init to weekly on load
   plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
   initialView="timeGridWeek"     // 👈 Default view
