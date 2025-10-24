@@ -702,6 +702,67 @@ app.get("/api/bookings/events", async (req, res) => {
   req.on("close", () => clearInterval(iv));
 });
 
+import { DateTime } from "luxon";
+
+/**
+ * 🔍 Find next available 30-minute slots for showings
+ * Scans Availability + GlobalSettings and returns next 2 free times
+ */
+async function findNextAvailableSlots(propertyId, requestedStart, count = 2) {
+  const tz = "America/Edmonton";
+
+  // Load global open hours
+  const settings = await prisma.globalSettings.findFirst();
+  const openStart = settings?.openStart || "08:00";
+  const openEnd = settings?.openEnd || "17:00";
+
+  // Load all busy slots for the property
+  const busy = await prisma.availability.findMany({
+    where: {
+      propertyId,
+      isBlocked: true,
+      endTime: { gte: new Date() },
+    },
+    orderBy: { startTime: "asc" },
+  });
+
+  const results = [];
+  let start = DateTime.fromJSDate(requestedStart).setZone(tz);
+
+  // Step forward in 30-minute increments until we find `count` free slots
+  while (results.length < count) {
+    const dayStart = start.startOf("day").plus({
+      hours: parseInt(openStart.split(":")[0]),
+      minutes: parseInt(openStart.split(":")[1]),
+    });
+    const dayEnd = start.startOf("day").plus({
+      hours: parseInt(openEnd.split(":")[0]),
+      minutes: parseInt(openEnd.split(":")[1]),
+    });
+
+    // Ensure we're inside open hours
+    if (start < dayStart) start = dayStart;
+    if (start > dayEnd) start = dayEnd.plus({ days: 1 }).set({ hour: 8 });
+
+    const end = start.plus({ minutes: 30 });
+
+    // Check overlap with busy slots
+    const overlap = busy.some(
+      (b) =>
+        start.toMillis() < new Date(b.endTime).getTime() &&
+        end.toMillis() > new Date(b.startTime).getTime()
+    );
+
+    if (!overlap && start >= DateTime.now().setZone(tz)) {
+      results.push(start);
+    }
+
+    start = start.plus({ minutes: 30 });
+  }
+
+  return results.map((s) => s.toFormat("ccc, LLL d 'at' h:mm a"));
+}
+
 // ---------- Twilio inbound (AI reply uses ONLY manual facts) ----------
 app.post("/twilio/sms", async (req, res) => {
   try {
@@ -780,28 +841,19 @@ const isBlocked = blockedSlots.some(
 );
 
 if (isBlocked) {
-  // Slot is busy — find next 2 available slots after the requested time
-  const nextTwo = availableSlots
-    .filter((s) => DateTime.fromISO(s.start) > requestedDT)
-    .slice(0, 2);
+  // 🧠 Slot is busy — find the next 2 available showing times
+  const nextSlots = await findNextAvailableSlots(property.id, requestedStart, 2);
 
-  if (nextTwo.length) {
-    const options = nextTwo
-      .map((s) =>
-        DateTime.fromISO(s.start)
-          .setZone(tz)
-          .toFormat("ccc, LLL d 'at' h:mm a")
-      )
-      .join(" or ");
-    await sendSms(
-      from,
-      `That time’s already booked, but I can do ${options}. What works best?`
-    );
+  if (nextSlots.length) {
+    const options = nextSlots.join(" or ");
+    await sendSms(from, `That time's already booked, but I can do ${options}. What works best?`);
   } else {
-    await sendSms(from, "That time isn't open — when else works for you?");
+    await sendSms(from, "That time isn't open — what other day works for you?");
   }
+
   return res.status(200).end();
 }
+
 
 // ✅ Slot is free — create the booking
 const booking = await prisma.booking.create({
