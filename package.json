@@ -29,10 +29,10 @@
     "framer-motion": "^11.3.9",
     "react-tooltip": "^5.27.0",
     "cookie-parser": "^1.4.6",
-    "@fullcalendar/react": "^6.1.15",
-    "@fullcalendar/daygrid": "^6.1.15",
-    "@fullcalendar/timegrid": "^6.1.15",
-    "@fullcalendar/interaction": "^6.1.15",
-    "@fullcalendar/core": "^6.1.11"
+     "@fullcalendar/react": "6.1.15",
+  "@fullcalendar/core": "6.1.15",
+  "@fullcalendar/daygrid": "6.1.15",
+  "@fullcalendar/timegrid": "6.1.15",
+  "@fullcalendar/interaction": "6.1.15"
   }
 }
