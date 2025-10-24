@@ -15,8 +15,8 @@ export async function getAvailabilityContext(propertyId = null) {
   try {
     const BACKEND =
       process.env.NEXT_PUBLIC_AI_BACKEND_URL ||
-      process.env.DASHBOARD_ORIGIN ||
-      "https://aivoice-rental.onrender.com";
+      "https://aivoice-rental.onrender.com"; // ✅ always hit backend directly
+
 
     // 1️⃣ Global showing hours
     const global = await prisma.globalSettings.findFirst();
