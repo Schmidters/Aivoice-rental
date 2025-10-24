@@ -2,9 +2,9 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-@import "@fullcalendar/common/main.css";
-@import"@fullcalendar/daygrid/index.css";
-@import "@fullcalendar/timegrid/main.css";
+import "@fullcalendar/core/index.css";
+import "@fullcalendar/daygrid/index.css";
+import "@fullcalendar/timegrid/index.css";
 
 
 /* === Base clean defaults === */
