@@ -1,5 +1,5 @@
-// ai-backend/routes/availability.js
 import express from "express";
+import fetch from "node-fetch";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -10,20 +10,21 @@ const clients = new Set();
 
 /* -------------------------------------------------------------
    📅 GET /api/availability
-   Returns global open hours + all availability slots
+   Returns global open hours + all availability slots + Outlook events
 ------------------------------------------------------------- */
 router.get("/", async (req, res) => {
   try {
     const { propertySlug } = req.query;
     const where = propertySlug ? { property: { slug: propertySlug } } : undefined;
 
+    // --- Load DB-based availability slots ---
     const availability = await prisma.availability.findMany({
       where,
       include: { property: true },
       orderBy: { startTime: "asc" },
     });
 
-    // 🧠 Ensure GlobalSettings row exists
+    // --- Ensure global settings exist ---
     let settings = await prisma.globalSettings.findFirst();
     if (!settings) {
       settings = await prisma.globalSettings.create({
@@ -48,6 +49,40 @@ router.get("/", async (req, res) => {
       });
     }
 
+    // --- Fetch Outlook events from internal sync route ---
+    let outlookEvents = [];
+    try {
+      const outlookRes = await fetch(
+        `${process.env.NEXT_PUBLIC_AI_BACKEND_URL}/api/outlook-sync/events`
+      );
+      const outlookJson = await outlookRes.json();
+      if (outlookJson.ok) outlookEvents = outlookJson.data;
+    } catch (err) {
+      console.warn("⚠️ Outlook fetch failed:", err.message);
+    }
+
+    // --- Combine local availability and Outlook events ---
+    const combinedSlots = [
+      ...availability.map((slot) => ({
+        id: `db-${slot.id}`,
+        title: slot.isBlocked ? "Blocked" : slot.notes || "Available Slot",
+        start: slot.startTime,
+        end: slot.endTime,
+        property: slot.property?.buildingName || slot.property?.address || "",
+        source: "AI",
+      })),
+      ...outlookEvents.map((event) => ({
+        id: `outlook-${event.id}`,
+        title: event.title || "Busy",
+        start: event.start,
+        end: event.end,
+        location: event.location || "",
+        showAs: event.showAs || "busy",
+        source: "Outlook",
+      })),
+    ].sort((a, b) => new Date(a.start) - new Date(b.start));
+
+    // --- Final response ---
     res.json({
       ok: true,
       data: {
@@ -62,7 +97,7 @@ router.get("/", async (req, res) => {
           saturday: { start: settings.saturdayStart, end: settings.saturdayEnd },
           sunday: { start: settings.sundayStart, end: settings.sundayEnd },
         },
-        slots: availability,
+        slots: combinedSlots,
       },
     });
   } catch (err) {
