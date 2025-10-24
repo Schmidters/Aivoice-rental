@@ -1,16 +1,9 @@
 /* app/globals.css */
 
-/* ✅ FullCalendar imports — only valid ones for v6.1.15 */
-@import "@fullcalendar/daygrid/main.css";
-@import "@fullcalendar/timegrid/main.css";
-
-/* ✅ Tailwind layers */
+/* ✅ Tailwind layers (keep these at the top) */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-
-
 
 /* === Base clean defaults === */
 html {

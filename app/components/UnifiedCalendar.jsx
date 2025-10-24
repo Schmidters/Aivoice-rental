@@ -8,6 +8,8 @@ import interactionPlugin from "@fullcalendar/interaction";
 import { Drawer } from "@/components/ui/drawer";
 import { motion } from "framer-motion";
 import { Calendar, Clock, MapPin } from "lucide-react";
+import FullCalendarStyles from "@/app/fullcalendar-styles"; // 👈 add this line
+
 
 export default function UnifiedCalendar() {
   const [events, setEvents] = useState([]);
@@ -65,6 +67,7 @@ export default function UnifiedCalendar() {
 
   return (
     <div className="p-6">
+       <FullCalendarStyles /> 
       <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-2xl font-semibold">Calendar</h1>
