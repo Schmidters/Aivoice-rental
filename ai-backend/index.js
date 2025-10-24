@@ -832,13 +832,32 @@ if (
 const availabilityContext = await getAvailabilityContext(property?.id);
 const { availableSlots, blockedSlots } = availabilityContext;
 
-// Convert requested time to Luxon for comparison
-const requestedDT = DateTime.fromJSDate(requestedStart);
+const tz = "America/Edmonton";
+
+// ✅ Normalize requested time to the same timezone
+const requestedDT = DateTime.fromJSDate(requestedStart).setZone(tz);
+
+// ⛔ Prevent bookings in the past
+if (requestedDT <= DateTime.now().setZone(tz)) {
+  await sendSms(from, "That time’s already passed. What other time works for you?");
+  return res.status(200).end();
+}
+
+// ✅ Compare against each blocked slot using the same tz
 const isBlocked = blockedSlots.some((b) => {
-  const start = b.start ? DateTime.fromISO(b.start) : DateTime.fromJSDate(b.startTime);
-  const end   = b.end ? DateTime.fromISO(b.end)   : DateTime.fromJSDate(b.endTime);
-  return requestedDT >= start && requestedDT < end;
+  const bStart = DateTime.fromISO(b.start, { zone: tz });
+  const bEnd = DateTime.fromISO(b.end, { zone: tz });
+  return requestedDT >= bStart && requestedDT < bEnd;
 });
+
+// (Optional) Log comparison for debugging
+console.log(
+  "[BOOKING CHECK] requestedDT:",
+  requestedDT.toISO(),
+  "blockedSlots:",
+  blockedSlots.length
+);
+
 
 
 if (isBlocked) {
