@@ -12,6 +12,8 @@ import twilio from "twilio";
 import { PrismaClient } from "@prisma/client";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import { generateAvaResponse } from "./utils/generateAvaResponse.js";
+
 
 // Routers
 import bookingsRouter from "./routes/bookings.js";
@@ -838,7 +840,7 @@ const requestedDT = DateTime.fromJSDate(requestedStart).setZone(tz);
 
 // ⛔ Prevent bookings in the past
 if (requestedDT <= DateTime.now().setZone(tz)) {
-  await sendSms(from, "That time’s already passed. What other time works for you?");
+await sendSms(from, await generateAvaResponse("past_time"));
   return res.status(200).end();
 }
 
@@ -860,14 +862,12 @@ console.log(
 
 
 if (isBlocked) {
-  // 🧠 Slot is busy — find the next 2 available showing times
   const nextSlots = await findNextAvailableSlots(property.id, requestedStart, 2);
 
   if (nextSlots.length) {
-    const options = nextSlots.join(" or ");
-    await sendSms(from, `That time's already booked, but I can do ${options}. What works best?`);
+    await sendSms(from, await generateAvaResponse("slot_taken", { nextSlots }));
   } else {
-    await sendSms(from, "That time isn't open — what other day works for you?");
+    await sendSms(from, await generateAvaResponse("no_slots"));
   }
 
   return res.status(200).end();
@@ -885,7 +885,13 @@ const booking = await prisma.booking.create({
 });
 
 const startFmt = requestedDT.setZone(tz).toFormat("ccc, LLL d 'at' h:mm a");
-await sendSms(from, `Perfect — you're booked for ${startFmt}. See you then!`);
+await sendSms(
+  from,
+  await generateAvaResponse("booking_confirmed", {
+    startFmt,
+    propertyName: property?.facts?.buildingName || property?.address,
+  })
+);
 console.log(`✅ Booking confirmed for ${from} at ${startFmt}`);
 
 // 💾 Save message record
