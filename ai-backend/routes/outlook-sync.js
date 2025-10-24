@@ -160,7 +160,7 @@ router.post("/webhook", async (req, res) => {
 
 /**
  * 🔹 4. GET /api/outlook-sync/poll
- * Manual check
+ * Pulls Outlook events and syncs them into Availability
  */
 router.get("/poll", async (req, res) => {
   try {
@@ -169,17 +169,74 @@ router.get("/poll", async (req, res) => {
     const start = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const end = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${start}&endDateTime=${end}`;
+    const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${start}&endDateTime=${end}&$select=id,subject,start,end,showAs`;
     const resp = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Prefer: 'outlook.timezone="America/Edmonton"',
+      },
     });
 
     const json = await resp.json();
-    res.json({ ok: true, data: json.value || [] });
+    if (!json.value) throw new Error("Invalid Graph response");
+
+    // 🧹 Clear old availability (past events)
+    await prisma.availability.deleteMany({
+      where: { endTime: { lt: new Date() } },
+    });
+
+    // 🧠 Insert only valid busy events
+    let count = 0;
+    for (const e of json.value) {
+      // Skip non-busy events
+      if (e.showAs && e.showAs.toLowerCase() !== "busy") continue;
+
+      // Skip malformed events
+      if (!e.start?.dateTime || !e.end?.dateTime) continue;
+
+      const startTime = new Date(e.start.dateTime);
+      const endTime = new Date(e.end.dateTime);
+
+      // Skip long or multi-day events (>12h)
+      const durationHours = (endTime - startTime) / (1000 * 60 * 60);
+      if (durationHours > 12) continue;
+
+      // Try to match Outlook event to a property
+      let propertyId = 1;
+      try {
+        const property = await prisma.property.findFirst({
+          where: {
+            OR: [
+              { address: { contains: e.subject, mode: "insensitive" } },
+              { slug: { contains: e.subject.toLowerCase().replace(/\s+/g, "-") } },
+            ],
+          },
+        });
+        if (property) propertyId = property.id;
+      } catch (err) {
+        console.warn("⚠️ Could not match property:", err.message);
+      }
+
+      await prisma.availability.create({
+        data: {
+          propertyId,
+          startTime,
+          endTime,
+          isBlocked: true,
+          notes: e.subject || "Busy",
+        },
+      });
+
+      count++;
+    }
+
+    res.json({ ok: true, synced: count });
   } catch (err) {
     console.error("❌ Outlook Poll Error:", err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+
 
 export default router;
