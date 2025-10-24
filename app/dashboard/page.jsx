@@ -69,42 +69,76 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gray-50 flex">
       {/* Sidebar */}
 <div className="w-80 calendar-glass p-6 space-y-6 border-none shadow-md">
-        <h2 className="text-xl font-semibold">Calendar</h2>
-        <button className="flex items-center justify-center w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 transition">
-          <Plus className="w-4 h-4 mr-2" /> Add New Event
-        </button>
+  <h2 className="text-xl font-semibold">Calendar</h2>
 
-        <div>
-          <h3 className="text-gray-600 font-medium mb-3">Upcoming Events</h3>
-          {upcoming.length === 0 ? (
-            <p className="text-gray-400 text-sm">No events coming up.</p>
-          ) : (
-            <div className="space-y-3">
-              {upcoming.map((e) => (
-                <div
-                  key={e.id}
-                  onClick={() => {
-                    setSelected(e);
-                    setDrawerOpen(true);
-                  }}
-                  className="bg-gray-50 hover:bg-gray-100 border border-gray-200 p-3 rounded-lg cursor-pointer transition"
-                >
-                  <p className="font-medium text-gray-800 text-sm truncate">
-                    {e.title}
-                  </p>
-                  <p className="text-xs text-gray-500 flex items-center gap-1 mt-1">
-                    <Clock className="w-3 h-3" />
-                    {new Date(e.start).toLocaleString([], {
-                      dateStyle: "short",
-                      timeStyle: "short",
-                    })}
-                  </p>
-                </div>
-              ))}
+  {/* 🧹 Removed Add New Event button since events sync automatically */}
+  {/* <button className="flex items-center justify-center w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 transition">
+    <Plus className="w-4 h-4 mr-2" /> Add New Event
+  </button> */}
+
+  <div>
+    <h3 className="text-gray-600 font-medium mb-3">Upcoming Events</h3>
+    {upcoming.length === 0 ? (
+      <p className="text-gray-400 text-sm">No events coming up.</p>
+    ) : (
+      <div className="space-y-3">
+        {upcoming.map((e) => {
+          // 🔹 Format date as Today / Tomorrow / or date
+          const date = new Date(e.start);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const eventDate = new Date(date);
+          eventDate.setHours(0, 0, 0, 0);
+          const diffDays = Math.floor(
+            (eventDate - today) / (1000 * 60 * 60 * 24)
+          );
+
+          let dateLabel = "";
+          if (diffDays === 0) dateLabel = "Today";
+          else if (diffDays === 1) dateLabel = "Tomorrow";
+          else
+            dateLabel = date.toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+            });
+
+          const timeLabel = date.toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+          });
+
+          return (
+            <div
+              key={e.id}
+              onClick={() => {
+                setSelected(e);
+                setDrawerOpen(true);
+              }}
+              className="bg-gray-50 hover:bg-gray-100 border border-gray-200 p-3 rounded-lg cursor-pointer transition"
+            >
+              <p className="font-medium text-gray-800 text-sm truncate">
+                {e.title}
+              </p>
+
+              {/* Optional subtitle: property/building if available */}
+              {(e.property || e.location) && (
+                <p className="text-xs text-gray-500 truncate">
+                  {[e.property, e.location].filter(Boolean).join(" • ")}
+                </p>
+              )}
+
+              <p className="text-xs text-gray-500 flex items-center gap-1 mt-1">
+                <Clock className="w-3 h-3" />
+                {dateLabel}, {timeLabel}
+              </p>
             </div>
-          )}
-        </div>
+          );
+        })}
       </div>
+    )}
+  </div>
+</div>
+
 
       {/* Main Calendar */}
       {/* Main Calendar */}

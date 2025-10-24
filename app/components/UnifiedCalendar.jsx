@@ -86,20 +86,17 @@ export default function UnifiedCalendar() {
 
       <div className="rounded-xl overflow-hidden shadow border bg-white">
         <FullCalendar
-  key="weekly-calendar"   // 👈 Forces re-init to weekly on load
+  key="weekly-calendar" // 👈 Forces re-init each load
   plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-  initialView="timeGridWeek"     // 👈 Default view
+  initialView="timeGridWeek" // 👈 Default weekly view
+  initialDate={new Date()} // ensure current week loads
   headerToolbar={{
     left: "prev,next today",
     center: "title",
-    right: "timeGridDay,timeGridWeek,dayGridMonth", // 👈 note order — week in the middle
+    right: "timeGridWeek,timeGridDay,dayGridMonth",
   }}
   height="75vh"
-  nowIndicator={true}
-  initialDate={new Date()}        // ensures it loads at current week
-  firstDay={0}                    // Sunday = 0, Monday = 1
-  slotMinTime="08:00:00"
-  slotMaxTime="20:00:00"
+  nowIndicator
   events={events}
   eventClick={(info) => {
     const ev = events.find((e) => e.id === info.event.id);
@@ -120,6 +117,7 @@ export default function UnifiedCalendar() {
     </motion.div>
   )}
 />
+
 
       </div>
 
