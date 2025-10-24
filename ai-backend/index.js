@@ -832,7 +832,6 @@ if (
 const availabilityContext = await getAvailabilityContext(property?.id);
 const { availableSlots, blockedSlots } = availabilityContext;
 
-const tz = "America/Edmonton";
 
 // ✅ Normalize requested time to the same timezone
 const requestedDT = DateTime.fromJSDate(requestedStart).setZone(tz);
