@@ -7,89 +7,66 @@ const prisma = new PrismaClient();
 
 /**
  * getAvailabilityContext()
- * - Returns unified context for AI to understand open vs busy slots
- * - Merges: GlobalSettings + DB Availability + live Outlook events
- * - Includes 1-second retry on Outlook rate limits (HTTP 429)
+ * - Combines DB + Outlook data
+ * - Normalizes all times to local timezone
  */
 export async function getAvailabilityContext(propertyId = null) {
+  const tz = "America/Edmonton";
+
   try {
     const BACKEND =
       process.env.NEXT_PUBLIC_AI_BACKEND_URL ||
-      "https://aivoice-rental.onrender.com"; // ✅ always hit backend directly
+      "https://aivoice-rental.onrender.com";
 
-
-    // 1️⃣ Global showing hours
+    // 1️⃣ Get global showing hours
     const global = await prisma.globalSettings.findFirst();
 
-    // 2️⃣ Fetch all DB availability for the property (blocked + free)
+    // 2️⃣ Fetch DB-defined slots (normalize to local)
     const availability = await prisma.availability.findMany({
       where: propertyId ? { propertyId } : {},
-      orderBy: { startTime: "asc" },
-      select: {
-        startTime: true,
-        endTime: true,
-        isBlocked: true,
-        notes: true,
-      },
+      select: { startTime: true, endTime: true, isBlocked: true },
     });
 
-    // 3️⃣ Fetch Outlook events (with safe retry on 429)
+    // Normalize all DB times to local zone
+    const availableSlots = availability
+      .filter((a) => !a.isBlocked)
+      .map((a) => ({
+        start: DateTime.fromJSDate(a.startTime).setZone(tz).toISO(),
+        end: DateTime.fromJSDate(a.endTime).setZone(tz).toISO(),
+      }));
+
+    const blockedFromDB = availability
+      .filter((a) => a.isBlocked)
+      .map((a) => ({
+        start: DateTime.fromJSDate(a.startTime).setZone(tz).toISO(),
+        end: DateTime.fromJSDate(a.endTime).setZone(tz).toISO(),
+      }));
+
+    // 3️⃣ Fetch Outlook events (normalize to same tz)
     let outlookBusy = [];
     try {
-      const fetchOutlook = async () => {
-        const res = await fetch(`${BACKEND}/api/outlook-sync/events`);
-        if (res.status === 429) {
-          console.warn("⚠️ Outlook API rate-limited (429). Retrying in 1s...");
-          await new Promise((r) => setTimeout(r, 1000));
-          return fetch(`${BACKEND}/api/outlook-sync/events`);
-        }
-        return res;
-      };
-
-      const outlookRes = await fetchOutlook();
+      const outlookRes = await fetch(`${BACKEND}/api/outlook-sync/events`);
       const outlookJson = await outlookRes.json();
-
-      if (outlookJson?.data?.length) {
-        outlookBusy = outlookJson.data
-          .filter((e) => e.showAs?.toLowerCase() === "busy")
-          .map((e) => ({
-            start: DateTime.fromISO(e.start).toISO(),
-            end: DateTime.fromISO(e.end).toISO(),
-            notes: e.title || "Outlook Busy",
-          }));
-      }
+      outlookBusy = (outlookJson.data || []).map((e) => ({
+        start: DateTime.fromISO(e.start, { zone: tz }).toISO(),
+        end: DateTime.fromISO(e.end, { zone: tz }).toISO(),
+      }));
+      console.log(`📅 Outlook busy slots: ${outlookBusy.length}`);
     } catch (err) {
       console.warn("⚠️ Skipping Outlook merge (fetch failed):", err.message);
     }
 
-    // 4️⃣ Split available vs blocked DB entries
-    const blockedSlots = [
-      ...availability
-        .filter((a) => a.isBlocked)
-        .map((a) => ({
-          start: DateTime.fromJSDate(a.startTime).toISO(),
-          end: DateTime.fromJSDate(a.endTime).toISO(),
-          notes: a.notes || "Busy",
-        })),
-      ...outlookBusy,
-    ];
+    // 4️⃣ Merge busy slots
+    const blockedSlots = [...blockedFromDB, ...outlookBusy];
 
-    const availableSlots = availability
-      .filter((a) => !a.isBlocked)
-      .map((a) => ({
-        start: DateTime.fromJSDate(a.startTime).toISO(),
-        end: DateTime.fromJSDate(a.endTime).toISO(),
-        notes: a.notes || "Free",
-      }));
+    // 5️⃣ Log merged results for visibility
+    console.log(
+      `🧭 AvailabilityContext → ${blockedSlots.length} busy / ${availableSlots.length} open`
+    );
 
-    // 5️⃣ Return clean context for Ava
+    // 6️⃣ Return unified context
     return {
-      globalHours: {
-        openStart: global?.openStart || "08:00",
-        openEnd: global?.openEnd || "17:00",
-        saturdayStart: global?.saturdayStart || "10:00",
-        saturdayEnd: global?.saturdayEnd || "14:00",
-      },
+      globalHours: global || {},
       availableSlots,
       blockedSlots,
     };
