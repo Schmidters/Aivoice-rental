@@ -834,11 +834,12 @@ const { availableSlots, blockedSlots } = availabilityContext;
 
 // Convert requested time to Luxon for comparison
 const requestedDT = DateTime.fromJSDate(requestedStart);
-const isBlocked = blockedSlots.some(
-  (b) =>
-    requestedDT >= DateTime.fromISO(b.start) &&
-    requestedDT < DateTime.fromISO(b.end)
-);
+const isBlocked = blockedSlots.some((b) => {
+  const start = b.start ? DateTime.fromISO(b.start) : DateTime.fromJSDate(b.startTime);
+  const end   = b.end ? DateTime.fromISO(b.end)   : DateTime.fromJSDate(b.endTime);
+  return requestedDT >= start && requestedDT < end;
+});
+
 
 if (isBlocked) {
   // 🧠 Slot is busy — find the next 2 available showing times
