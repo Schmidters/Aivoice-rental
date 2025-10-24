@@ -85,36 +85,42 @@ export default function UnifiedCalendar() {
       </div>
 
       <div className="rounded-xl overflow-hidden shadow border bg-white">
-        <FullCalendar
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek" // ✅ weekly default
-          headerToolbar={{
-            left: "prev,next today",
-            center: "title",
-            right: "dayGridMonth,timeGridWeek,timeGridDay",
-          }}
-          height="75vh"
-          nowIndicator
-          events={events}
-          eventClick={(info) => {
-            const ev = events.find((e) => e.id === info.event.id);
-            setSelected(ev);
-            setDrawerOpen(true);
-          }}
-          eventDisplay="block"
-          eventContent={(arg) => (
-            <motion.div
-              layout
-              className={`text-white text-xs px-2 py-1 rounded-md shadow-sm ${
-                arg.event.extendedProps.source === "AI"
-                  ? "bg-green-600"
-                  : "bg-blue-600"
-              }`}
-            >
-              {arg.event.title}
-            </motion.div>
-          )}
-        />
+        <<FullCalendar
+  key="weekly-calendar"   // 👈 Forces re-init to weekly on load
+  plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+  initialView="timeGridWeek"     // 👈 Default view
+  headerToolbar={{
+    left: "prev,next today",
+    center: "title",
+    right: "timeGridDay,timeGridWeek,dayGridMonth", // 👈 note order — week in the middle
+  }}
+  height="75vh"
+  nowIndicator={true}
+  initialDate={new Date()}        // ensures it loads at current week
+  firstDay={0}                    // Sunday = 0, Monday = 1
+  slotMinTime="08:00:00"
+  slotMaxTime="20:00:00"
+  events={events}
+  eventClick={(info) => {
+    const ev = events.find((e) => e.id === info.event.id);
+    setSelected(ev);
+    setDrawerOpen(true);
+  }}
+  eventDisplay="block"
+  eventContent={(arg) => (
+    <motion.div
+      layout
+      className={`text-white text-xs px-2 py-1 rounded-md shadow-sm ${
+        arg.event.extendedProps.source === "AI"
+          ? "bg-green-600"
+          : "bg-blue-600"
+      }`}
+    >
+      {arg.event.title}
+    </motion.div>
+  )}
+/>
+
       </div>
 
       {/* Drawer Panel */}
