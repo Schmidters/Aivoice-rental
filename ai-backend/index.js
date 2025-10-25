@@ -13,11 +13,7 @@ import { PrismaClient } from "@prisma/client";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { generateAvaResponse } from "./utils/generateAvaResponse.js";
-
-// Health check route
-app.get("/health", (req, res) => {
-  res.json({ ok: true, time: new Date().toISOString() });
-});
+import { getAvailabilityContext } from "./utils/getAvailabilityContext.js";
 
 // Routers
 import bookingsRouter from "./routes/bookings.js";
@@ -25,10 +21,17 @@ import availabilityRouter from "./routes/availability.js";
 import outlookAuthRouter from "./routes/outlookAuth.js";   // OAuth connect/callback
 import outlookRouter from "./routes/outlook.js";           // availability + event creation
 import outlookSyncRouter from "./routes/outlook-sync.js";  // webhook + sync
-import { getAvailabilityContext } from "./utils/getAvailabilityContext.js";
-
 
 dotenv.config();
+
+// ---------- CORE SETUP ----------
+const app = express();                      // 👈 must come before app.get
+const prisma = new PrismaClient();
+
+// ✅ Health check route
+app.get("/health", (req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
 
 // ---------- ENV ----------
 const {
@@ -52,6 +55,7 @@ if (!process.env.DATABASE_URL)
   throw new Error("Missing DATABASE_URL");
 
 const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
+
 
 // ---------- CORE SETUP ----------
 const app = express();
