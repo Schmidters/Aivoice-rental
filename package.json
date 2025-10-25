@@ -1,6 +1,7 @@
 {
   "name": "ai-leasing-dashboard",
   "version": "1.0.0",
+  "type": "module",
   "private": true,
   "scripts": {
   "dev": "node server.js",
@@ -39,6 +40,7 @@
   "twilio": "^4.21.0",
   "@prisma/client": "^6.0.0",
   "luxon": "^3.4.3",
-  "body-parser": "^1.20.2"
+  "body-parser": "^1.20.2",
+   "dotenv": "^16.4.5"
   }
 }
