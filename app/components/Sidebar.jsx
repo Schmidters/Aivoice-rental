@@ -1,68 +1,45 @@
-'use client';
+"use client";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { cn } from "@/lib/utils"; // if you don’t have this util, I’ll add it next
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import {
-  LayoutDashboard,
-  MessageSquare,
-  CalendarDays,
-  BookOpenText,
-  ListTree,
-  Database,
-} from 'lucide-react';
-import useUnreadCount from './useUnreadCount';
-
-const NAV = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/leads', label: 'Leads', icon: ListTree },
-  { href: '/conversations', label: 'Conversations', icon: MessageSquare, showUnread: true },
-  { href: '/bookings', label: 'Bookings', icon: CalendarDays },
-  { href: '/properties', label: 'Property Data', icon: Database },
-  { href: '/logs', label: 'Logs', icon: BookOpenText },
+const navItems = [
+  { href: "/dashboard", label: "Dashboard", icon: "🏠" },
+  { href: "/inbox", label: "Inbox", icon: "💬" },
+  { href: "/bookings", label: "Bookings", icon: "📅" },
+  { href: "/properties", label: "Properties", icon: "🏘️" },
+  { href: "/analytics", label: "Analytics", icon: "📊" },
+  { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const unread = useUnreadCount(); // ← live unread count
 
   return (
-    <aside className="hidden md:flex md:w-64 md:flex-col md:shrink-0 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
-      <div className="h-14 flex items-center px-4 border-b border-gray-200 dark:border-gray-800">
-        <span className="text-sm font-semibold tracking-wide text-gray-800 dark:text-gray-100">
-          AI Leasing
-        </span>
+    <aside className="hidden w-60 flex-none border-r bg-white/90 p-3 md:block">
+      <div className="mb-4 px-2 text-lg font-semibold tracking-tight">
+        Ava Rental Assistant
       </div>
-
-      <nav className="flex-1 p-3 space-y-1">
-        {NAV.map(({ href, label, icon: Icon, showUnread }) => {
-          const active =
-            pathname === href || (href !== '/' && pathname?.startsWith(href));
+      <nav className="flex flex-col gap-1">
+        {navItems.map((item) => {
+          const active = pathname.startsWith(item.href);
           return (
             <Link
-              key={href}
-              href={href}
-              className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-sm transition
-                ${active
-                  ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'}`}
-            >
-              <span className="flex items-center gap-3">
-                <Icon size={18} />
-                <span>{label}</span>
-              </span>
-              {showUnread && unread > 0 && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-600 text-white">
-                  {unread}
-                </span>
+              key={item.href}
+              href={item.href}
+              className={cn(
+                "flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                active
+                  ? "bg-gray-900 text-white"
+                  : "text-gray-700 hover:bg-gray-100"
               )}
+            >
+              <span>{item.icon}</span>
+              <span>{item.label}</span>
             </Link>
           );
         })}
       </nav>
-
-      <div className="p-3 text-xs text-gray-400 border-t border-gray-200 dark:border-gray-800">
-        v1 • {new Date().getFullYear()}
-      </div>
     </aside>
   );
 }
