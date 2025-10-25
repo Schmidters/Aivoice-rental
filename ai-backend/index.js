@@ -28,10 +28,64 @@ dotenv.config();
 const app = express();                      // 👈 must come before app.get
 const prisma = new PrismaClient();
 
-// ✅ Health check route
-app.get("/health", (req, res) => {
-  res.json({ ok: true, time: new Date().toISOString() });
+// ====================================================
+// 🧠 SECURITY + CORS SETUP (goes right after app + prisma)
+// ====================================================
+
+import helmet from "helmet";
+import xss from "xss-clean";
+import rateLimit from "express-rate-limit";
+
+// --- Core security middleware ---
+app.use(helmet()); // adds secure headers
+app.use(xss());    // sanitize input
+
+// Basic rate limiting to protect from spam / brute force
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 200,                 // per IP
+  })
+);
+
+// --- Strict CORS setup ---
+const allowedOrigins = [
+  "https://dashboard.cubbylockers.com",     // ✅ production dashboard
+  "https://aivoice-rental.digitalocean.com",// ✅ temp backend
+  "http://localhost:3000",                  // ✅ local dev
+  "https://app.aivoicerental.com",
+  "https://www.aivoicerental.com",
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true); // allow webhooks/no-origin
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      console.warn("❌ Blocked by CORS:", origin);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
+  })
+);
+
+
+// --- Force HTTPS in production ---
+app.use((req, res, next) => {
+  if (
+    process.env.NODE_ENV === "production" &&
+    req.header("x-forwarded-proto") !== "https"
+  ) {
+    return res.redirect(`https://${req.header("host")}${req.url}`);
+  }
+  next();
 });
+
+
 
 // ---------- ENV ----------
 const {
@@ -61,28 +115,6 @@ const TWILIO_FROM_NUMBER = ENV_TWILIO_FROM_NUMBER || TWILIO_PHONE_NUMBER;
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// ---------- CORS ----------
-const allowedOrigins = [
-  "https://ai-leasing-dashboard.onrender.com",
-  "http://localhost:3000",
-  "https://app.aivoicerental.com",
-  "https://www.aivoicerental.com",
-];
-
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        console.warn("❌ Blocked by CORS:", origin);
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    methods: ["GET", "POST", "PUT", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
 
 // ---------- Middleware ----------
 app.use(bodyParser.json());
@@ -94,6 +126,13 @@ app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
   next();
 });
+
+// Allow webhooks to bypass strict CORS
+app.use("/twilio", cors());
+app.use("/browseai", cors());
+app.use("/init", cors());
+app.use("/outlook", cors());
+
 
 // ---------- Routes ----------
 app.use("/api/bookings", bookingsRouter);
@@ -1028,6 +1067,11 @@ async function refreshOutlookTokens() {
 
 // Run every 24 hours (Render keeps your dyno hot)
 setInterval(refreshOutlookTokens, 24 * 60 * 60 * 1000);
+
+
+app.use((req, res) => {
+  res.status(404).json({ ok: false, error: "NOT_FOUND" });
+});
 
 
 // ---------- Export app for unified server ----------
