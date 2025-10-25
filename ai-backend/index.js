@@ -14,6 +14,10 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import { generateAvaResponse } from "./utils/generateAvaResponse.js";
 
+// Health check route
+app.get("/health", (req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
 
 // Routers
 import bookingsRouter from "./routes/bookings.js";
