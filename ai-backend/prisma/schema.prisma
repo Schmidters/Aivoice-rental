@@ -1,6 +1,5 @@
 // prisma/schema.prisma
 // Version: Ava V6 — DB-first (no Redis)
-env = "../.env"
 
 
 generator client {
