@@ -16,6 +16,8 @@ export default function PropertyDataPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expandedIndex, setExpandedIndex] = useState(null);
+  const [search, setSearch] = useState("");
+
 
   async function loadData() {
     setLoading(true);
@@ -63,6 +65,17 @@ export default function PropertyDataPage() {
     return () => window.removeEventListener("propertyDataUpdated", onUpdate);
   }, []);
 
+  // 🧩 Filtered list based on search term
+const filtered = properties.filter((p) => {
+  const term = search.toLowerCase();
+  return (
+    p.slug?.toLowerCase().includes(term) ||
+    p.address?.toLowerCase().includes(term) ||
+    p.facts?.buildingName?.toLowerCase().includes(term)
+  );
+});
+
+
   if (loading) return <div className="p-6 text-gray-500">Loading properties…</div>;
   if (error) return <div className="p-6 text-red-500">{error}</div>;
 
@@ -82,6 +95,17 @@ export default function PropertyDataPage() {
         </div>
       </div>
 
+{/* 🔍 Search Bar */}
+<div className="relative mb-4">
+  <input
+    type="text"
+    placeholder="Search by address or building name..."
+    value={search}
+    onChange={(e) => setSearch(e.target.value)}
+    className="w-full pl-4 pr-4 py-2 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+  />
+</div>
+
       <div className="overflow-x-auto rounded-lg shadow border border-gray-200 bg-white">
         <table className="w-full text-sm">
           <thead className="bg-gray-100 text-gray-700">
@@ -96,8 +120,10 @@ export default function PropertyDataPage() {
           </thead>
 
           <tbody>
+
+
             {Array.isArray(properties) && properties.length > 0 ? (
-              properties.map((p, i) => {
+              filtered.map((p, i) => {
                 if (!p) return null;
                 const facts = p?.facts ?? {};
                 const units = Array.isArray(facts.units) ? facts.units : [];
