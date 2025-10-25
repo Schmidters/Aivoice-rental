@@ -1024,8 +1024,6 @@ async function refreshOutlookTokens() {
 setInterval(refreshOutlookTokens, 24 * 60 * 60 * 1000);
 
 
-// ---------- Server start ----------
-const renderPort = process.env.PORT || 10000;
-app.listen(renderPort, "0.0.0.0", () => {
-  console.log(`🚀 Ava V7 manual-only backend on :${renderPort} (${NODE_ENV})`);
-});
+// ---------- Export app for unified server ----------
+export default app;
+
