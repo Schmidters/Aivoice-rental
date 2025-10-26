@@ -56,6 +56,9 @@ const allowedOrigins = [
   "http://localhost:3000",                  // ✅ local dev
   "https://app.aivoicerental.com",
   "https://www.aivoicerental.com",
+  "https://dashboard.cubbylockers.com",
+  "https://aivoice-rental.vercel.app",
+  "https://aivoice-rental-di8qi9qbb-frasers-projects-75a70109.vercel.app"
 ];
 
 app.use(
