@@ -1091,18 +1091,15 @@ app.get("*", (req, res) => {
 });
 
 
-// These two lines let Node figure out the actual folder location
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 // ✅ Serve all static files (CSS, JS, etc.) from ./ai-backend/public
 app.use(express.static(path.join(__dirname, "public")));
 
 // ✅ For any non-API route (like /dashboard, /properties, /bookings)
-// send back the React app’s index.html file so Next.js can handle routing
 app.get("*", (req, res) => {
-  if (req.path.startsWith("/api")) return res.status(404).end(); // don't intercept API routes
+  if (req.path.startsWith("/api")) return res.status(404).end();
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
+
 
 
 // ---------- Export app for unified server ----------
