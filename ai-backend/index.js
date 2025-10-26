@@ -40,7 +40,6 @@ import rateLimit from "express-rate-limit";
 
 // --- Core security middleware ---
 app.use(helmet()); // adds secure headers
-app.use(xss());    // sanitize input
 
 // Basic rate limiting to protect from spam / brute force
 app.use(
