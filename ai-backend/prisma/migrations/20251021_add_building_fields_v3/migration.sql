@@ -3,6 +3,14 @@
 -- Safe for repeated runs (uses IF NOT EXISTS and guarded inserts)
 
 ------------------------------------------------------------
+-- ✅ Base table creation for PropertyFacts (if missing)
+------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS "PropertyFacts" (
+  "id" SERIAL PRIMARY KEY,
+  "propertyId" INTEGER UNIQUE
+);
+
+------------------------------------------------------------
 -- 🏢 PROPERTY FACTS (Ava V7 compatibility)
 ------------------------------------------------------------
 ALTER TABLE "PropertyFacts"
