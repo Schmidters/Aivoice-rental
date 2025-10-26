@@ -26,7 +26,9 @@ dotenv.config();
 
 // ---------- CORE SETUP ----------
 const app = express();                      // 👈 must come before app.get
+app.set("trust proxy", 1);
 const prisma = new PrismaClient();
+
 
 // ====================================================
 // 🧠 SECURITY + CORS SETUP (goes right after app + prisma)
