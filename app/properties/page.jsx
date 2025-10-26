@@ -23,8 +23,8 @@ export default function PropertyDataPage() {
     setLoading(true);
     setError(null);
     try {
-      console.log("🔍 Fetching properties from:", `${BACKEND}/api/propertiesr`);
-      const res = await fetch(`${BACKEND}/api/propertiesr`, { cache: "no-store" });
+      console.log("🔍 Fetching properties from:", `${BACKEND}/api/properties`);
+      const res = await fetch(`${BACKEND}/api/properties`, { cache: "no-store" });
 
       if (!res.ok) {
         const hint =

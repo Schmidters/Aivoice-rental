@@ -29,7 +29,7 @@ export default function AnalyticsPage() {
         const [leadsRes, bookingsRes, propertiesRes] = await Promise.all([
           fetch(`${BACKEND}/api/leads`),
           fetch(`${BACKEND}/api/bookings`),
-          fetch(`${BACKEND}/api/propertiesr`),
+          fetch(`${BACKEND}/api/properties`),
         ]);
         const [leads, bookings, properties] = await Promise.all([
           leadsRes.json(),

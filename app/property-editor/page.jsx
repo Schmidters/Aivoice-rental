@@ -42,7 +42,7 @@ function PropertyEditorContent() {
     const loadProperty = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`${BACKEND}/api/propertiesr/${slugFromUrl}`);
+        const res = await fetch(`${BACKEND}/api/properties/${slugFromUrl}`);
         const json = await res.json();
         if (json.ok) {
           const facts = json.data.facts || {};
@@ -167,8 +167,8 @@ const handleSave = async () => {
     };
 
     const url = isNew
-      ? `${BACKEND}/api/propertiesr`
-      : `${BACKEND}/api/propertiesr/${payload.slug}`;
+      ? `${BACKEND}/api/properties`
+      : `${BACKEND}/api/properties/${payload.slug}`;
 
     const res = await fetch(url, {
       method: isNew ? "POST" : "PUT",
@@ -189,7 +189,7 @@ const handleSave = async () => {
 
 
       // 🩹 1️⃣ Re-fetch updated property facts (fresh from backend)
-      const updatedFacts = await fetch(`${BACKEND}/api/propertiesr/${payload.slug}`)
+      const updatedFacts = await fetch(`${BACKEND}/api/properties/${payload.slug}`)
         .then((res) => res.json())
         .then((data) => data?.data?.facts || {});
 
@@ -201,7 +201,7 @@ const handleSave = async () => {
       }));
 
       // 🩹 3️⃣ Refresh the global property list (Property Data tab)
-      const all = await fetch(`${BACKEND}/api/propertiesr`)
+      const all = await fetch(`${BACKEND}/api/properties`)
         .then((res) => res.json())
         .then((data) => data?.data || []);
       if (typeof setAllProperties === "function") setAllProperties(all);
