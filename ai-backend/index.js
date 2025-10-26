@@ -714,64 +714,51 @@ app.put("/api/property-editor/:slug", async (req, res) => {
     const slug = slugify(req.params.slug);
     const { address, facts = {} } = req.body || {};
 
-    const property = await prisma.property.findUnique({ where: { slug } });
-    if (!property) {
-      return res.status(404).json({ ok: false, error: "NOT_FOUND" });
-    }
-
-    console.log("💾 [PropertyEditor] Updating:", slug);
-
-    // 🩹 Handle backward compatibility for old key
-    if (facts.utilitiesIncluded && !facts.includedUtilities) {
-      facts.includedUtilities = facts.utilitiesIncluded;
-    }
-    delete facts.utilitiesIncluded;
-
-    // ✅ Update the related propertyFacts record (upsert)
-    const updatedFacts = await prisma.propertyFacts.upsert({
-      where: { propertyId: property.id },
-      update: {
-        buildingName: facts.buildingName || null,
-        unitType: facts.unitType || null,
-        rent: facts.rent || null,
-        deposit: facts.deposit || null,
-        leaseTerm: facts.leaseTerm || null,
-        bedrooms: facts.bedrooms || null,
-        bathrooms: facts.bathrooms || null,
-        sqft: facts.sqft || null,
-        parking: facts.parking || null,
-        parkingOptions: facts.parkingOptions || null,
-        utilities: facts.utilities || null,
-        includedUtilities: facts.includedUtilities || null,
-        petsAllowed: facts.petsAllowed ?? null,
-        petPolicy: facts.petPolicy || null,
-        furnished: facts.furnished ?? null,
-        availability: facts.availability || null,
-        notes: facts.notes || null,
-        floorPlans: facts.floorPlans || null,
-        amenities: facts.amenities || null,
-        managedBy: facts.managedBy || null,
-        listingUrl: facts.listingUrl || null,
-        address: facts.address ?? address,
-        units: facts.units || null, 
-        updatedAt: new Date(),
-      },
-      create: {
-        propertyId: property.id,
-        slug,
-        address: facts.address ?? address,
-        units: facts.units || null,  // ✅ add here too
-        ...facts,
-      },
+    const property = await prisma.property.upsert({
+      where: { slug },
+      update: { address },
+      create: { slug, address },
     });
 
-    console.log("✅ [PropertyEditor] Updated facts for:", slug);
+    console.log("💾 [PropertyEditor] Updating facts for:", slug);
+
+    // 🧠 Only include keys that are actually provided (non-undefined)
+    const cleanData = {};
+    for (const [key, val] of Object.entries(facts)) {
+      if (val !== undefined) cleanData[key] = val;
+    }
+
+    // Normalize utilities key for backward compatibility
+    if (cleanData.utilitiesIncluded && !cleanData.includedUtilities) {
+      cleanData.includedUtilities = cleanData.utilitiesIncluded;
+    }
+    delete cleanData.utilitiesIncluded;
+
+    cleanData.updatedAt = new Date();
+    cleanData.address = cleanData.address ?? address;
+
+    // ✅ Create or update
+    const existing = await prisma.propertyFacts.findUnique({
+      where: { propertyId: property.id },
+    });
+
+    const updatedFacts = existing
+      ? await prisma.propertyFacts.update({
+          where: { propertyId: property.id },
+          data: cleanData,
+        })
+      : await prisma.propertyFacts.create({
+          data: { ...cleanData, propertyId: property.id, slug },
+        });
+
+    console.log("✅ [PropertyEditor] Facts saved for:", slug);
     res.json({ ok: true, data: updatedFacts });
   } catch (err) {
     console.error("❌ [PropertyEditor] Failed to update:", err);
-    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+    res.status(500).json({ ok: false, error: err.message || "SERVER_ERROR" });
   }
 });
+
 
 
 
