@@ -292,47 +292,68 @@ async function findPropertyFromMessage(text) {
 }
 
 function buildContextFromProperty(property) {
-  const f = property?.facts || {};
+  if (!property) return "No property data available.";
+
+  const f = property.facts || {};
   const lines = [];
 
-  const add = (label, value) => {
-    if (value != null && value !== "") lines.push(`${label}: ${value}`);
+  // Mapping of field keys → readable labels
+  const LABELS = {
+    buildingName: "Building Name",
+    address: "Address",
+    buildingType: "Building Type",
+    unitType: "Unit Type",
+    rent: "Rent",
+    deposit: "Deposit",
+    leaseTerm: "Lease Term",
+    leaseType: "Lease Type",
+    bedrooms: "Bedrooms",
+    bathrooms: "Bathrooms",
+    sqft: "Size (sqft)",
+    parking: "Parking",
+    parkingOptions: "Parking Options",
+    utilities: "Utilities",
+    includedUtilities: "Included Utilities",
+    petsAllowed: "Pets Allowed",
+    petPolicy: "Pet Policy",
+    furnished: "Furnished",
+    availability: "Availability",
+    notes: "Notes",
+    floorPlans: "Floor Plans",
+    amenities: "Amenities",
+    managedBy: "Managed By",
+    listingUrl: "Listing URL",
+    description: "Description",
   };
 
-  // Build factual dataset
-  add("Building Name", f.buildingName);
-  add("Address", f.address || property?.address);
-  add("Rent", f.rent);
-  add("Bedrooms", f.bedrooms);
-  add("Bathrooms", f.bathrooms);
-  add("Size", f.sqft);
-  add("Parking", f.parking);
-  add("Utilities", f.utilities);
-  add("Pets Allowed", f.petsAllowed ? "Yes" : f.petsAllowed === false ? "No" : "");
-  add("Furnished", f.furnished ? "Yes" : f.furnished === false ? "No" : "");
-  add("Availability", f.availability);
-  add("Managed By", f.managedBy);
-  add("Notes", f.notes);
-  add("Deposit", f.deposit);
-  add("Lease Type", f.leaseType);
-  add("Amenities", f.amenities);
-  add("Pet Policy", f.petPolicy);
-  add("Utilities Included", f.utilitiesIncluded);
+  for (const [key, val] of Object.entries(f)) {
+    if (val == null || val === "") continue;
 
-  const knownFacts = lines.length;
+    const label = LABELS[key] || key.replace(/([A-Z])/g, " $1"); // auto format unknown keys
+    let display = val;
+
+    // 🧠 Nice formatting for booleans, JSON, and arrays
+    if (typeof val === "boolean") display = val ? "Yes" : "No";
+    else if (typeof val === "object") display = JSON.stringify(val, null, 2);
+
+    lines.push(`${label}: ${display}`);
+  }
+
+  // Fallback: also include the base property address if not in facts
+  if (!f.address && property.address) {
+    lines.unshift(`Address: ${property.address}`);
+  }
 
   return `
-PROPERTY FACTS (verified data entered by a human):
+PROPERTY FACTS (auto-generated context):
+
 ${lines.join("\n")}
 
-You can trust and confidently refer to any of these facts in conversation.
-If a question involves something not listed here, respond naturally with:
-"I'm not sure about that, but I can find out for you."
-
-There are ${knownFacts} known facts provided — assume they are accurate and current.
-Never say “I think” or “I don’t have that info” when the data is listed above.
-`;
+These are verified facts entered by your team — Ava can confidently refer to them in conversation.
+If a renter asks about something not listed here, she’ll politely say she’ll check or confirm.
+  `;
 }
+
 
 
 
@@ -533,6 +554,28 @@ app.get("/api/property-editor", async (_req, res) => {
   console.error("GET /api/property-editor failed:", err);
   res.status(500).json({ ok: false, error: err.message || "SERVER_ERROR" });
 }
+});
+
+// ✅ ADD THIS JUST BELOW THE PROPERTY EDITOR ROUTES
+app.get("/debug/facts/:slug", async (req, res) => {
+  try {
+    const slug = req.params.slug;
+    const property = await prisma.property.findUnique({
+      where: { slug },
+      include: { facts: true },
+    });
+
+    if (!property) {
+      return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    }
+
+    const context = buildContextFromProperty(property);
+    res.setHeader("Content-Type", "text/plain");
+    res.send(context);
+  } catch (err) {
+    console.error("❌ /debug/facts failed:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+  }
 });
 
 // 🔹 Leads API — used for dashboard metrics
