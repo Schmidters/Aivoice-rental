@@ -3,19 +3,16 @@
   "version": "1.0.0",
   "type": "module",
   "private": true,
-
   "engines": {
-  "node": "20.x"
-},
-
- "scripts": {
-  "dev": "next dev",
-  "build": "npm run build:dashboard && npm run build:backend",
-  "build:dashboard": "next build && cp -r ./.next ./ai-backend/public",  // ✅ copy from .next now
-  "build:backend": "cd ai-backend && npm install && npx prisma generate --schema=./prisma/schema.prisma",
-  "start": "NODE_ENV=production node ./ai-backend/index.js"
-  
-},
+    "node": "20.x"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "npm run build:dashboard && npm run build:backend",
+    "build:dashboard": "next build && cp -r ./.next ./ai-backend/public",
+    "build:backend": "cd ai-backend && npm install && npx prisma generate --schema=./prisma/schema.prisma",
+    "start": "NODE_ENV=production node ./ai-backend/index.js"
+  },
   "dependencies": {
     "next": "14.2.4",
     "react": "18.3.1",
