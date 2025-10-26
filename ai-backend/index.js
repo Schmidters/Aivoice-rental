@@ -1084,18 +1084,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Serve static files from exported dashboard
 app.use(express.static(path.join(__dirname, "public")));
 
-// Catch-all: send index.html for any non-API route
-app.get("*", (req, res) => {
-  if (req.path.startsWith("/api")) return res.status(404).end();
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
 
 
 // ✅ Serve all static files (CSS, JS, etc.) from ./ai-backend/public
 app.use(express.static(path.join(__dirname, "public")));
 
 // ✅ For any non-API route (like /dashboard, /properties, /bookings)
-app.get("*", (req, res) => {
+// send back the React app’s index.html so the static dashboard can handle routing
+app.get("/*", (req, res) => {
   if (req.path.startsWith("/api")) return res.status(404).end();
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
