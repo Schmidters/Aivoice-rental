@@ -1091,7 +1091,7 @@ app.use(express.static(path.join(__dirname, "public")));
 
 // ✅ For any non-API route (like /dashboard, /properties, /bookings)
 // send back the React app’s index.html so the static dashboard can handle routing
-app.get("/*", (req, res) => {
+app.get(/^(?!\/api).*/, (req, res) => {
   if (req.path.startsWith("/api")) return res.status(404).end();
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
