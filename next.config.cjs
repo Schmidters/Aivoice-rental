@@ -1,10 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: 'export',        // ✅ enables static export
-  distDir: 'out',          // ✅ tells Next.js to export into ./out
+  output: 'standalone', // ✅ hybrid mode for apps with APIs
   images: {
-    unoptimized: true,     // ✅ allows images in static export
+    unoptimized: true,
   },
 };
 

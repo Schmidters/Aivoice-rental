@@ -8,10 +8,10 @@
   "node": "20.x"
 },
 
-  "scripts": {
+ "scripts": {
   "dev": "next dev",
   "build": "npm run build:dashboard && npm run build:backend",
-  "build:dashboard": "next build && cp -r ./out ./ai-backend/public",
+  "build:dashboard": "next build && cp -r ./.next ./ai-backend/public",  // ✅ copy from .next now
   "build:backend": "cd ai-backend && npm install && npx prisma generate --schema=./prisma/schema.prisma",
   "start": "NODE_ENV=production node ./ai-backend/index.js"
   
