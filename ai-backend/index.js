@@ -1079,3 +1079,11 @@ app.use((req, res) => {
 // ---------- Export app for unified server ----------
 export default app;
 
+// ---------- Start server if run directly ----------
+if (process.env.NODE_ENV === "production" || process.env.NODE_ENV === "development") {
+  const PORT = process.env.PORT || 8080;
+  app.listen(PORT, () => {
+    console.log(`✅ Ava backend listening on port ${PORT}`);
+    console.log(`🌐 Domain: https://api.cubbylockers.com`);
+  });
+}
