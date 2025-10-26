@@ -1,16 +1,20 @@
 {
-  "name": "nodejs",
+  "name": "ai-leasing-dashboard",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
   "type": "module",
-  "scripts": {
-    "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "private": true,
   "engines": {
-    "node": ">=18"
+    "node": "20.x"
+     },
+  "scripts": {
+    "dev": "next dev",
+    "build": "npm run build:dashboard && npm run build:backend",
+    "build:dashboard": "next build && cp -r ./.next ./ai-backend/public",
+    "build:backend": "cd ai-backend && npm install && npx prisma generate --schema=./prisma/schema.prisma",
+    "start": "NODE_ENV=production node ./ai-backend/index.js"
   },
+
+ 
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -43,6 +47,9 @@
   "@radix-ui/react-dialog": "^1.1.1",
   "class-variance-authority": "^0.7.0",
   "lucide-react": "^0.411.0",
-  "tailwind-variants": "^0.1.20"
+  "tailwind-variants": "^0.1.20",
+  "next": "14.2.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   }
 }
