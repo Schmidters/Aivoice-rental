@@ -130,40 +130,25 @@ function PropertyEditorContent() {
     });
   };
 
-  // 🧩 Save handler (fixed)
+ // 🧩 Save handler (final stable version)
 const handleSave = async () => {
   if (!property) return;
   setSaving(true);
   try {
     const isNew = !slugFromUrl;
 
+    // ✅ Build a clean facts object — only include filled values
+    const cleanFacts = {};
+    Object.entries(property).forEach(([key, value]) => {
+      if (value !== "" && value !== undefined && value !== null) {
+        cleanFacts[key] = value;
+      }
+    });
+
     const payload = {
       slug: property.slug || slugify(property.address),
       address: property.address || null,
-      facts: {
-        rent: property.rent || null,
-        bedrooms: property.bedrooms || null,
-        bathrooms: property.bathrooms || null,
-        sqft: property.sqft || null,
-        parking: property.parking || null,
-        utilities: property.utilities || null,
-        petsAllowed: property.petsAllowed ?? null,
-        furnished: property.furnished ?? null,
-        availability: property.availability || null,
-        notes: property.notes || null, // ✅ fixed field names
-        buildingName: property.buildingName || null,
-        buildingType: property.buildingType || null,
-        description: property.description || null,
-        leaseType: property.leaseType || null,
-        deposit: property.deposit || null,
-        managedBy: property.managedBy || null,
-        listingUrl: property.listingUrl || null,
-        includedUtilities: property.utilitiesIncluded || null, // 🔥 correct field name
-        petPolicy: property.petPolicy || null,
-        parking: property.parking || null,
-        amenities: property.amenities || null,
-        units: property.units || [], // 🧩 new multi-unit data
-      },
+      facts: cleanFacts,
     };
 
     const url = isNew
@@ -177,42 +162,31 @@ const handleSave = async () => {
     });
 
     const json = await res.json();
-
-    if (json.ok) {
-      toast.success(isNew ? "✅ Property created!" : "✅ Changes saved!");
-
-      // 🔔 Notify Property Data page to refresh
-  window.dispatchEvent(new Event("propertyDataUpdated"));
-
-    // ✅ Mark for refresh when user navigates back
-  sessionStorage.setItem("propertyDataNeedsRefresh", "true");
-
-
-      // 🩹 1️⃣ Re-fetch updated property facts (fresh from backend)
-      const updatedFacts = await fetch(`${BACKEND}/api/property-editor/${payload.slug}`)
-        .then((res) => res.json())
-        .then((data) => data?.data?.facts || {});
-
-      // 🩹 2️⃣ Update the local property state with fresh data
-      setProperty((prev) => ({
-        ...prev,
-        ...updatedFacts,
-        updatedAt: new Date().toISOString(),
-      }));
-
-      // 🩹 3️⃣ Refresh the global property list (Property Data tab)
-      const all = await fetch(`${BACKEND}/api/property-editor`)
-        .then((res) => res.json())
-        .then((data) => data?.data || []);
-      if (typeof setAllProperties === "function") setAllProperties(all);
-
-      console.log("✅ Property and full list reloaded after save");
-      // 🔔 Notify other tabs (like Property Data) that data changed
-window.dispatchEvent(new Event("propertyDataUpdated"));
-
-    } else {
+    if (!json.ok) {
       toast.error(json.error || "Save failed");
+      return;
     }
+
+    toast.success(isNew ? "✅ Property created!" : "✅ Changes saved!");
+
+    // 🔔 Notify Property Data page to refresh
+    window.dispatchEvent(new Event("propertyDataUpdated"));
+    sessionStorage.setItem("propertyDataNeedsRefresh", "true");
+
+    // ✅ Re-fetch full, fresh property from backend
+    const fresh = await fetch(`${BACKEND}/api/property-editor/${payload.slug}`)
+      .then((r) => r.json())
+      .then((d) => d?.data || {});
+
+    // ✅ Update local state directly with backend data
+    setProperty({
+      slug: fresh.slug,
+      address: fresh.address,
+      ...fresh.facts,
+      updatedAt: new Date().toISOString(),
+    });
+
+    console.log("✅ Property reloaded with saved data:", fresh.slug);
   } catch (err) {
     console.error("Save error:", err);
     toast.error(`Save failed: ${err.message || "Unknown error"}`);
@@ -220,6 +194,7 @@ window.dispatchEvent(new Event("propertyDataUpdated"));
     setSaving(false);
   }
 };
+
 
 
   if (loading)
