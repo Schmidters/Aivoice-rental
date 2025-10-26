@@ -1075,6 +1075,22 @@ app.use((req, res) => {
   res.status(404).json({ ok: false, error: "NOT_FOUND" });
 });
 
+// ---------- Serve Dashboard Frontend ----------
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Serve static files from exported dashboard
+app.use(express.static(path.join(__dirname, "public")));
+
+// Catch-all: send index.html for any non-API route
+app.get("*", (req, res) => {
+  if (req.path.startsWith("/api")) return res.status(404).end();
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+
 
 // ---------- Export app for unified server ----------
 export default app;
