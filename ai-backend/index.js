@@ -49,25 +49,32 @@ app.use(
   })
 );
 
-// --- Strict CORS setup ---
+// --- Strict CORS setup (with wildcard support for Vercel previews) ---
 const allowedOrigins = [
-  "https://dashboard.cubbylockers.com",     // ✅ production dashboard
-  "https://aivoice-rental.digitalocean.com",// ✅ temp backend
-  "http://localhost:3000",                  // ✅ local dev
+  "https://dashboard.cubbylockers.com",      // ✅ production dashboard
+  "https://aivoice-rental.digitalocean.com", // ✅ temp backend
+  "http://localhost:3000",                   // ✅ local dev
   "https://app.aivoicerental.com",
   "https://www.aivoicerental.com",
-  "https://dashboard.cubbylockers.com",
-  "https://aivoice-rental.vercel.app",
-  "https://aivoice-rental-di8qi9qbb-frasers-projects-75a70109.vercel.app"
+  /\.vercel\.app$/,                          // ✅ allow any Vercel preview domain
 ];
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true); // allow webhooks/no-origin
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      console.warn("❌ Blocked by CORS:", origin);
-      return callback(new Error("Not allowed by CORS"));
+      if (!origin) return callback(null, true); // Allow server-to-server (no origin)
+
+      // ✅ Allow exact matches or regex matches (for *.vercel.app)
+      const isAllowed = allowedOrigins.some((allowed) =>
+        allowed instanceof RegExp ? allowed.test(origin) : allowed === origin
+      );
+
+      if (isAllowed) {
+        return callback(null, true);
+      } else {
+        console.warn("❌ Blocked by CORS:", origin);
+        return callback(new Error("Not allowed by CORS"));
+      }
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "OPTIONS"],
@@ -76,6 +83,7 @@ app.use(
     optionsSuccessStatus: 204,
   })
 );
+
 
 
 // --- Force HTTPS in production ---
