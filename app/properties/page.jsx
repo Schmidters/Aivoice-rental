@@ -68,12 +68,16 @@ export default function PropertyDataPage() {
   // 🧩 Filtered list based on search term
 const filtered = properties.filter((p) => {
   const term = search.toLowerCase();
+  const name = p.buildingName || p.facts?.buildingName || "";
+  const address = p.address || p.property?.address || "";
+  const slug = p.slug || p.property?.slug || "";
   return (
-    p.slug?.toLowerCase().includes(term) ||
-    p.address?.toLowerCase().includes(term) ||
-    p.facts?.buildingName?.toLowerCase().includes(term)
+    name.toLowerCase().includes(term) ||
+    address.toLowerCase().includes(term) ||
+    slug.toLowerCase().includes(term)
   );
 });
+
 
 
   if (loading) return <div className="p-6 text-gray-500">Loading properties…</div>;
@@ -125,8 +129,8 @@ const filtered = properties.filter((p) => {
             {Array.isArray(properties) && properties.length > 0 ? (
               filtered.map((p, i) => {
                 if (!p) return null;
-                const facts = p?.facts ?? {};
-                const units = Array.isArray(facts.units) ? facts.units : [];
+               const f = p.facts || p; // fallback for flattened /api/properties data
+const units = Array.isArray(f.units) ? f.units : [];
 
                 let rentRange = "-";
                 if (units.length > 0) {
@@ -134,8 +138,8 @@ const filtered = properties.filter((p) => {
                   if (rents.length > 0) {
                     rentRange = `$${Math.min(...rents)} - $${Math.max(...rents)}`;
                   }
-                } else if (facts.rent) {
-                  rentRange = `$${facts.rent}`;
+                } else if (f.rent) {
+                  rentRange = `$${f.rent}`;
                 }
 
                 const isExpanded = expandedIndex === i;
@@ -157,12 +161,12 @@ const filtered = properties.filter((p) => {
   >
     <ChevronRight size={16} />
   </motion.div>
-  <span>{facts?.buildingName || "—"}</span>
+   <span>{f.buildingName || "—"}</span>
 </td>
 
-                      <td className="px-4 py-2 text-gray-700">
-                        {facts?.address || p?.address || "—"}
-                      </td>
+<td className="px-4 py-2 text-gray-700">
+  {f.address || p.address || "—"}
+</td>
                       <td className="px-4 py-2 text-gray-700">
                         {units.length > 0 ? (
                           <Badge className="bg-blue-100 text-blue-800">{units.length} types</Badge>
@@ -172,11 +176,12 @@ const filtered = properties.filter((p) => {
                       </td>
                       <td className="px-4 py-2 text-gray-700">{rentRange}</td>
                       <td className="px-4 py-2 text-gray-600">
-                        {facts?.updatedAt
-                          ? new Date(facts.updatedAt).toLocaleDateString()
-                          : p?.updatedAt
-                          ? new Date(p.updatedAt).toLocaleDateString()
-                          : "—"}
+                        {f.updatedAt
+  ? new Date(f.updatedAt).toLocaleDateString()
+  : p.updatedAt
+  ? new Date(p.updatedAt).toLocaleDateString()
+  : "—"}
+
                       </td>
                       <td className="px-4 py-2">
                         <Link
@@ -208,10 +213,10 @@ const filtered = properties.filter((p) => {
                               transition={{ duration: 0.3 }}
                               className="text-sm text-gray-700 space-y-2"
                             >
-                              <p><strong>Description:</strong> {facts.description || "—"}</p>
-                              <p><strong>Building Type:</strong> {facts.buildingType || "—"}</p>
-                              <p><strong>Lease Type:</strong> {facts.leaseType || "—"}</p>
-                              <p><strong>Managed By:</strong> {facts.managedBy || "—"}</p>
+                              <p><strong>Description:</strong> {f.description || "—"}</p>
+                              <p><strong>Building Type:</strong> {f.buildingType || "—"}</p>
+                              <p><strong>Lease Type:</strong> {f.leaseType || "—"}</p>
+                              <p><strong>Managed By:</strong> {f.managedBy || "—"}</p>
 
                               {units.length > 0 && (
                                 <div className="mt-3">
