@@ -79,3 +79,35 @@
   background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
   color: white !important;
 }
+
+/* ---------- 1. Grid polish ---------- */
+.fc-theme-standard td,
+.fc-theme-standard th {
+  border-color: #f1f5f9 !important;
+}
+
+.fc-scrollgrid {
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    inset 0 0 0 1px #e5e7eb;
+}
+
+/* soften “now” line */
+.fc-timegrid-now-indicator-line {
+  border-color: #ef4444 !important;
+  opacity: 0.6;
+}
+
+/* lighten time labels */
+.fc-timegrid-slot-label {
+  color: #9ca3af;
+  font-size: 0.75rem;
+}
+
+/* today's column highlight */
+.fc-day-today {
+  background: #eef2ff !important; /* soft indigo tint */
+  border-left: 3px solid #6366f1 !important;
+}
