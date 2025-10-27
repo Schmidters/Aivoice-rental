@@ -1,7 +1,43 @@
 // ai-backend/utils/generateAvaResponse.js
 import OpenAI from "openai";
+import fetch from "node-fetch";
+
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+
+// ============================================
+// 🧠 Create an Outlook event through Ava's API
+// ============================================
+export async function createOutlookEvent(property, dateTime, leadEmail) {
+  try {
+    const start = new Date(dateTime);
+    const end = new Date(start.getTime() + 30 * 60 * 1000); // 30-minute slot
+
+    const payload = {
+      subject: `Showing – ${property}`,
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      location: property,
+      leadEmail,
+    };
+
+    const res = await fetch(`${process.env.DASHBOARD_ORIGIN}/api/outlook-sync/create-event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const json = await res.json();
+    if (!json.success) {
+      console.error("❌ Failed to create Outlook event:", json.error);
+    } else {
+      console.log("✅ Outlook event created:", json.event?.subject);
+    }
+  } catch (err) {
+    console.error("❌ createOutlookEvent() error:", err);
+  }
+}
 
 /**
  * Generate a natural, human-sounding text message for Ava.

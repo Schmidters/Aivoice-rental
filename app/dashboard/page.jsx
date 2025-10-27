@@ -74,6 +74,49 @@ export default function DashboardPage() {
     fetchAll();
   }, [BACKEND]);
 
+  // 🕒 Auto-refresh every 60 seconds
+useEffect(() => {
+  const timer = setInterval(async () => {
+    try {
+      const [bookingsRes, outlookRes] = await Promise.all([
+        fetch(`${BACKEND}/api/bookings`, { cache: "no-store" }),
+        fetch(`${BACKEND}/api/outlook-sync/events`, { cache: "no-store" }),
+      ]);
+      const [bookingsJson, outlookJson] = await Promise.all([
+        bookingsRes.json(),
+        outlookRes.json(),
+      ]);
+
+      const ai = (bookingsJson.data || []).map((b) => ({
+        id: "AI-" + b.id,
+        title: b.property?.address || "AI Showing",
+        start: b.datetime,
+        color: "#22c55e",
+        source: "AI",
+        phone: b.lead?.phone || "",
+      }));
+
+      const outlook = (outlookJson.data || []).map((e) => ({
+        id: e.id,
+        title: e.title || "Outlook Event",
+        start: e.start,
+        end: e.end,
+        color: "#3b82f6",
+        source: "Outlook",
+        location: e.location,
+        webLink: e.webLink,
+      }));
+
+      setEvents([...ai, ...outlook]);
+    } catch (err) {
+      console.warn("Auto-refresh failed:", err);
+    }
+  }, 60000); // refresh every 60s
+
+  return () => clearInterval(timer);
+}, [BACKEND]);
+
+
   const upcoming = [...events]
     .filter((e) => new Date(e.start) >= new Date())
     .sort((a, b) => new Date(a.start) - new Date(b.start))

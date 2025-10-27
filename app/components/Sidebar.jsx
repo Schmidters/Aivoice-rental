@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { href: "/", label: "Analytics", icon: "📊" }, // Main dashboard overview
   { href: "/inbox", label: "Inbox", icon: "💬" },
-  { href: "/bookings", label: "Calendar", icon: "📅" }, // Outlook-synced calendar
+  { href: "/dashboard", label: "Calendar", icon: "📅" }, // ✅ Now points to unified dashboard calendar
   { href: "/properties", label: "Properties", icon: "🏘️" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
@@ -21,7 +21,9 @@ export default function Sidebar() {
       </div>
       <nav className="flex flex-col gap-1">
         {navItems.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(item.href + "/");
+          const active =
+            pathname === item.href ||
+            pathname.startsWith(item.href + "/");
           return (
             <Link
               key={item.href}
