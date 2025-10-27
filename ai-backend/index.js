@@ -1117,20 +1117,21 @@ async function refreshOutlookTokens() {
       console.log(`🔄 Refreshing Outlook token for ${account.email}...`);
 
       const params = new URLSearchParams({
-        client_id: process.env.MS_GRAPH_CLIENT_ID,
-        client_secret: process.env.MS_GRAPH_CLIENT_SECRET,
+        client_id: process.env.AZURE_CLIENT_ID,
+        client_secret: process.env.AZURE_CLIENT_SECRET,
         grant_type: "refresh_token",
         refresh_token: account.refreshToken,
+        redirect_uri: process.env.AZURE_REDIRECT_URI,
       });
 
       const res = await fetch(
-        `https://login.microsoftonline.com/${process.env.MS_GRAPH_TENANT_ID}/oauth2/v2.0/token`,
+        `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/oauth2/v2.0/token`,
         { method: "POST", body: params }
       );
 
       const tokens = await res.json();
       if (!tokens.access_token) {
-        console.warn("⚠️ Failed to refresh token for", account.email);
+        console.warn("⚠️ Failed to refresh token for", account.email, tokens);
         continue;
       }
 
@@ -1149,6 +1150,7 @@ async function refreshOutlookTokens() {
     }
   }
 }
+
 
 // Run every 24 hours (Render keeps your dyno hot)
 setInterval(refreshOutlookTokens, 24 * 60 * 60 * 1000);
