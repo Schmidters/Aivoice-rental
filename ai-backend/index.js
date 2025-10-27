@@ -166,6 +166,14 @@ app.get("/health", (req, res) => {
   });
 });
 
+app.get("/debug/env", (req, res) => {
+  res.json({
+    clientId: process.env.AZURE_CLIENT_ID ? "✅ Loaded" : "❌ Missing",
+    secret: process.env.AZURE_CLIENT_SECRET ? "✅ Loaded" : "❌ Missing",
+    redirect: process.env.AZURE_REDIRECT_URI,
+  });
+});
+
 
 // ---------- HELPERS ----------
 const normalizePhone = (num) => {
