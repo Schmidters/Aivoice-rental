@@ -873,15 +873,27 @@ async function findNextAvailableSlots(propertyId, requestedStart, count = 2) {
 // ---------- Twilio inbound (AI reply uses ONLY manual facts) ----------
 app.post("/twilio/sms", async (req, res) => {
   try {
+    // 🧩 STEP 1 — Log full webhook body
+    console.log("📩 [Twilio] Incoming webhook:", JSON.stringify(req.body, null, 2));
+
     const from = normalizePhone(req.body.From);
     const incomingText = (req.body.Body || "").trim();
+
+    // 🧩 STEP 2 — Log who and what
+    console.log(`💬 Message received from ${from}: "${incomingText}"`);
+
     if (!from || !incomingText) return res.status(400).end();
+
 
     // Find or create lead
     const lead = await upsertLeadByPhone(from);
 
+
     // Choose property for this lead
 let property = await findBestPropertyForLeadFromDB(from);
+    console.log("🏠 Property linked to lead:", property?.slug || "none");
+
+
 
 // 🔍 Fallback: if lead isn’t linked yet, try to detect from message text
 if (!property) {
@@ -896,6 +908,8 @@ console.log("🧩 Using property for", from, "→", property?.slug || "none");
     // - parse and link here (omitted for V7 minimalism)
 
     const intent = await detectIntent(incomingText);
+        console.log("🧠 Detected intent:", intent);
+
 
     // =======================================================
 // 🧩 AI scheduling flow — checks availability, books via DB
@@ -1052,12 +1066,15 @@ return res.status(200).end();
 const availabilityContext = await getAvailabilityContext(property?.id);
 
 // 🧩 Combine property facts and showing availability
+    console.log("🧠 Generating AI reply...");
 const reply = await aiReply({
   incomingText,
   property,
   intent,
   availabilityContext,
 });
+    console.log("🤖 AI reply generated:", reply);
+
 
 
     await saveMessage({ phone: from, role: "user", content: incomingText, propertyId: property?.id });
