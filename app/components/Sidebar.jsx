@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { href: "/", label: "Analytics", icon: "📊" }, // Main dashboard overview
   { href: "/inbox", label: "Inbox", icon: "💬" },
-  { href: "/dashboard", label: "Calendar", icon: "📅" }, // ✅ Now points to unified dashboard calendar
+  { href: "/calendar", label: "Calendar", icon: "📅" }, // ✅ Now points to unified dashboard calendar
   { href: "/properties", label: "Properties", icon: "🏘️" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
