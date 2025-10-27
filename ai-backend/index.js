@@ -494,7 +494,6 @@ app.get("/api/health", (_req, res) => {
 // ===========================================================
 // 🔹 INIT FACTS — Link new leads (from Zapier / Email Parser)
 // ===========================================================
-
 app.post("/init/facts", async (req, res) => {
   try {
     const { leadName, leadPhone, property, slug, message } = req.body;
@@ -509,19 +508,22 @@ app.post("/init/facts", async (req, res) => {
     // 🔍 Find or create the lead
     const lead = await upsertLeadByPhone(phone);
 
-    // 🔍 Find the property in DB
-    const propertyRecord = await prisma.property.findUnique({
+    // 🔍 Find or create the property in DB (auto-create if missing)
+    let propertyRecord = await prisma.property.findUnique({
       where: { slug: propSlug },
     });
 
     if (!propertyRecord) {
-      return res.status(404).json({ ok: false, error: "Property not found" });
+      propertyRecord = await prisma.property.create({
+        data: { slug: propSlug, address: property },
+      });
+      console.log(`🏗️ Auto-created property: ${propSlug}`);
     }
 
     // ✅ Link this lead to the property
     await linkLeadToProperty(lead.id, propertyRecord.id);
 
-    // ✅ Log the “welcome” or initial message (if any)
+    // ✅ Save the initial message in the DB (so Ava has context)
     if (message) {
       await saveMessage({
         phone,
@@ -531,8 +533,15 @@ app.post("/init/facts", async (req, res) => {
       });
     }
 
-    console.log(`📎 Linked ${phone} → ${propSlug}`);
-    res.json({ ok: true, linked: true });
+    // ✅ Send the text to the renter right away
+    const initialText =
+      message ||
+      `Hi ${leadName || "there"}! Thanks for your interest in ${propertyRecord.address}. When would you like to come for a showing?`;
+
+    await sendSms(phone, initialText);
+    console.log(`📤 Sent initial SMS to ${phone}: "${initialText}"`);
+
+    res.json({ ok: true, linked: true, smsSent: true });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
