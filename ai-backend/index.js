@@ -523,23 +523,21 @@ app.post("/init/facts", async (req, res) => {
     // ✅ Link this lead to the property
     await linkLeadToProperty(lead.id, propertyRecord.id);
 
-    // ✅ Save the initial message in the DB (so Ava has context)
+    // ✅ Save the initial inbound message from renter
     if (message) {
       await saveMessage({
         phone,
-        role: "assistant",
+        role: "user",  // ✅ renter’s message
         content: message,
         propertyId: propertyRecord.id,
       });
     }
 
-    // ✅ Send the text to the renter right away
-    const initialText =
-      message ||
-      `Hi ${leadName || "there"}! Thanks for your interest in ${propertyRecord.address}. When would you like to come for a showing?`;
+    // ✅ Ava sends a natural friendly first text
+    const initialText = `Hi ${leadName || "there"}! Thanks for your interest in ${propertyRecord.address}. When would you like to come for a showing?`;
 
     await sendSms(phone, initialText);
-    console.log(`📤 Sent initial SMS to ${phone}: "${initialText}"`);
+    console.log(`📤 Sent intro SMS to ${phone}: "${initialText}"`);
 
     res.json({ ok: true, linked: true, smsSent: true });
   } catch (err) {
@@ -547,6 +545,7 @@ app.post("/init/facts", async (req, res) => {
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
+
 
 // Property Editor — GET single property (for editing)
 app.get("/api/property-editor/:slug", async (req, res) => {
