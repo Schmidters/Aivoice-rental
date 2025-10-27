@@ -4,9 +4,9 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { href: "/", label: "Analytics", icon: "📊" }, // Main dashboard overview
+  { href: "/", label: "Dashboard", icon: "📊" },  // 👈 Home analytics page
   { href: "/inbox", label: "Inbox", icon: "💬" },
-  { href: "/calendar", label: "Calendar", icon: "📅" }, // ✅ Now points to unified dashboard calendar
+  { href: "/calendar", label: "Calendar", icon: "📅" }, // 👈 Pure scheduling view
   { href: "/properties", label: "Properties", icon: "🏘️" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];

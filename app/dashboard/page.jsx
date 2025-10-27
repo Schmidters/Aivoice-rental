@@ -19,19 +19,7 @@ export default function DashboardPage() {
     process.env.NEXT_PUBLIC_AI_BACKEND_URL ||
     "https://api.cubbylockers.com";
 
-  // 🧩 Fetch analytics data (leads, bookings, properties)
-  useEffect(() => {
-    async function fetchAnalytics() {
-      try {
-        const res = await fetch(`${BACKEND}/api/analytics`);
-        const json = await res.json();
-        if (json.ok) setStats(json.data);
-      } catch (err) {
-        console.error("❌ Failed to fetch analytics:", err);
-      }
-    }
-    fetchAnalytics();
-  }, [BACKEND]);
+
 
   // 🧩 Fetch both AI + Outlook events
   useEffect(() => {
@@ -124,29 +112,7 @@ useEffect(() => {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col p-6 space-y-8">
-      {/* ====================== */}
-      {/* TOP ANALYTICS SUMMARY */}
-      {/* ====================== */}
-      <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {stats ? (
-          <>
-            <div className="bg-white p-6 rounded-xl shadow-sm border">
-              <h3 className="text-sm font-medium text-gray-500">Active Properties</h3>
-              <p className="text-3xl font-semibold text-gray-900 mt-2">{stats.properties}</p>
-            </div>
-            <div className="bg-white p-6 rounded-xl shadow-sm border">
-              <h3 className="text-sm font-medium text-gray-500">Total Leads</h3>
-              <p className="text-3xl font-semibold text-gray-900 mt-2">{stats.leads}</p>
-            </div>
-            <div className="bg-white p-6 rounded-xl shadow-sm border">
-              <h3 className="text-sm font-medium text-gray-500">Bookings</h3>
-              <p className="text-3xl font-semibold text-gray-900 mt-2">{stats.bookings}</p>
-            </div>
-          </>
-        ) : (
-          <p className="text-gray-400">Loading analytics...</p>
-        )}
-      </section>
+
 
       {/* ====================== */}
       {/* CALENDAR + UPCOMING EVENTS */}
