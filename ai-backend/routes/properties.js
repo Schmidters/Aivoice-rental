@@ -9,40 +9,39 @@ router.get("/", async (req, res) => {
   try {
     const properties = await prisma.propertyFacts.findMany({
       orderBy: { updatedAt: "desc" },
+      include: { property: true },
     });
 
-    const normalized = properties.map((p) => {
-      // Flatten and clean up naming for frontend
-      return {
-        id: p.id,
-        slug: p.slug,
-        buildingName: p.buildingName || "—",
-        address: p.address || "—",
-        description: p.description || "—",
-        buildingType: p.buildingType || "—",
-        leaseType: p.leaseType || p.leaseTerm || "—",
-        managedBy: p.managedBy || "—",
-        deposit: p.deposit || "—",
-        utilitiesIncluded: p.includedUtilities || p.utilities || "—",
-        petPolicy:
-          p.petPolicy ||
-          (p.petsAllowed === true
-            ? "Pets allowed"
-            : p.petsAllowed === false
-            ? "No pets"
-            : "—"),
-        amenities: Array.isArray(p.amenities)
+    const normalized = properties.map((p) => ({
+      id: p.id,
+      slug: p.slug,
+      buildingName: p.buildingName || "—",
+      address: p.address || p.property?.address || "—",
+      description: p.description || "—",
+      buildingType: p.buildingType || "—",
+      leaseType: p.leaseType || p.leaseTerm || "—",
+      managedBy: p.managedBy || "—",
+      deposit: p.deposit || "—",
+      utilitiesIncluded: p.includedUtilities || p.utilities || "—",
+      petPolicy:
+        p.petPolicy ||
+        (p.petsAllowed === true
+          ? "Pets allowed"
+          : p.petsAllowed === false
+          ? "No pets"
+          : "—"),
+      amenities:
+        Array.isArray(p.amenities)
           ? p.amenities.join(", ")
           : typeof p.amenities === "string"
           ? p.amenities
           : "—",
-        parking: p.parking || p.parkingOptions || "—",
-        availability: p.availability || "—",
-        units: Array.isArray(p.units) ? p.units : [],
-        rent: p.rent || "—",
-        updatedAt: p.updatedAt,
-      };
-    });
+      parking: p.parking || p.parkingOptions || "—",
+      availability: p.availability || "—",
+      units: Array.isArray(p.units) ? p.units : [],
+      rent: p.rent || "—",
+      updatedAt: p.updatedAt,
+    }));
 
     res.json({ ok: true, data: normalized });
   } catch (err) {
@@ -50,6 +49,7 @@ router.get("/", async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
 
 
 // 🧩 GET one property by slug
