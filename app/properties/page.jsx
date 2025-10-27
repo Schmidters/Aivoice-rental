@@ -225,16 +225,32 @@ const units = Array.isArray(f.units) ? f.units : [];
           <div>
             <h3 className="font-semibold text-gray-800 mb-2">Building Details</h3>
             <div className="grid grid-cols-2 gap-3">
-              <p><strong>Building Type:</strong> {f.buildingType || "—"}</p>
-              <p><strong>Lease Type:</strong> {f.leaseType || "—"}</p>
-              <p><strong>Managed By:</strong> {f.managedBy || "—"}</p>
-              <p><strong>Deposit:</strong> {f.deposit || "—"}</p>
-              <p><strong>Utilities Included:</strong> {f.utilitiesIncluded || "—"}</p>
-              <p><strong>Pet Policy:</strong> {f.petPolicy || "—"}</p>
-              <p><strong>Amenities:</strong> {f.amenities || "—"}</p>
-              <p><strong>Parking:</strong> {f.parking || "—"}</p>
-              <p><strong>Availability:</strong> {f.availability || "—"}</p>
-            </div>
+  <p><strong>Building Type:</strong> {f.buildingType || "—"}</p>
+  <p><strong>Lease Type:</strong> {f.leaseType || "—"}</p>
+  <p><strong>Managed By:</strong> {f.managedBy || "—"}</p>
+
+  {/* 🔹 Pull from unit-level if property-level empty */}
+  <p>
+    <strong>Deposit:</strong>{" "}
+    {f.deposit ||
+      (units.length > 0 && units[0].deposit) ||
+      "—"}
+  </p>
+
+  <p><strong>Utilities Included:</strong> {f.utilitiesIncluded || "—"}</p>
+  <p><strong>Pet Policy:</strong> {f.petPolicy || "—"}</p>
+  <p><strong>Amenities:</strong> {f.amenities || "—"}</p>
+  <p><strong>Parking:</strong> {f.parking || "—"}</p>
+
+  {/* 🔹 Pull from unit-level if property-level empty */}
+  <p>
+    <strong>Availability:</strong>{" "}
+    {f.availability ||
+      (units.length > 0 && units[0].availability) ||
+      "—"}
+  </p>
+</div>
+
           </div>
 
           {/* 🏘️ Units */}
