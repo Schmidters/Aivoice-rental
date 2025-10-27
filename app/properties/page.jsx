@@ -252,6 +252,8 @@ const units = Array.isArray(f.units) ? f.units : [];
                         <p><strong>Bathrooms:</strong> {u.bathrooms || "?"}</p>
                         <p><strong>Size:</strong> {u.sqft || "?"} sqft</p>
                         <p><strong>Status:</strong> {u.status || "Available"}</p>
+                        <p><strong>Deposit:</strong> {u.deposit || "—"}</p>
+                        <p><strong>Availability:</strong> {u.availability || "—"}</p>
                       </div>
                     </li>
                   ))}

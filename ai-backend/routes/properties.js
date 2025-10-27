@@ -22,7 +22,7 @@ router.get("/", async (req, res) => {
       leaseType: p.leaseType || p.leaseTerm || "—",
       managedBy: p.managedBy || "—",
       deposit: p.deposit || "—",
-      utilitiesIncluded: p.includedUtilities || p.utilities || "—",
+      utilitiesIncluded: p.utilitiesIncluded || p.includedUtilities || p.utilities || "—",
       petPolicy:
         p.petPolicy ||
         (p.petsAllowed === true
