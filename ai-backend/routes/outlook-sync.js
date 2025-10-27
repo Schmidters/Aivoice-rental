@@ -18,8 +18,8 @@ async function ensureValidOutlookToken() {
   const expiresAt = new Date(account.expiresAt || 0).getTime();
   const now = Date.now();
 
-  if (expiresAt > now + 60 * 1000) {
-    // Token still valid
+  // 🕒 Refresh 5 minutes early
+  if (expiresAt > now + 5 * 60 * 1000) {
     return account.accessToken;
   }
 
@@ -33,19 +33,23 @@ async function ensureValidOutlookToken() {
     redirect_uri: process.env.OUTLOOK_REDIRECT_URI,
   });
 
-  const res = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params,
-  });
+  // ⚙️ FIXED: use backticks for template literal
+  const res = await fetch(
+    `https://login.microsoftonline.com/${process.env.OUTLOOK_TENANT_ID}/oauth2/v2.0/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params,
+    }
+  );
 
   const json = await res.json();
   if (!json.access_token) {
-  console.error("❌ Outlook token refresh failed:", JSON.stringify(json, null, 2));
-  throw new Error(json.error_description || "Outlook token refresh failed");
-}
+    console.error("❌ Outlook token refresh failed:", JSON.stringify(json, null, 2));
+    throw new Error(json.error_description || "Outlook token refresh failed");
+  }
 
-
+  // 💾 Save new tokens
   await prisma.calendarAccount.update({
     where: { id: account.id },
     data: {
@@ -55,9 +59,17 @@ async function ensureValidOutlookToken() {
     },
   });
 
-  console.log("✅ Outlook token refreshed");
+  // 👀 Add this log for visibility
+  const nextExpiry = new Date(Date.now() + json.expires_in * 1000).toLocaleString("en-CA", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  console.log(`✅ Outlook token refreshed. Next expiry at: ${nextExpiry}`);
+
   return json.access_token;
 }
+
 
 /**
  * 🔹 1. GET /api/outlook-sync/events
