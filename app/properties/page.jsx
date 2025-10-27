@@ -195,48 +195,76 @@ const units = Array.isArray(f.units) ? f.units : [];
 
                     {/* Animated Expandable Row */}
                     <AnimatePresence initial={false}>
-                      {isExpanded && (
-                        <motion.tr
-                          key={`expanded-${i}`}
-                          className="bg-gray-50 border-t"
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          transition={{ duration: 0.3, ease: "easeInOut" }}
-                          layout
-                        >
-                          <td colSpan="6" className="p-4">
-                            <motion.div
-                              initial={{ opacity: 0, y: -10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -10 }}
-                              transition={{ duration: 0.3 }}
-                              className="text-sm text-gray-700 space-y-2"
-                            >
-                              <p><strong>Description:</strong> {f.description || "—"}</p>
-                              <p><strong>Building Type:</strong> {f.buildingType || "—"}</p>
-                              <p><strong>Lease Type:</strong> {f.leaseType || "—"}</p>
-                              <p><strong>Managed By:</strong> {f.managedBy || "—"}</p>
+  {isExpanded && (
+    <motion.tr
+      key={`expanded-${i}`}
+      className="bg-gray-50 border-t"
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.3, ease: "easeInOut" }}
+      layout
+    >
+      <td colSpan="6" className="p-6">
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.3 }}
+          className="text-sm text-gray-700 space-y-6"
+        >
+          {/* 🏢 Description */}
+          <div>
+            <h3 className="font-semibold text-gray-800 mb-1">Description</h3>
+            <p className="text-gray-600">
+              {f.description || "No description available."}
+            </p>
+          </div>
 
-                              {units.length > 0 && (
-                                <div className="mt-3">
-                                  <strong>Units:</strong>
-                                  <ul className="mt-2 ml-4 list-disc">
-                                    {units.map((u, j) => (
-                                      <li key={j}>
-                                        {u.unitType || "Unit"} — {u.bedrooms || "?"} bed /{" "}
-                                        {u.bathrooms || "?"} bath — {u.sqft || "?"} sqft — $
-                                        {u.rent || "?"}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                            </motion.div>
-                          </td>
-                        </motion.tr>
-                      )}
-                    </AnimatePresence>
+          {/* 🧩 Building Info */}
+          <div>
+            <h3 className="font-semibold text-gray-800 mb-2">Building Details</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <p><strong>Building Type:</strong> {f.buildingType || "—"}</p>
+              <p><strong>Lease Type:</strong> {f.leaseType || "—"}</p>
+              <p><strong>Managed By:</strong> {f.managedBy || "—"}</p>
+              <p><strong>Deposit:</strong> {f.deposit || "—"}</p>
+              <p><strong>Utilities Included:</strong> {f.utilitiesIncluded || "—"}</p>
+              <p><strong>Pet Policy:</strong> {f.petPolicy || "—"}</p>
+              <p><strong>Amenities:</strong> {f.amenities || "—"}</p>
+              <p><strong>Parking:</strong> {f.parking || "—"}</p>
+              <p><strong>Availability:</strong> {f.availability || "—"}</p>
+            </div>
+          </div>
+
+          {/* 🏘️ Units */}
+          {units.length > 0 && (
+            <div>
+              <h3 className="font-semibold text-gray-800 mb-2">Units</h3>
+              <div className="border rounded-lg bg-white p-3">
+                <ul className="divide-y divide-gray-200">
+                  {units.map((u, j) => (
+                    <li key={j} className="py-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <p><strong>Type:</strong> {u.unitType || "Unit"}</p>
+                        <p><strong>Rent:</strong> ${u.rent || "?"}</p>
+                        <p><strong>Bedrooms:</strong> {u.bedrooms || "?"}</p>
+                        <p><strong>Bathrooms:</strong> {u.bathrooms || "?"}</p>
+                        <p><strong>Size:</strong> {u.sqft || "?"} sqft</p>
+                        <p><strong>Status:</strong> {u.status || "Available"}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+        </motion.div>
+      </td>
+    </motion.tr>
+  )}
+</AnimatePresence>
+
                   </React.Fragment>
                 );
               })
