@@ -13,7 +13,6 @@ export default function DashboardPage() {
   const [events, setEvents] = useState([]);
   const [selected, setSelected] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [stats, setStats] = useState(null);
 
   const BACKEND =
     process.env.NEXT_PUBLIC_AI_BACKEND_URL ||
