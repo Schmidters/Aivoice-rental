@@ -166,13 +166,20 @@ app.get("/health", (req, res) => {
   });
 });
 
-app.get("/debug/env", (req, res) => {
+// 🧠 Debug route — check that environment variables are loaded correctly
+app.get("/debug/outlook-secret", (req, res) => {
   res.json({
-    clientId: process.env.AZURE_CLIENT_ID ? "✅ Loaded" : "❌ Missing",
-    secret: process.env.AZURE_CLIENT_SECRET ? "✅ Loaded" : "❌ Missing",
+    clientId: process.env.AZURE_CLIENT_ID,
+    secretLength: process.env.AZURE_CLIENT_SECRET
+      ? process.env.AZURE_CLIENT_SECRET.length
+      : 0,
+    startsWith: process.env.AZURE_CLIENT_SECRET
+      ? process.env.AZURE_CLIENT_SECRET.substring(0, 5)
+      : null,
     redirect: process.env.AZURE_REDIRECT_URI,
   });
 });
+
 
 
 // ---------- HELPERS ----------
