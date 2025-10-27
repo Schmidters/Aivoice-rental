@@ -1,0 +1,81 @@
+/* 🗓️ Modern Calendar Styling (FullCalendar overrides) */
+
+.fc {
+  font-family: 'Inter', system-ui, sans-serif;
+  color: #1f2937; /* gray-800 */
+}
+
+/* Toolbar */
+.fc-toolbar-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #111827;
+}
+.fc-button {
+  border-radius: 8px !important;
+  border: none !important;
+  background: #f3f4f6 !important;
+  color: #111827 !important;
+  transition: all 0.2s ease;
+}
+.fc-button:hover {
+  background: #e5e7eb !important;
+}
+.fc-button-active {
+  background: #2563eb !important;
+  color: white !important;
+}
+
+/* Header row */
+.fc-col-header-cell {
+  background: #f9fafb;
+  border: none;
+  color: #4338ca;
+  font-weight: 600;
+  padding: 6px 0;
+}
+
+/* Grid */
+.fc-scrollgrid {
+  border: none !important;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px #e5e7eb;
+}
+.fc-timegrid-slot {
+  border-color: #f1f5f9 !important;
+}
+.fc-timegrid-axis {
+  color: #9ca3af;
+  background-color: #fafafa;
+  border: none !important;
+}
+
+/* Today's column */
+.fc-day-today {
+  background-color: #eef2ff !important; /* indigo-50 */
+}
+
+/* Event cards */
+.fc-event {
+  border: none !important;
+  border-radius: 10px !important;
+  font-size: 0.8rem !important;
+  font-weight: 500;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  transition: transform 0.1s ease, box-shadow 0.2s ease;
+}
+.fc-event:hover {
+  transform: scale(1.02);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+}
+
+/* Event colors */
+.fc-event.ai {
+  background: linear-gradient(135deg, #22c55e, #16a34a) !important;
+  color: white !important;
+}
+.fc-event.outlook {
+  background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+  color: white !important;
+}

@@ -1,5 +1,8 @@
 "use client";
 
+import "@/styles/calendar-modern.css";
+
+
 import { useEffect, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -46,24 +49,26 @@ export default function CalendarPage() {
       ]);
 
       const ai = (bookingsJson.data || []).map((b) => ({
-        id: "AI-" + b.id,
-        title: b.property?.address || "AI Showing",
-        start: b.datetime,
-        color: "#22c55e",
-        source: "AI",
-        phone: b.lead?.phone || "",
-      }));
+  id: "AI-" + b.id,
+  title: b.property?.address || "AI Showing",
+  start: b.datetime,
+  color: "#22c55e",
+  source: "AI",
+  className: "ai",  // 🟢 Add this line
+  phone: b.lead?.phone || "",
+}));
 
       const outlook = (outlookJson.data || []).map((e) => ({
-        id: e.id,
-        title: e.title || "Outlook Event",
-        start: e.start,
-        end: e.end,
-        color: "#3b82f6",
-        source: "Outlook",
-        location: e.location,
-        webLink: e.webLink,
-      }));
+  id: e.id,
+  title: e.title || "Outlook Event",
+  start: e.start,
+  end: e.end,
+  color: "#3b82f6",
+  source: "Outlook",
+  className: "outlook",  // 🔵 Add this line
+  location: e.location,
+  webLink: e.webLink,
+}));
 
       setEvents([...ai, ...outlook]);
     } catch (err) {
