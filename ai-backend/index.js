@@ -659,7 +659,7 @@ app.get("/api/conversations", async (_req, res) => {
   }
 });
 
-// 🔹 Get full message thread for a specific phone number
+// 🧩 Fetch full message thread for a phone number
 app.get("/api/conversations/:phone", async (req, res) => {
   try {
     const phone = decodeURIComponent(req.params.phone);
@@ -674,7 +674,7 @@ app.get("/api/conversations/:phone", async (req, res) => {
       },
     });
 
-    if (!lead) return res.json({ ok: false, error: "NOT_FOUND" });
+    if (!lead) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
 
     res.json({
       ok: true,
@@ -688,10 +688,11 @@ app.get("/api/conversations/:phone", async (req, res) => {
       })),
     });
   } catch (err) {
-    console.error("GET /api/conversations/:phone failed:", err);
+    console.error("❌ GET /api/conversations/:phone failed:", err);
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
+
 
 
 
