@@ -270,7 +270,19 @@ router.get("/poll", async (req, res) => {
 router.post("/create-event", async (req, res) => {
   try {
     const accessToken = await ensureValidOutlookToken();
-    const { subject, startTime, endTime, location, leadEmail } = req.body;
+    let { subject, startTime, endTime, location, leadEmail } = req.body;
+
+    // 🕒 Ensure valid startTime
+    if (!startTime) {
+      throw new Error("Missing startTime for event creation");
+    }
+
+    // ✅ Default to 30 minutes if endTime not provided or invalid
+    const start = new Date(startTime);
+    const end =
+      endTime && !isNaN(new Date(endTime).getTime())
+        ? new Date(endTime)
+        : new Date(start.getTime() + 30 * 60 * 1000); // 30-minute slot
 
     const response = await fetch("https://graph.microsoft.com/v1.0/me/events", {
       method: "POST",
@@ -281,8 +293,8 @@ router.post("/create-event", async (req, res) => {
       body: JSON.stringify({
         subject,
         body: { contentType: "HTML", content: "Showing scheduled via Ava AI" },
-        start: { dateTime: startTime, timeZone: "America/Edmonton" },
-        end: { dateTime: endTime, timeZone: "America/Edmonton" },
+        start: { dateTime: start.toISOString(), timeZone: "America/Edmonton" },
+        end: { dateTime: end.toISOString(), timeZone: "America/Edmonton" },
         location: { displayName: location || "TBD" },
         attendees: leadEmail
           ? [{ emailAddress: { address: leadEmail }, type: "required" }]
@@ -299,6 +311,7 @@ router.post("/create-event", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 
 export default router;

@@ -1118,6 +1118,18 @@ if (isBlocked) {
   return res.status(200).end();
 }
 
+// 🛑 Prevent double booking for same lead/time
+const existing = await prisma.booking.findFirst({
+  where: {
+    lead: { phone: from },
+    datetime: requestedDT,
+  },
+});
+
+if (existing) {
+  console.log(`⚠️ Skipping duplicate booking for ${from} at ${requestedDT}`);
+  return res.status(200).send('<Response></Response>');
+}
 
 // ✅ Slot is free — create the booking
 const booking = await prisma.booking.create({
