@@ -25,10 +25,11 @@ async function ensureValidOutlookToken() {
 
   console.log("🔄 Refreshing Outlook access token...");
 
-  const clientId = process.env.OUTLOOK_CLIENT_ID || process.env.AZURE_CLIENT_ID;
-  const clientSecret = process.env.OUTLOOK_CLIENT_SECRET || process.env.AZURE_CLIENT_SECRET;
-  const redirectUri = process.env.OUTLOOK_REDIRECT_URI || process.env.AZURE_REDIRECT_URI;
-  const tenantId = process.env.OUTLOOK_TENANT_ID || process.env.AZURE_TENANT_ID || "common";
+const clientId = process.env.AZURE_CLIENT_ID;
+const clientSecret = process.env.AZURE_CLIENT_SECRET;
+const redirectUri = process.env.AZURE_REDIRECT_URI;
+const tenantId = process.env.AZURE_TENANT_ID || "common";
+
 
 console.log("🧭 Outlook Token Refresh Config:", {
   tenantId,
