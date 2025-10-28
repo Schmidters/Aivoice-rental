@@ -719,27 +719,48 @@ app.get("/api/conversations/:phone", async (req, res) => {
       return res.status(404).json({ ok: false, error: "NOT_FOUND" });
     }
 
-    console.log(`✅ Found ${lead.messages?.length || 0} messages for ${phone}`);
+    // 🔍 DEBUG: log exactly what Prisma returned
+    console.log(
+      "📤 Raw Prisma messages:",
+      JSON.stringify(lead.messages, null, 2)
+    );
 
+    // ✅ Normalize messages to always include correct keys
+    const normalizedMessages = (lead.messages || []).map((m) => {
+      const text =
+        m.content ??
+        m.text ??
+        m.body ??
+        m.message ??
+        "(no text found)";
+      const created =
+        m.createdAt ?? m.timestamp ?? m.time ?? null;
+
+      return {
+        text: text,
+        sender: m.role === "assistant" ? "ai" : "user",
+        createdAt: created ? new Date(created).toISOString() : null,
+        propertySlug: m.property?.slug || null,
+      };
+    });
+
+    // ✅ Respond in the correct shape for frontend
     res.json({
       ok: true,
       id: phone,
       lead: { name: lead.name || phone, phone },
-      messages: (lead.messages || []).map((m) => ({
-        // ✅ always return valid text content
-        text: m.content || m.text || "",
-        // ✅ consistent sender values
-        sender: m.role === "assistant" ? "ai" : "user",
-        // ✅ always valid ISO timestamp
-        createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : null,
-        propertySlug: m.property?.slug || null,
-      })),
+      messages: normalizedMessages,
     });
   } catch (err) {
-    console.error("❌ GET /api/conversations/:phone failed:", err.message, err.stack);
+    console.error(
+      "❌ GET /api/conversations/:phone failed:",
+      err.message,
+      err.stack
+    );
     res.status(500).json({ ok: false, error: err.message || "SERVER_ERROR" });
   }
 });
+
 
 
 
