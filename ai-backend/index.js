@@ -663,6 +663,7 @@ app.get("/api/conversations", async (_req, res) => {
 app.get("/history/:phone", async (req, res) => {
   try {
     const phone = decodeURIComponent(req.params.phone);
+    console.log("🕓 [History] Fetching messages for:", phone);
 
     const lead = await prisma.lead.findUnique({
       where: { phone },
@@ -674,24 +675,28 @@ app.get("/history/:phone", async (req, res) => {
       },
     });
 
-    if (!lead) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    if (!lead) {
+      console.warn("⚠️ No lead found for", phone);
+      return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    }
 
     res.json({
       ok: true,
       id: phone,
       lead: { name: lead.name || phone, phone },
-      messages: lead.messages.map((m) => ({
-        text: m.content,
+      messages: (lead.messages || []).map((m) => ({
+        text: m.content || m.text || "",
         sender: m.role === "assistant" ? "ai" : "user",
-        createdAt: m.createdAt,
+        createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : null,
         propertySlug: m.property?.slug || null,
       })),
     });
   } catch (err) {
-    console.error("❌ GET /history/:phone failed:", err);
-    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+    console.error("❌ GET /history/:phone failed:", err.message, err.stack);
+    res.status(500).json({ ok: false, error: err.message || "SERVER_ERROR" });
   }
 });
+
 
 // 🧩 Fetch full message thread for a phone number
 app.get("/api/conversations/:phone", async (req, res) => {
@@ -721,9 +726,12 @@ app.get("/api/conversations/:phone", async (req, res) => {
       id: phone,
       lead: { name: lead.name || phone, phone },
       messages: (lead.messages || []).map((m) => ({
-        text: m.content || "",
+        // ✅ always return valid text content
+        text: m.content || m.text || "",
+        // ✅ consistent sender values
         sender: m.role === "assistant" ? "ai" : "user",
-        createdAt: m.createdAt,
+        // ✅ always valid ISO timestamp
+        createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : null,
         propertySlug: m.property?.slug || null,
       })),
     });
@@ -732,6 +740,7 @@ app.get("/api/conversations/:phone", async (req, res) => {
     res.status(500).json({ ok: false, error: err.message || "SERVER_ERROR" });
   }
 });
+
 
 
 
