@@ -659,8 +659,8 @@ app.get("/api/conversations", async (_req, res) => {
   }
 });
 
-// 🧩 Fetch full message thread for a phone number
-app.get("/api/conversations/:phone", async (req, res) => {
+// ✅ Alias route: /history/:phone → same as /api/conversations/:phone
+app.get("/history/:phone", async (req, res) => {
   try {
     const phone = decodeURIComponent(req.params.phone);
 
@@ -688,10 +688,51 @@ app.get("/api/conversations/:phone", async (req, res) => {
       })),
     });
   } catch (err) {
-    console.error("❌ GET /api/conversations/:phone failed:", err);
+    console.error("❌ GET /history/:phone failed:", err);
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
+
+// 🧩 Fetch full message thread for a phone number
+app.get("/api/conversations/:phone", async (req, res) => {
+  try {
+    const phone = decodeURIComponent(req.params.phone);
+    console.log("📞 [Conversations] Fetching messages for:", phone);
+
+    const lead = await prisma.lead.findUnique({
+      where: { phone },
+      include: {
+        messages: {
+          include: { property: true },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
+
+    if (!lead) {
+      console.warn("⚠️ No lead found for", phone);
+      return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    }
+
+    console.log(`✅ Found ${lead.messages?.length || 0} messages for ${phone}`);
+
+    res.json({
+      ok: true,
+      id: phone,
+      lead: { name: lead.name || phone, phone },
+      messages: (lead.messages || []).map((m) => ({
+        text: m.content || "",
+        sender: m.role === "assistant" ? "ai" : "user",
+        createdAt: m.createdAt,
+        propertySlug: m.property?.slug || null,
+      })),
+    });
+  } catch (err) {
+    console.error("❌ GET /api/conversations/:phone failed:", err.message, err.stack);
+    res.status(500).json({ ok: false, error: err.message || "SERVER_ERROR" });
+  }
+});
+
 
 
 
