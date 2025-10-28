@@ -92,77 +92,93 @@ async function loadThread(phone) {
   esRef.current = es;
 }
 
-
-  return (
-    <div className="flex h-[calc(100vh-80px)] bg-gray-50">
-      {/* LEFT PANEL */}
-      <div className="w-80 border-r border-gray-200 bg-white flex flex-col">
-        <div className="p-4 border-b bg-gray-100">
-          <Input placeholder="Search leads..." />
-        </div>
-
-        <ScrollArea className="flex-1">
-          {conversations.length === 0 && (
-            <p className="text-gray-500 p-4">No conversations yet</p>
-          )}
-
-          {conversations.map((c) => (
-            <div
-              key={c.id}
-              onClick={() => loadThread(c.phone)}
-              className={`p-3 cursor-pointer border-b hover:bg-gray-100 ${
-                selected === c.phone ? "bg-gray-100 border-l-4 border-indigo-500" : ""
-              }`}
-            >
-              <p className="font-semibold text-gray-900">{c.leadName || c.phone}</p>
-              <p className="text-sm text-gray-500 truncate">{c.lastMessage}</p>
-              <div className="text-xs text-gray-400 mt-1">{c.propertySlug || ""}</div>
-            </div>
-          ))}
-        </ScrollArea>
+return (
+  <div className="flex h-[calc(100vh-80px)] bg-gray-50">
+    {/* LEFT PANEL */}
+    <div className="w-80 border-r border-gray-200 bg-white flex flex-col">
+      <div className="p-4 border-b bg-gray-100">
+        <Input placeholder="Search leads..." />
       </div>
 
-      {/* RIGHT PANEL */}
-      <div className="flex-1 flex flex-col">
-        {selected ? (
-          <>
-            <div className="p-4 border-b bg-white">
-              <h2 className="text-lg font-semibold">{selected}</h2>
-            </div>
+      <ScrollArea className="flex-1">
+        {conversations.length === 0 && (
+          <p className="text-gray-500 p-4">No conversations yet</p>
+        )}
 
-            <ScrollArea className="flex-1 p-4 space-y-3">
-              {loading ? (
-                <div className="text-gray-400 text-center mt-10">Loading messages...</div>
-              ) : (
-                messages.map((m, i) => (
+        {conversations.map((c) => (
+          <div
+            key={c.id}
+            onClick={() => loadThread(c.phone)}
+            className={`p-3 cursor-pointer border-b hover:bg-gray-100 ${
+              selected === c.phone
+                ? "bg-gray-100 border-l-4 border-indigo-500"
+                : ""
+            }`}
+          >
+            <p className="font-semibold text-gray-900">
+              {c.leadName || c.phone}
+            </p>
+            <p className="text-sm text-gray-500 truncate">{c.lastMessage}</p>
+            <div className="text-xs text-gray-400 mt-1">
+              {c.propertySlug || ""}
+            </div>
+          </div>
+        ))}
+      </ScrollArea>
+    </div>
+
+    {/* RIGHT PANEL */}
+    <div className="flex-1 flex flex-col">
+      {selected ? (
+        <>
+          <div className="p-4 border-b bg-white">
+            <h2 className="text-lg font-semibold">{selected}</h2>
+          </div>
+
+          <ScrollArea className="flex-1 p-4 space-y-3">
+            {loading ? (
+              <div className="text-gray-400 text-center mt-10">
+                Loading messages...
+              </div>
+            ) : (
+              messages.map((m, i) => {
+                const text = m.text || m.content || "(no message)";
+                const timeRaw = m.createdAt || m.t;
+                const time =
+                  timeRaw && !isNaN(new Date(timeRaw))
+                    ? new Date(timeRaw).toLocaleString()
+                    : "Unknown time";
+
+                return (
                   <Card
                     key={i}
                     className={`max-w-xl ${
-                      m.sender === "ai" ? "self-start bg-indigo-50" : "self-end bg-gray-100"
+                      m.sender === "ai"
+                        ? "self-start bg-indigo-50"
+                        : "self-end bg-gray-100"
                     }`}
                   >
                     <CardContent className="p-3">
-                      <p className="text-gray-800">{m.text || m.content}</p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        {new Date(m.createdAt || m.t).toLocaleString()}
-                      </p>
+                      <p className="text-gray-800">{text}</p>
+                      <p className="text-xs text-gray-400 mt-1">{time}</p>
                     </CardContent>
                   </Card>
-                ))
-              )}
-            </ScrollArea>
+                );
+              })
+            )}
+          </ScrollArea>
 
-            <div className="p-4 border-t bg-white flex gap-2">
-              <Input placeholder="Type a message..." className="flex-1" />
-              <Button>Send</Button>
-            </div>
-          </>
-        ) : (
-          <div className="flex items-center justify-center flex-1 text-gray-500">
-            Select a conversation to view messages
+          <div className="p-4 border-t bg-white flex gap-2">
+            <Input placeholder="Type a message..." className="flex-1" />
+            <Button>Send</Button>
           </div>
-        )}
-      </div>
+        </>
+      ) : (
+        <div className="flex items-center justify-center flex-1 text-gray-500">
+          Select a conversation to view messages
+        </div>
+      )}
     </div>
-  );
+  </div> // ✅ closes outermost div
+);
 }
