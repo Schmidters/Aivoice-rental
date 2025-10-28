@@ -19,11 +19,11 @@ import LoadingState from "@/components/ui/LoadingState";
 export default function AnalyticsPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-
   const BACKEND =
     process.env.NEXT_PUBLIC_AI_BACKEND_URL ||
-    "https://api.cubbylockers.com"; // adjust to your production API URL
+    "https://api.cubbylockers.com";
 
+  // 🔁 Load from backend summary endpoint
   useEffect(() => {
     async function load() {
       try {
@@ -36,45 +36,40 @@ export default function AnalyticsPage() {
             leads: d.leadsThisMonth,
             bookings: d.showingsBooked,
             properties: d.properties,
-            bookingRate: d.bookingRate,
-            activeConversations: d.activeConversations,
-            chartData: d.chart,
+            chartData: d.chart || [],
           });
         }
       } catch (err) {
         console.error("❌ Failed to load analytics:", err);
-      } finally {
-        setLoading(false);
       }
+      setLoading(false);
     }
 
     load();
-    const interval = setInterval(load, 60000); // 🔁 auto-refresh every 60s
+
+    // ⏱ Auto-refresh every 60 seconds
+    const interval = setInterval(load, 60000);
     return () => clearInterval(interval);
   }, [BACKEND]);
 
   if (loading) return <LoadingState label="Loading analytics..." />;
 
   return (
-    <div className="p-8 space-y-8 bg-gray-50 min-h-screen">
+    <div className="p-8">
       <PageHeader title="Analytics Overview" />
 
-      {/* KPI Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-6">
+      {/* KPI CARDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
         <StatCard label="Leads This Month" value={data.leads} color="text-emerald-600" />
         <StatCard label="Showings Booked" value={data.bookings} color="text-blue-600" />
         <StatCard label="Active Properties" value={data.properties} color="text-indigo-600" />
-        <StatCard
-          label="Booking Rate"
-          value={`${data.bookingRate || 0}%`}
-          color="text-purple-600"
-        />
       </div>
 
-      {/* Charts */}
+      {/* CHARTS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Line Chart */}
         <div className="bg-white rounded-xl p-6 shadow">
-          <h2 className="text-lg font-semibold mb-4">Leads & Bookings (7-Day Trend)</h2>
+          <h2 className="text-lg font-semibold mb-4">Leads & Bookings (Last 7 Days)</h2>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={data.chartData}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -82,14 +77,15 @@ export default function AnalyticsPage() {
               <YAxis />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="leads" stroke="#22c55e" />
-              <Line type="monotone" dataKey="bookings" stroke="#3b82f6" />
+              <Line type="monotone" dataKey="leads" stroke="#22c55e" name="Leads" />
+              <Line type="monotone" dataKey="bookings" stroke="#3b82f6" name="Bookings" />
             </LineChart>
           </ResponsiveContainer>
         </div>
 
+        {/* Bar Chart */}
         <div className="bg-white rounded-xl p-6 shadow">
-          <h2 className="text-lg font-semibold mb-4">Bookings vs Leads</h2>
+          <h2 className="text-lg font-semibold mb-4">Conversion Rate</h2>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={data.chartData}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -98,15 +94,15 @@ export default function AnalyticsPage() {
               <Tooltip />
               <Legend />
               <Bar
-                dataKey="leads"
-                fill="#22c55e"
-                name="Leads"
-                radius={[6, 6, 0, 0]}
-              />
-              <Bar
                 dataKey="bookings"
                 fill="#3b82f6"
                 name="Bookings"
+                radius={[6, 6, 0, 0]}
+              />
+              <Bar
+                dataKey="leads"
+                fill="#22c55e"
+                name="Leads"
                 radius={[6, 6, 0, 0]}
               />
             </BarChart>
@@ -117,6 +113,7 @@ export default function AnalyticsPage() {
   );
 }
 
+// Simple stat card component
 function StatCard({ label, value, color }) {
   return (
     <div className="rounded-xl bg-white p-5 shadow hover:shadow-md transition">

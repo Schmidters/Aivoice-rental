@@ -16,30 +16,31 @@ router.get("/", async (req, res) => {
       where: { createdAt: { gte: startOfMonth } },
     });
 
-    // 💬 Active conversations (messages in last 7 days)
-    const activeConversations = await prisma.message.groupBy({
-      by: ["leadPhone"],
+    // 💬 Active conversations (unique phone numbers from recent messages)
+    const recentMessages = await prisma.message.findMany({
       where: { createdAt: { gte: sevenDaysAgo } },
+      select: { phone: true },
     });
+    const uniquePhones = new Set(recentMessages.map((m) => m.phone));
+    const activeConversations = uniquePhones.size;
 
     // 🏠 Showings booked (confirmed bookings)
     const showingsBooked = await prisma.booking.count({
       where: { status: "confirmed" },
     });
 
-    // 🔢 Booking rate
+    // 📈 Booking rate
     const bookingRate =
       leadsThisMonth > 0
         ? Math.round((showingsBooked / leadsThisMonth) * 100)
         : 0;
 
-    // 📈 Build 7-day trend (leads & bookings)
+    // 📊 7-day leads vs bookings chart
     const chart = [];
     for (let i = 6; i >= 0; i--) {
       const dayStart = new Date();
       dayStart.setDate(now.getDate() - i);
       dayStart.setHours(0, 0, 0, 0);
-
       const dayEnd = new Date(dayStart);
       dayEnd.setHours(23, 59, 59, 999);
 
@@ -58,14 +59,13 @@ router.get("/", async (req, res) => {
       });
     }
 
-    // 🧱 Active properties
     const properties = await prisma.propertyFacts.count();
 
     res.json({
       ok: true,
       data: {
         leadsThisMonth,
-        activeConversations: activeConversations.length,
+        activeConversations,
         showingsBooked,
         bookingRate,
         properties,
