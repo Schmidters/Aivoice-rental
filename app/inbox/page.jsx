@@ -135,45 +135,52 @@ return (
             <h2 className="text-lg font-semibold">{selected}</h2>
           </div>
 
-          <ScrollArea className="flex-1 p-4 space-y-3">
-  {loading ? (
-    <div className="text-gray-400 text-center mt-10">
-      Loading messages...
-    </div>
-  ) : (
-    messages.map((m, i) => {
-      // 🧠 Normalize fields
-      const text = m.text || m.content || "(no message)";
-      const sender = m.sender || m.role || "user";
-      const timeRaw = m.createdAt || m.t;
-      const time =
-        timeRaw && !isNaN(new Date(timeRaw))
-          ? new Date(timeRaw).toLocaleString()
-          : "";
+          <ScrollArea className="flex-1 p-6 bg-gray-50 space-y-6">
 
-      // 🎨 Layout + color based on sender
-      const isAI = sender === "ai" || sender === "assistant";
-      const align = isAI ? "self-start" : "self-end";
-      const bubbleColor = isAI ? "bg-indigo-100 text-gray-900" : "bg-gray-200 text-gray-900";
-      const bubbleCorner = isAI
-        ? "rounded-tr-2xl rounded-bl-sm"
-        : "rounded-tl-2xl rounded-br-sm";
 
-      return (
-        <div key={i} className={`flex flex-col ${align}`}>
+{loading ? (
+  <div className="text-gray-400 text-center mt-10">Loading messages...</div>
+) : (
+  messages.map((m, i) => {
+    // 🧠 Normalize fields
+    const text = m.text || m.content || "(no message)";
+    const sender = m.sender || m.role || "user";
+    const timeRaw = m.createdAt || m.t;
+    const time =
+      timeRaw && !isNaN(new Date(timeRaw))
+        ? new Date(timeRaw).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+        : "";
+
+    const isAI = sender === "ai" || sender === "assistant";
+
+    return (
+      <div
+        key={i}
+        className={`flex ${isAI ? "justify-start" : "justify-end"} mb-4`}
+      >
+        <div
+  className={`relative max-w-[70%] px-4 py-2 text-sm shadow-sm rounded-2xl ${
+    isAI
+      ? "bg-white border border-gray-200 text-gray-900 rounded-tl-none"
+      : "bg-indigo-500 text-white rounded-tr-none"
+  }`}
+>
+          <p className="whitespace-pre-wrap leading-relaxed">{text}</p>
           <div
-            className={`px-4 py-2 max-w-[75%] shadow-sm text-sm ${bubbleColor} ${bubbleCorner}`}
+            className={`absolute text-[11px] text-gray-400 mt-1 ${
+              isAI ? "left-0 -bottom-5" : "right-0 -bottom-5"
+            }`}
           >
-            <p className="whitespace-pre-wrap">{text}</p>
-          </div>
-          <p className="text-xs text-gray-400 mt-1 ml-2">
             {time}
-          </p>
+          </div>
         </div>
-      );
-    })
-  )}
+      </div>
+    );
+  })
+)}
+
 </ScrollArea>
+
 
 
           <div className="p-4 border-t bg-white flex gap-2">
