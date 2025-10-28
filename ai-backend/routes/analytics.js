@@ -18,10 +18,14 @@ router.get("/", async (req, res) => {
 
     // 💬 Active conversations (unique phone numbers from recent messages)
     const recentMessages = await prisma.message.findMany({
-      where: { createdAt: { gte: sevenDaysAgo } },
-      select: { phone: true },
-    });
-    const uniquePhones = new Set(recentMessages.map((m) => m.phone));
+  where: { createdAt: { gte: sevenDaysAgo } },
+  select: { lead: { select: { phone: true } } }, // ✅ pull phone from related Lead
+});
+
+const uniquePhones = new Set(
+  recentMessages.map((m) => m.lead?.phone).filter(Boolean)
+);
+
     const activeConversations = uniquePhones.size;
 
     // 🏠 Showings booked (confirmed bookings)
