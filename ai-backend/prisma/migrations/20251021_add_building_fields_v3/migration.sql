@@ -220,3 +220,24 @@ BEGIN
     ON "CalendarAccount" ("userId", "provider");
   END IF;
 END $$;
+
+------------------------------------------------------------
+-- 🩵 Ava V9.0 patch: Add Outlook event linkage to Booking
+------------------------------------------------------------
+DO $$
+BEGIN
+  IF to_regclass('"Booking"') IS NOT NULL THEN
+    ALTER TABLE "Booking"
+    ADD COLUMN IF NOT EXISTS "outlookEventId" TEXT;
+
+    -- Ensure uniqueness only if index doesn’t already exist
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_indexes
+      WHERE indexname = 'Booking_outlookEventId_key'
+    ) THEN
+      CREATE UNIQUE INDEX "Booking_outlookEventId_key"
+      ON "Booking" ("outlookEventId");
+    END IF;
+  END IF;
+END $$;
