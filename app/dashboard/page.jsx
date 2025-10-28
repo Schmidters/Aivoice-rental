@@ -8,6 +8,8 @@ import interactionPlugin from "@fullcalendar/interaction";
 import { Drawer } from "@/components/ui/drawer";
 import { Calendar, Clock, MapPin } from "lucide-react";
 import { motion } from "framer-motion";
+import { mergeUniqueEvents } from "@/lib/mergeEvents";
+
 
 export default function DashboardPage() {
   const [events, setEvents] = useState([]);
@@ -53,7 +55,7 @@ export default function DashboardPage() {
           webLink: e.webLink,
         }));
 
-        setEvents([...ai, ...outlook]);
+       setEvents(mergeUniqueEvents(ai, outlook));
       } catch (err) {
         console.error("❌ Failed to fetch events:", err);
       }
@@ -94,7 +96,7 @@ useEffect(() => {
         webLink: e.webLink,
       }));
 
-      setEvents([...ai, ...outlook]);
+      setEvents(mergeUniqueEvents(ai, outlook));
     } catch (err) {
       console.warn("Auto-refresh failed:", err);
     }
