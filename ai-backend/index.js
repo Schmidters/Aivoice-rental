@@ -622,17 +622,29 @@ app.get("/api/leads", async (_req, res) => {
 app.get("/api/conversations", async (_req, res) => {
   try {
     const messages = await prisma.message.findMany({
+      include: {
+        lead: true,
+        property: true,
+      },
       orderBy: { createdAt: "desc" },
-      take: 30,
+      take: 50,
     });
 
-    // Group messages by conversation ID (usually phone number)
+    // Group by phone + property slug so each property thread is unique
     const convMap = {};
+
     for (const m of messages) {
-      if (!convMap[m.conversationId]) {
-        convMap[m.conversationId] = {
-          id: m.conversationId,
-          property: m.propertySlug || null,
+      const phone = m.lead?.phone || "unknown";
+      const slug = m.property?.slug || "unassigned";
+      const convId = `${phone}-${slug}`; // ✅ unique ID for frontend
+
+      if (!convMap[convId]) {
+        convMap[convId] = {
+          id: convId,
+          phone,
+          leadName: m.lead?.name || phone,
+          propertySlug: slug,
+          propertyAddress: m.property?.address || null,
           lastMessage: m.content,
           lastTime: m.createdAt,
         };
@@ -640,12 +652,13 @@ app.get("/api/conversations", async (_req, res) => {
     }
 
     const conversations = Object.values(convMap);
-    res.json({ ok: true, conversations });
+    res.json({ ok: true, data: conversations });
   } catch (err) {
     console.error("GET /api/conversations failed:", err);
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
+
 
 
 // ===========================================================
