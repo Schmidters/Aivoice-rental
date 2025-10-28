@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,36 +11,42 @@ export default function InboxPage() {
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
+  const esRef = useRef(null);
 
-  const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
+  const BACKEND = process.env.NEXT_PUBLIC_AI_BACKEND_URL || "";
 
-  // 📨 Load all conversations (just metadata)
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch(`${BACKEND}/api/conversations`);
-        const json = await res.json();
-        if (json.ok) {
-          setConversations(json.data || []);
-          // 👇 Auto-select first conversation on load
-          if (json.data?.length && !selected) {
-            const first = json.data[0];
-            loadThread(first.phone);
-          }
+  // 🧠 Helper: strip trailing slashes
+  const backendBase = useMemo(() => BACKEND.replace(/\/$/, ""), [BACKEND]);
+
+  // 📨 Load all conversations (metadata)
+  async function loadConversations() {
+    try {
+      const res = await fetch(`${backendBase}/api/conversations`);
+      const json = await res.json();
+      if (json.ok) {
+        setConversations(json.data || []);
+        if (!selected && json.data?.length) {
+          const first = json.data[0];
+          loadThread(first.phone);
         }
-      } catch (err) {
-        console.error("Failed to load conversations:", err);
       }
+    } catch (err) {
+      console.error("Failed to load conversations:", err);
     }
-    load();
-  }, [BACKEND]);
+  }
 
-  // 💬 Load selected conversation messages
+  useEffect(() => {
+    loadConversations();
+    const interval = setInterval(loadConversations, 30000); // 🔁 auto-refresh metadata
+    return () => clearInterval(interval);
+  }, [backendBase]);
+
+  // 💬 Load selected conversation
   async function loadThread(phone) {
     setSelected(phone);
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND}/api/conversations/${encodeURIComponent(phone)}`);
+      const res = await fetch(`${backendBase}/api/conversations/${encodeURIComponent(phone)}`);
       const json = await res.json();
       if (json.ok) setMessages(json.messages || []);
     } catch (err) {
@@ -48,6 +54,37 @@ export default function InboxPage() {
     } finally {
       setLoading(false);
     }
+
+    // 🔌 Close previous SSE
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+
+    // 🧠 Subscribe to SSE for live updates
+    const es = new EventSource(`${backendBase}/events/conversation/${encodeURIComponent(phone)}`);
+
+    es.onmessage = (e) => {
+      try {
+        const evt = JSON.parse(e.data);
+        if (evt.type === "message" && evt.item) {
+          setMessages((msgs) => [...msgs, evt.item]);
+          // 🔼 Move updated conversation to top
+          setConversations((prev) => {
+            const idx = prev.findIndex((c) => c.phone === phone);
+            if (idx === -1) return prev;
+            const updated = { ...prev[idx], lastMessage: evt.item.content, lastTime: evt.item.t };
+            const rest = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            return [updated, ...rest];
+          });
+        }
+      } catch (err) {
+        console.warn("SSE parse error:", err);
+      }
+    };
+
+    es.onerror = (err) => console.warn("SSE error:", err);
+    esRef.current = es;
   }
 
   return (
@@ -95,15 +132,13 @@ export default function InboxPage() {
                   <Card
                     key={i}
                     className={`max-w-xl ${
-                      m.sender === "ai"
-                        ? "self-start bg-indigo-50"
-                        : "self-end bg-gray-100"
+                      m.sender === "ai" ? "self-start bg-indigo-50" : "self-end bg-gray-100"
                     }`}
                   >
                     <CardContent className="p-3">
-                      <p className="text-gray-800">{m.text}</p>
+                      <p className="text-gray-800">{m.text || m.content}</p>
                       <p className="text-xs text-gray-400 mt-1">
-                        {new Date(m.createdAt).toLocaleString()}
+                        {new Date(m.createdAt || m.t).toLocaleString()}
                       </p>
                     </CardContent>
                   </Card>
