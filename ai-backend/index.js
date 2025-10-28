@@ -659,6 +659,40 @@ app.get("/api/conversations", async (_req, res) => {
   }
 });
 
+// 🔹 Get full message thread for a specific phone number
+app.get("/api/conversations/:phone", async (req, res) => {
+  try {
+    const phone = decodeURIComponent(req.params.phone);
+
+    const lead = await prisma.lead.findUnique({
+      where: { phone },
+      include: {
+        messages: {
+          include: { property: true },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
+
+    if (!lead) return res.json({ ok: false, error: "NOT_FOUND" });
+
+    res.json({
+      ok: true,
+      id: phone,
+      lead: { name: lead.name || phone, phone },
+      messages: lead.messages.map((m) => ({
+        text: m.content,
+        sender: m.role === "assistant" ? "ai" : "user",
+        createdAt: m.createdAt,
+        propertySlug: m.property?.slug || null,
+      })),
+    });
+  } catch (err) {
+    console.error("GET /api/conversations/:phone failed:", err);
+    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+  }
+});
+
 
 
 // ===========================================================
