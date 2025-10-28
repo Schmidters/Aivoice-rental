@@ -6,10 +6,11 @@ import dotenv from "dotenv";
 dotenv.config();
 const router = express.Router();
 
-const CLIENT_ID = process.env.MS_GRAPH_CLIENT_ID;
-const CLIENT_SECRET = process.env.MS_GRAPH_CLIENT_SECRET;
-const TENANT_ID = process.env.MS_GRAPH_TENANT_ID || "common";
-const REDIRECT_URI = `${process.env.NEXT_PUBLIC_AI_BACKEND_URL || "https://aivoice-rental.onrender.com"}/api/outlook-auth/callback`;
+// 🧠 Match your actual env variable names on DigitalOcean
+const CLIENT_ID = process.env.AZURE_CLIENT_ID;
+const CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET;
+const TENANT_ID = process.env.AZURE_TENANT_ID || "common";
+const REDIRECT_URI = process.env.AZURE_REDIRECT_URI;
 
 // Step 1: Microsoft login redirect
 router.get("/connect", (req, res) => {

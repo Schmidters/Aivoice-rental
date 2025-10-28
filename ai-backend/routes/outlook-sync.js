@@ -18,34 +18,51 @@ async function ensureValidOutlookToken() {
   const expiresAt = new Date(account.expiresAt || 0).getTime();
   const now = Date.now();
 
-  if (expiresAt > now + 60 * 1000) {
-    // Token still valid
+  // 🕒 Refresh 5 minutes early
+  if (expiresAt > now + 5 * 60 * 1000) {
     return account.accessToken;
   }
 
   console.log("🔄 Refreshing Outlook access token...");
 
+const clientId = process.env.AZURE_CLIENT_ID;
+const clientSecret = process.env.AZURE_CLIENT_SECRET;
+const redirectUri = process.env.AZURE_REDIRECT_URI;
+const tenantId = process.env.AZURE_TENANT_ID || "common";
+
+
+console.log("🧭 Outlook Token Refresh Config:", {
+  tenantId,
+  redirectUri,
+  hasClientId: !!clientId,
+  hasClientSecret: !!clientSecret,
+});
+
+
   const params = new URLSearchParams({
-    client_id: process.env.OUTLOOK_CLIENT_ID,
-    client_secret: process.env.OUTLOOK_CLIENT_SECRET,
+    client_id: clientId,
+    client_secret: clientSecret,
     grant_type: "refresh_token",
     refresh_token: account.refreshToken,
-    redirect_uri: process.env.OUTLOOK_REDIRECT_URI,
+    redirect_uri: redirectUri,
   });
 
-  const res = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+  const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+
+  const res = await fetch(tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params,
   });
 
+
   const json = await res.json();
   if (!json.access_token) {
-  console.error("❌ Outlook token refresh failed:", JSON.stringify(json, null, 2));
-  throw new Error(json.error_description || "Outlook token refresh failed");
-}
+    console.error("❌ Outlook token refresh failed:", JSON.stringify(json, null, 2));
+    throw new Error(json.error_description || "Outlook token refresh failed");
+  }
 
-
+  // 💾 Save new tokens
   await prisma.calendarAccount.update({
     where: { id: account.id },
     data: {
@@ -55,9 +72,17 @@ async function ensureValidOutlookToken() {
     },
   });
 
-  console.log("✅ Outlook token refreshed");
+  // 👀 Add this log for visibility
+  const nextExpiry = new Date(Date.now() + json.expires_in * 1000).toLocaleString("en-CA", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  console.log(`✅ Outlook token refreshed. Next expiry at: ${nextExpiry}`);
+
   return json.access_token;
 }
+
 
 /**
  * 🔹 1. GET /api/outlook-sync/events
@@ -245,7 +270,19 @@ router.get("/poll", async (req, res) => {
 router.post("/create-event", async (req, res) => {
   try {
     const accessToken = await ensureValidOutlookToken();
-    const { subject, startTime, endTime, location, leadEmail } = req.body;
+    let { subject, startTime, endTime, location, leadEmail } = req.body;
+
+    // 🕒 Ensure valid startTime
+    if (!startTime) {
+      throw new Error("Missing startTime for event creation");
+    }
+
+    // ✅ Default to 30 minutes if endTime not provided or invalid
+    const start = new Date(startTime);
+    const end =
+      endTime && !isNaN(new Date(endTime).getTime())
+        ? new Date(endTime)
+        : new Date(start.getTime() + 30 * 60 * 1000); // 30-minute slot
 
     const response = await fetch("https://graph.microsoft.com/v1.0/me/events", {
       method: "POST",
@@ -256,8 +293,8 @@ router.post("/create-event", async (req, res) => {
       body: JSON.stringify({
         subject,
         body: { contentType: "HTML", content: "Showing scheduled via Ava AI" },
-        start: { dateTime: startTime, timeZone: "America/Edmonton" },
-        end: { dateTime: endTime, timeZone: "America/Edmonton" },
+        start: { dateTime: start.toISOString(), timeZone: "America/Edmonton" },
+        end: { dateTime: end.toISOString(), timeZone: "America/Edmonton" },
         location: { displayName: location || "TBD" },
         attendees: leadEmail
           ? [{ emailAddress: { address: leadEmail }, type: "required" }]
@@ -274,6 +311,7 @@ router.post("/create-event", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 
 export default router;

@@ -30,6 +30,7 @@ app.set("trust proxy", 1);
 const prisma = new PrismaClient();
 
 
+
 // ====================================================
 // 🧠 SECURITY + CORS SETUP (goes right after app + prisma)
 // ====================================================
@@ -84,7 +85,8 @@ app.use(
   })
 );
 
-
+import analyticsRouter from "./routes/analytics.js";
+app.use("/api/analytics", analyticsRouter);
 
 // --- Force HTTPS in production ---
 app.use((req, res, next) => {
@@ -162,6 +164,21 @@ app.get("/health", (req, res) => {
     time: new Date().toISOString(),
   });
 });
+
+// 🧠 Debug route — check that environment variables are loaded correctly
+app.get("/debug/outlook-secret", (req, res) => {
+  res.json({
+    clientId: process.env.AZURE_CLIENT_ID,
+    secretLength: process.env.AZURE_CLIENT_SECRET
+      ? process.env.AZURE_CLIENT_SECRET.length
+      : 0,
+    startsWith: process.env.AZURE_CLIENT_SECRET
+      ? process.env.AZURE_CLIENT_SECRET.substring(0, 5)
+      : null,
+    redirect: process.env.AZURE_REDIRECT_URI,
+  });
+});
+
 
 
 // ---------- HELPERS ----------
@@ -476,7 +493,6 @@ app.get("/api/health", (_req, res) => {
 // ===========================================================
 // 🔹 INIT FACTS — Link new leads (from Zapier / Email Parser)
 // ===========================================================
-
 app.post("/init/facts", async (req, res) => {
   try {
     const { leadName, leadPhone, property, slug, message } = req.body;
@@ -491,35 +507,44 @@ app.post("/init/facts", async (req, res) => {
     // 🔍 Find or create the lead
     const lead = await upsertLeadByPhone(phone);
 
-    // 🔍 Find the property in DB
-    const propertyRecord = await prisma.property.findUnique({
+    // 🔍 Find or create the property in DB (auto-create if missing)
+    let propertyRecord = await prisma.property.findUnique({
       where: { slug: propSlug },
     });
 
     if (!propertyRecord) {
-      return res.status(404).json({ ok: false, error: "Property not found" });
+      propertyRecord = await prisma.property.create({
+        data: { slug: propSlug, address: property },
+      });
+      console.log(`🏗️ Auto-created property: ${propSlug}`);
     }
 
     // ✅ Link this lead to the property
     await linkLeadToProperty(lead.id, propertyRecord.id);
 
-    // ✅ Log the “welcome” or initial message (if any)
+    // ✅ Save the initial inbound message from renter
     if (message) {
       await saveMessage({
         phone,
-        role: "assistant",
+        role: "user",  // ✅ renter’s message
         content: message,
         propertyId: propertyRecord.id,
       });
     }
 
-    console.log(`📎 Linked ${phone} → ${propSlug}`);
-    res.json({ ok: true, linked: true });
+    // ✅ Ava sends a natural friendly first text
+    const initialText = `Hi ${leadName || "there"}! Thanks for your interest in ${propertyRecord.address}. When would you like to come for a showing?`;
+
+    await sendSms(phone, initialText);
+    console.log(`📤 Sent intro SMS to ${phone}: "${initialText}"`);
+
+    res.json({ ok: true, linked: true, smsSent: true });
   } catch (err) {
     console.error("❌ /init/facts error:", err);
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
+
 
 // Property Editor — GET single property (for editing)
 app.get("/api/property-editor/:slug", async (req, res) => {
@@ -596,17 +621,29 @@ app.get("/api/leads", async (_req, res) => {
 app.get("/api/conversations", async (_req, res) => {
   try {
     const messages = await prisma.message.findMany({
+      include: {
+        lead: true,
+        property: true,
+      },
       orderBy: { createdAt: "desc" },
-      take: 30,
+      take: 50,
     });
 
-    // Group messages by conversation ID (usually phone number)
+    // Group by phone + property slug so each property thread is unique
     const convMap = {};
+
     for (const m of messages) {
-      if (!convMap[m.conversationId]) {
-        convMap[m.conversationId] = {
-          id: m.conversationId,
-          property: m.propertySlug || null,
+      const phone = m.lead?.phone || "unknown";
+      const slug = m.property?.slug || "unassigned";
+      const convId = `${phone}-${slug}`; // ✅ unique ID for frontend
+
+      if (!convMap[convId]) {
+        convMap[convId] = {
+          id: convId,
+          phone,
+          leadName: m.lead?.name || phone,
+          propertySlug: slug,
+          propertyAddress: m.property?.address || null,
           lastMessage: m.content,
           lastTime: m.createdAt,
         };
@@ -614,12 +651,119 @@ app.get("/api/conversations", async (_req, res) => {
     }
 
     const conversations = Object.values(convMap);
-    res.json({ ok: true, conversations });
+    res.json({ ok: true, data: conversations });
   } catch (err) {
     console.error("GET /api/conversations failed:", err);
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
+
+// ✅ Alias route: /history/:phone → same as /api/conversations/:phone
+app.get("/history/:phone", async (req, res) => {
+  try {
+    const phone = decodeURIComponent(req.params.phone);
+    console.log("🕓 [History] Fetching messages for:", phone);
+
+    const lead = await prisma.lead.findUnique({
+      where: { phone },
+      include: {
+        messages: {
+          include: { property: true },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
+
+    if (!lead) {
+      console.warn("⚠️ No lead found for", phone);
+      return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    }
+
+    res.json({
+      ok: true,
+      id: phone,
+      lead: { name: lead.name || phone, phone },
+      messages: (lead.messages || []).map((m) => ({
+        text: m.content || m.text || "",
+        sender: m.role === "assistant" ? "ai" : "user",
+        createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : null,
+        propertySlug: m.property?.slug || null,
+      })),
+    });
+  } catch (err) {
+    console.error("❌ GET /history/:phone failed:", err.message, err.stack);
+    res.status(500).json({ ok: false, error: err.message || "SERVER_ERROR" });
+  }
+});
+
+
+// 🧩 Fetch full message thread for a phone number
+app.get("/api/conversations/:phone", async (req, res) => {
+  try {
+    const phone = decodeURIComponent(req.params.phone);
+    console.log("📞 [Conversations] Fetching messages for:", phone);
+
+    const lead = await prisma.lead.findUnique({
+      where: { phone },
+      include: {
+        messages: {
+          include: { property: true },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
+
+    if (!lead) {
+      console.warn("⚠️ No lead found for", phone);
+      return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    }
+
+    // 🔍 DEBUG: log exactly what Prisma returned
+    console.log(
+      "📤 Raw Prisma messages:",
+      JSON.stringify(lead.messages, null, 2)
+    );
+
+    // ✅ Normalize messages to always include correct keys
+    const normalizedMessages = (lead.messages || []).map((m) => {
+      const text =
+        m.content ??
+        m.text ??
+        m.body ??
+        m.message ??
+        "(no text found)";
+      const created =
+        m.createdAt ?? m.timestamp ?? m.time ?? null;
+
+      return {
+        text: text,
+        sender: m.role === "assistant" ? "ai" : "user",
+        createdAt: created ? new Date(created).toISOString() : null,
+        propertySlug: m.property?.slug || null,
+      };
+    });
+
+    // ✅ Respond in the correct shape for frontend
+    res.json({
+      ok: true,
+      id: phone,
+      lead: { name: lead.name || phone, phone },
+      messages: normalizedMessages,
+    });
+  } catch (err) {
+    console.error(
+      "❌ GET /api/conversations/:phone failed:",
+      err.message,
+      err.stack
+    );
+    res.status(500).json({ ok: false, error: err.message || "SERVER_ERROR" });
+  }
+});
+
+
+
+
+
 
 
 // ===========================================================
@@ -855,15 +999,27 @@ async function findNextAvailableSlots(propertyId, requestedStart, count = 2) {
 // ---------- Twilio inbound (AI reply uses ONLY manual facts) ----------
 app.post("/twilio/sms", async (req, res) => {
   try {
+    // 🧩 STEP 1 — Log full webhook body
+    console.log("📩 [Twilio] Incoming webhook:", JSON.stringify(req.body, null, 2));
+
     const from = normalizePhone(req.body.From);
     const incomingText = (req.body.Body || "").trim();
+
+    // 🧩 STEP 2 — Log who and what
+    console.log(`💬 Message received from ${from}: "${incomingText}"`);
+
     if (!from || !incomingText) return res.status(400).end();
+
 
     // Find or create lead
     const lead = await upsertLeadByPhone(from);
 
+
     // Choose property for this lead
 let property = await findBestPropertyForLeadFromDB(from);
+    console.log("🏠 Property linked to lead:", property?.slug || "none");
+
+
 
 // 🔍 Fallback: if lead isn’t linked yet, try to detect from message text
 if (!property) {
@@ -878,6 +1034,8 @@ console.log("🧩 Using property for", from, "→", property?.slug || "none");
     // - parse and link here (omitted for V7 minimalism)
 
     const intent = await detectIntent(incomingText);
+        console.log("🧠 Detected intent:", intent);
+
 
     // =======================================================
 // 🧩 AI scheduling flow — checks availability, books via DB
@@ -960,6 +1118,18 @@ if (isBlocked) {
   return res.status(200).end();
 }
 
+// 🛑 Prevent double booking for same lead/time
+const existing = await prisma.booking.findFirst({
+  where: {
+    lead: { phone: from },
+    datetime: requestedDT,
+  },
+});
+
+if (existing) {
+  console.log(`⚠️ Skipping duplicate booking for ${from} at ${requestedDT}`);
+  return res.status(200).send('<Response></Response>');
+}
 
 // ✅ Slot is free — create the booking
 const booking = await prisma.booking.create({
@@ -1034,12 +1204,15 @@ return res.status(200).end();
 const availabilityContext = await getAvailabilityContext(property?.id);
 
 // 🧩 Combine property facts and showing availability
+    console.log("🧠 Generating AI reply...");
 const reply = await aiReply({
   incomingText,
   property,
   intent,
   availabilityContext,
 });
+    console.log("🤖 AI reply generated:", reply);
+
 
 
     await saveMessage({ phone: from, role: "user", content: incomingText, propertyId: property?.id });
@@ -1074,20 +1247,21 @@ async function refreshOutlookTokens() {
       console.log(`🔄 Refreshing Outlook token for ${account.email}...`);
 
       const params = new URLSearchParams({
-        client_id: process.env.MS_GRAPH_CLIENT_ID,
-        client_secret: process.env.MS_GRAPH_CLIENT_SECRET,
+        client_id: process.env.AZURE_CLIENT_ID,
+        client_secret: process.env.AZURE_CLIENT_SECRET,
         grant_type: "refresh_token",
         refresh_token: account.refreshToken,
+        redirect_uri: process.env.AZURE_REDIRECT_URI,
       });
 
       const res = await fetch(
-        `https://login.microsoftonline.com/${process.env.MS_GRAPH_TENANT_ID}/oauth2/v2.0/token`,
+        `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/oauth2/v2.0/token`,
         { method: "POST", body: params }
       );
 
       const tokens = await res.json();
       if (!tokens.access_token) {
-        console.warn("⚠️ Failed to refresh token for", account.email);
+        console.warn("⚠️ Failed to refresh token for", account.email, tokens);
         continue;
       }
 
@@ -1106,6 +1280,7 @@ async function refreshOutlookTokens() {
     }
   }
 }
+
 
 // Run every 24 hours (Render keeps your dyno hot)
 setInterval(refreshOutlookTokens, 24 * 60 * 60 * 1000);

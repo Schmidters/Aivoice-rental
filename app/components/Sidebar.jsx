@@ -1,14 +1,13 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { cn } from "@/lib/utils"; // if you don’t have this util, I’ll add it next
+import { cn } from "@/lib/utils";
 
 const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: "🏠" },
+  { href: "/analytics", label: "Dashboard", icon: "📊" }, // 👈 Now points to Analytics
   { href: "/inbox", label: "Inbox", icon: "💬" },
-  { href: "/bookings", label: "Bookings", icon: "📅" },
+  { href: "/calendar", label: "Calendar", icon: "📅" },
   { href: "/properties", label: "Properties", icon: "🏘️" },
-  { href: "/analytics", label: "Analytics", icon: "📊" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
 
@@ -22,7 +21,8 @@ export default function Sidebar() {
       </div>
       <nav className="flex flex-col gap-1">
         {navItems.map((item) => {
-          const active = pathname.startsWith(item.href);
+          const active =
+            pathname === item.href || pathname.startsWith(item.href + "/");
           return (
             <Link
               key={item.href}

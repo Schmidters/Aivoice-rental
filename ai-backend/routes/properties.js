@@ -4,28 +4,53 @@ import { PrismaClient } from "@prisma/client";
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// 🧩 GET all properties
+// 🧩 GET all properties (enhanced for dashboard dropdown)
 router.get("/", async (req, res) => {
   try {
     const properties = await prisma.propertyFacts.findMany({
       orderBy: { updatedAt: "desc" },
+      include: { property: true },
     });
 
-    res.json({
-      ok: true,
-      data: properties.map((p) => ({
-        id: p.id,
-        slug: p.slug,
-        summary: p.notes || "",
-        updatedAt: p.updatedAt,
-        rawJson: p,
-      })),
-    });
+    const normalized = properties.map((p) => ({
+      id: p.id,
+      slug: p.slug,
+      buildingName: p.buildingName || "—",
+      address: p.address || p.property?.address || "—",
+      description: p.description || "—",
+      buildingType: p.buildingType || "—",
+      leaseType: p.leaseType || p.leaseTerm || "—",
+      managedBy: p.managedBy || "—",
+      deposit: p.deposit || "—",
+      utilitiesIncluded: p.utilitiesIncluded || p.includedUtilities || p.utilities || "—",
+      petPolicy:
+        p.petPolicy ||
+        (p.petsAllowed === true
+          ? "Pets allowed"
+          : p.petsAllowed === false
+          ? "No pets"
+          : "—"),
+      amenities:
+        Array.isArray(p.amenities)
+          ? p.amenities.join(", ")
+          : typeof p.amenities === "string"
+          ? p.amenities
+          : "—",
+      parking: p.parking || p.parkingOptions || "—",
+      availability: p.availability || "—",
+      units: Array.isArray(p.units) ? p.units : [],
+      rent: p.rent || "—",
+      updatedAt: p.updatedAt,
+    }));
+
+    res.json({ ok: true, data: normalized });
   } catch (err) {
     console.error("❌ Error loading properties:", err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+
 
 // 🧩 GET one property by slug
 router.get("/:slug", async (req, res) => {

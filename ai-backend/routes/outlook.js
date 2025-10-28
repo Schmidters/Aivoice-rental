@@ -10,12 +10,13 @@ async function getValidAccessToken(account) {
   if (new Date() < account.expiresAt) return account.accessToken;
 
   // Token expired → refresh it
-  const params = new URLSearchParams({
-    client_id: process.env.MS_GRAPH_CLIENT_ID,
-    client_secret: process.env.MS_GRAPH_CLIENT_SECRET,
-    grant_type: "refresh_token",
-    refresh_token: account.refreshToken,
-  });
+const params = new URLSearchParams({
+  client_id: process.env.AZURE_CLIENT_ID,
+  client_secret: process.env.AZURE_CLIENT_SECRET,
+  grant_type: "refresh_token",
+  refresh_token: account.refreshToken,
+});
+
 
   const res = await fetch(
     `https://login.microsoftonline.com/${process.env.MS_GRAPH_TENANT_ID}/oauth2/v2.0/token`,

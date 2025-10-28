@@ -1,10 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
-  output: 'standalone', // ✅ hybrid mode for apps with APIs
-  images: {
-    unoptimized: true,
+  async redirects() {
+    return [
+      {
+        source: "/",
+        destination: "/analytics",
+        permanent: true,
+      },
+    ];
   },
 };
 
-module.exports = nextConfig;
+export default nextConfig;
