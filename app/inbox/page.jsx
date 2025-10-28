@@ -136,37 +136,45 @@ return (
           </div>
 
           <ScrollArea className="flex-1 p-4 space-y-3">
-            {loading ? (
-              <div className="text-gray-400 text-center mt-10">
-                Loading messages...
-              </div>
-            ) : (
-              messages.map((m, i) => {
-                const text = m.text || m.content || "(no message)";
-                const timeRaw = m.createdAt || m.t;
-                const time =
-                  timeRaw && !isNaN(new Date(timeRaw))
-                    ? new Date(timeRaw).toLocaleString()
-                    : "Unknown time";
+  {loading ? (
+    <div className="text-gray-400 text-center mt-10">
+      Loading messages...
+    </div>
+  ) : (
+    messages.map((m, i) => {
+      // 🧠 Normalize fields
+      const text = m.text || m.content || "(no message)";
+      const sender = m.sender || m.role || "user";
+      const timeRaw = m.createdAt || m.t;
+      const time =
+        timeRaw && !isNaN(new Date(timeRaw))
+          ? new Date(timeRaw).toLocaleString()
+          : "";
 
-                return (
-                  <Card
-                    key={i}
-                    className={`max-w-xl ${
-                      m.sender === "ai"
-                        ? "self-start bg-indigo-50"
-                        : "self-end bg-gray-100"
-                    }`}
-                  >
-                    <CardContent className="p-3">
-                      <p className="text-gray-800">{text}</p>
-                      <p className="text-xs text-gray-400 mt-1">{time}</p>
-                    </CardContent>
-                  </Card>
-                );
-              })
-            )}
-          </ScrollArea>
+      // 🎨 Layout + color based on sender
+      const isAI = sender === "ai" || sender === "assistant";
+      const align = isAI ? "self-start" : "self-end";
+      const bubbleColor = isAI ? "bg-indigo-100 text-gray-900" : "bg-gray-200 text-gray-900";
+      const bubbleCorner = isAI
+        ? "rounded-tr-2xl rounded-bl-sm"
+        : "rounded-tl-2xl rounded-br-sm";
+
+      return (
+        <div key={i} className={`flex flex-col ${align}`}>
+          <div
+            className={`px-4 py-2 max-w-[75%] shadow-sm text-sm ${bubbleColor} ${bubbleCorner}`}
+          >
+            <p className="whitespace-pre-wrap">{text}</p>
+          </div>
+          <p className="text-xs text-gray-400 mt-1 ml-2">
+            {time}
+          </p>
+        </div>
+      );
+    })
+  )}
+</ScrollArea>
+
 
           <div className="p-4 border-t bg-white flex gap-2">
             <Input placeholder="Type a message..." className="flex-1" />
@@ -178,7 +186,7 @@ return (
           Select a conversation to view messages
         </div>
       )}
-    </div>
-  </div> // ✅ closes outermost div
+    </div> {/* ✅ closes outermost div */}
+  </div>
 );
 }
