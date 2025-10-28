@@ -42,50 +42,56 @@ export default function InboxPage() {
   }, [backendBase]);
 
   // 💬 Load selected conversation
-  async function loadThread(phone) {
-    setSelected(phone);
-    setLoading(true);
-    try {
-      const res = await fetch(`${backendBase}/api/conversations/${encodeURIComponent(phone)}`);
-      const json = await res.json();
-      if (json.ok) setMessages(json.messages || []);
-    } catch (err) {
-      console.error("Failed to load thread:", err);
-    } finally {
-      setLoading(false);
-    }
-
-    // 🔌 Close previous SSE
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-
-    // 🧠 Subscribe to SSE for live updates
-    const es = new EventSource(`${backendBase}/events/conversation/${encodeURIComponent(phone)}`);
-
-    es.onmessage = (e) => {
-      try {
-        const evt = JSON.parse(e.data);
-        if (evt.type === "message" && evt.item) {
-          setMessages((msgs) => [...msgs, evt.item]);
-          // 🔼 Move updated conversation to top
-          setConversations((prev) => {
-            const idx = prev.findIndex((c) => c.phone === phone);
-            if (idx === -1) return prev;
-            const updated = { ...prev[idx], lastMessage: evt.item.content, lastTime: evt.item.t };
-            const rest = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-            return [updated, ...rest];
-          });
-        }
-      } catch (err) {
-        console.warn("SSE parse error:", err);
-      }
-    };
-
-    es.onerror = (err) => console.warn("SSE error:", err);
-    esRef.current = es;
+async function loadThread(phone) {
+  setSelected(phone);
+  setLoading(true);
+  try {
+    // ✅ FIX: use the actual backend endpoint that exists
+    const res = await fetch(`${backendBase}/history/${encodeURIComponent(phone)}`);
+    const json = await res.json();
+    if (json.ok) setMessages(json.messages || []);
+  } catch (err) {
+    console.error("Failed to load thread:", err);
+  } finally {
+    setLoading(false);
   }
+
+  // 🔌 Close previous SSE connection
+  if (esRef.current) {
+    esRef.current.close();
+    esRef.current = null;
+  }
+
+  // 🧠 Subscribe to SSE for live updates
+  const es = new EventSource(`${backendBase}/events/conversation/${encodeURIComponent(phone)}`);
+
+  es.onmessage = (e) => {
+    try {
+      const evt = JSON.parse(e.data);
+      if (evt.type === "message" && evt.item) {
+        setMessages((msgs) => [...msgs, evt.item]);
+        // 🔼 Move updated conversation to top
+        setConversations((prev) => {
+          const idx = prev.findIndex((c) => c.phone === phone);
+          if (idx === -1) return prev;
+          const updated = {
+            ...prev[idx],
+            lastMessage: evt.item.content,
+            lastTime: evt.item.t,
+          };
+          const rest = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+          return [updated, ...rest];
+        });
+      }
+    } catch (err) {
+      console.warn("SSE parse error:", err);
+    }
+  };
+
+  es.onerror = (err) => console.warn("SSE error:", err);
+  esRef.current = es;
+}
+
 
   return (
     <div className="flex h-[calc(100vh-80px)] bg-gray-50">
