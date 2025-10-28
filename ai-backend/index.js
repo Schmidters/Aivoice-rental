@@ -30,8 +30,6 @@ app.set("trust proxy", 1);
 const prisma = new PrismaClient();
 
 
-import analyticsRouter from "./routes/analytics.js";
-app.use("/api/analytics", analyticsRouter);
 
 // ====================================================
 // 🧠 SECURITY + CORS SETUP (goes right after app + prisma)
@@ -87,7 +85,8 @@ app.use(
   })
 );
 
-
+import analyticsRouter from "./routes/analytics.js";
+app.use("/api/analytics", analyticsRouter);
 
 // --- Force HTTPS in production ---
 app.use((req, res, next) => {
