@@ -25,23 +25,35 @@ async function ensureValidOutlookToken() {
 
   console.log("🔄 Refreshing Outlook access token...");
 
+  const clientId = process.env.OUTLOOK_CLIENT_ID || process.env.AZURE_CLIENT_ID;
+  const clientSecret = process.env.OUTLOOK_CLIENT_SECRET || process.env.AZURE_CLIENT_SECRET;
+  const redirectUri = process.env.OUTLOOK_REDIRECT_URI || process.env.AZURE_REDIRECT_URI;
+  const tenantId = process.env.OUTLOOK_TENANT_ID || process.env.AZURE_TENANT_ID || "common";
+
+console.log("🧭 Outlook Token Refresh Config:", {
+  tenantId,
+  redirectUri,
+  hasClientId: !!clientId,
+  hasClientSecret: !!clientSecret,
+});
+
+
   const params = new URLSearchParams({
-    client_id: process.env.OUTLOOK_CLIENT_ID,
-    client_secret: process.env.OUTLOOK_CLIENT_SECRET,
+    client_id: clientId,
+    client_secret: clientSecret,
     grant_type: "refresh_token",
     refresh_token: account.refreshToken,
-    redirect_uri: process.env.OUTLOOK_REDIRECT_URI,
+    redirect_uri: redirectUri,
   });
 
-  // ⚙️ FIXED: use backticks for template literal
-  const res = await fetch(
-    `https://login.microsoftonline.com/${process.env.OUTLOOK_TENANT_ID}/oauth2/v2.0/token`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params,
-    }
-  );
+  const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+
+  const res = await fetch(tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params,
+  });
+
 
   const json = await res.json();
   if (!json.access_token) {
