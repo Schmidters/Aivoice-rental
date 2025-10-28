@@ -4,9 +4,9 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: "📊" },  // 👈 Home analytics page
+  { href: "/analytics", label: "Dashboard", icon: "📊" }, // 👈 Now points to Analytics
   { href: "/inbox", label: "Inbox", icon: "💬" },
-  { href: "/calendar", label: "Calendar", icon: "📅" }, // 👈 Pure scheduling view
+  { href: "/calendar", label: "Calendar", icon: "📅" },
   { href: "/properties", label: "Properties", icon: "🏘️" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
@@ -22,8 +22,7 @@ export default function Sidebar() {
       <nav className="flex flex-col gap-1">
         {navItems.map((item) => {
           const active =
-            pathname === item.href ||
-            pathname.startsWith(item.href + "/");
+            pathname === item.href || pathname.startsWith(item.href + "/");
           return (
             <Link
               key={item.href}
