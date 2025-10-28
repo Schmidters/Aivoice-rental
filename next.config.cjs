@@ -1,8 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
-  output: 'standalone',
-  basePath: '/dashboard', // ✅ fixes all 404s
-  images: { unoptimized: true },
+  async redirects() {
+    return [
+      {
+        source: "/",
+        destination: "/analytics",
+        permanent: true,
+      },
+    ];
+  },
 };
-module.exports = nextConfig;
+
+export default nextConfig;
