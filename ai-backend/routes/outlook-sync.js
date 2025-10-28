@@ -216,6 +216,22 @@ router.get("/poll", async (req, res) => {
       // Skip non-busy events
       if (e.showAs && e.showAs.toLowerCase() !== "busy") continue;
 
+      // 🧩 Sync Outlook event deletions (if user removed from calendar)
+const existingBookings = await prisma.booking.findMany({
+  where: { outlookEventId: { not: null } },
+});
+
+for (const b of existingBookings) {
+  const stillExists = json.value.some((e) => e.id === b.outlookEventId);
+  if (!stillExists) {
+    await prisma.booking.update({
+      where: { id: b.id },
+      data: { status: "cancelled" },
+    });
+    console.log(`🗑️ Booking ${b.id} marked cancelled — Outlook event removed`);
+  }
+}
+
       // Skip malformed events
       if (!e.start?.dateTime || !e.end?.dateTime) continue;
 
@@ -303,9 +319,34 @@ router.post("/create-event", async (req, res) => {
     });
 
     const json = await response.json();
-    if (!response.ok) throw new Error(json.error?.message || "Outlook API error");
+if (!response.ok) throw new Error(json.error?.message || "Outlook API error");
 
-    res.json({ success: true, event: json });
+// 💾 Save the Outlook event ID into the matching Booking record (if found)
+if (json.id) {
+  try {
+    const booking = await prisma.booking.findFirst({
+      where: {
+        datetime: new Date(startTime),
+        leadId: req.body.leadId,
+      },
+    });
+
+    if (booking) {
+      await prisma.booking.update({
+        where: { id: booking.id },
+        data: { outlookEventId: json.id, status: "confirmed" },
+      });
+      console.log(`📎 Linked booking ${booking.id} to Outlook event ${json.id}`);
+    } else {
+      console.warn("⚠️ No matching booking found to link Outlook event");
+    }
+  } catch (err) {
+    console.error("❌ Failed to link booking to Outlook event:", err);
+  }
+}
+
+res.json({ success: true, event: json });
+
   } catch (err) {
     console.error("❌ /create-event failed:", err);
     res.status(500).json({ success: false, error: err.message });
