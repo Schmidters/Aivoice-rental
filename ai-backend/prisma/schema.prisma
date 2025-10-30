@@ -118,6 +118,7 @@ model Availability {
   isBlocked    Boolean    @default(false)
   notes        String?
   createdAt    DateTime   @default(now())
+  @@unique([propertyId, startTime]) // ✅ Add this line
 
   property     Property   @relation(fields: [propertyId], references: [id])
 }
