@@ -1071,9 +1071,22 @@ if (wantsReschedule) {
     if (meridian === "am" && hour === 12) hour = 0;
 
     const { DateTime } = await import("luxon");
-    const tz = "America/Edmonton";
-    const newStart = DateTime.now().setZone(tz).plus({ days: 1 }).set({ hour, minute }).toJSDate();
-    const newEnd = new Date(newStart.getTime() + 30 * 60 * 1000);
+const tz = "America/Edmonton";
+
+// 🧠 Use the *same date* as the existing booking, just change the time
+const currentStart = DateTime.fromJSDate(existingBooking.datetime).setZone(tz);
+
+// Apply new hour/minute but keep same day
+let newStart = currentStart.set({ hour, minute, second: 0, millisecond: 0 });
+
+// If renter accidentally says a time that's already passed today,
+// bump it by 1 day (safety catch)
+if (newStart <= DateTime.now().setZone(tz)) {
+  newStart = newStart.plus({ days: 1 });
+}
+
+const newEnd = newStart.plus({ minutes: 30 });
+
 
     // ✅ Check availability
     const availabilityContext = await getAvailabilityContext(existingBooking.propertyId);
