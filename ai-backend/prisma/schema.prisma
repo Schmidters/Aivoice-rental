@@ -105,10 +105,12 @@ model Booking {
   property       Property?  @relation(fields: [propertyId], references: [id])
 
   outlookEventId String?    @unique
+  deletedAt      DateTime?  // 🕓 new soft delete column
 
   @@index([datetime])
   @@unique([propertyId, datetime])   // 🚫 Prevents duplicate same-time showings per property
 }
+
 
 model Availability {
   id           Int        @id @default(autoincrement())
