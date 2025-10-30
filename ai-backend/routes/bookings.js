@@ -79,16 +79,33 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const booking = await prisma.booking.create({
-      data: {
-        leadId: lead.id,
-        propertyId: property.id,
-        datetime: requestedStart,
-        duration: 30,
-        status: "confirmed",
-        source: "sms",
-      },
-    });
+    // 🧩 Ensure every booking has a valid lead
+let fallbackLead = await prisma.lead.findFirst({
+  where: { phone: "+10000000000" },
+});
+
+if (!fallbackLead) {
+  fallbackLead = await prisma.lead.create({
+    data: {
+      name: "Outlook Calendar",
+      phone: "+10000000000",
+      source: "outlook",
+    },
+  });
+}
+
+await prisma.booking.create({
+  data: {
+    propertyId,
+    datetime: startTime,
+    status: "confirmed",
+    notes: e.subject || "Showing synced from Outlook",
+    outlookEventId: e.id,
+    source: "Outlook",
+    leadId: fallbackLead.id, // ✅ satisfies required field
+  },
+});
+
 
     res.json({ ok: true, data: booking });
   } catch (err) {
