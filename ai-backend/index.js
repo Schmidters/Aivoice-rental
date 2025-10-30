@@ -1278,15 +1278,28 @@ if (existing) {
   return res.status(200).send('<Response></Response>');
 }
 
-// ✅ Slot is free — create the booking
-const booking = await prisma.booking.create({
-  data: {
-    leadId: lead.id,
-    propertyId: property.id,
-    datetime: requestedStart,
-    status: "confirmed",
-  },
-});
+let booking;
+try {
+  booking = await prisma.booking.create({
+    data: {
+      leadId: lead.id,
+      propertyId: property.id,
+      datetime: requestedStart,
+      status: "confirmed",
+    },
+  });
+} catch (err) {
+  if (err.code === "P2002") {
+    console.warn("⚠️ Duplicate booking prevented by unique constraint:", {
+      propertyId: property.id,
+      datetime: requestedStart,
+    });
+    await sendSms(from, "Looks like that time was just booked. Can we find another slot?");
+    return res.status(200).end();
+  }
+  throw err;
+}
+
 
 const startFmt = requestedDT.setZone(tz).toFormat("ccc, LLL d 'at' h:mm a");
 await sendSms(
