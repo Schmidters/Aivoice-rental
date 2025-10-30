@@ -91,23 +91,23 @@ model Message {
 }
 
 model Booking {
-  id          Int        @id @default(autoincrement())
-  datetime    DateTime
-  duration    Int?       // minutes (default 30–60)
-  status      String     @default("pending") // pending | confirmed | cancelled
-  source      String?    // "sms", "dashboard", "manual", "outlook"
-  notes       String?
-  createdAt   DateTime   @default(now())
+  id             Int        @id @default(autoincrement())
+  datetime       DateTime
+  duration       Int?       // minutes (default 30–60)
+  status         String     @default("pending") // pending | confirmed | cancelled
+  source         String?    // "sms", "dashboard", "manual", "outlook"
+  notes          String?
+  createdAt      DateTime   @default(now())
 
-  leadId      Int
-  propertyId  Int?
-  lead        Lead       @relation(fields: [leadId], references: [id])
-  property    Property?  @relation(fields: [propertyId], references: [id])
+  leadId         Int
+  propertyId     Int?
+  lead           Lead       @relation(fields: [leadId], references: [id])
+  property       Property?  @relation(fields: [propertyId], references: [id])
 
-  // 🔹 NEW FIELD — links this booking to an Outlook calendar event
-  outlookEventId String? @unique
+  outlookEventId String?    @unique
 
   @@index([datetime])
+  @@unique([propertyId, datetime])   // 🚫 Prevents duplicate same-time showings per property
 }
 
 model Availability {
