@@ -258,15 +258,69 @@ for (const b of existingBookings) {
         console.warn("⚠️ Could not match property:", err.message);
       }
 
-      await prisma.availability.create({
-        data: {
-          propertyId,
-          startTime,
-          endTime,
-          isBlocked: true,
-          notes: e.subject || "Busy",
-        },
-      });
+      // 🧠 Try to match by Outlook Event ID or start time
+const existingBooking = await prisma.booking.findFirst({
+  where: {
+    OR: [
+      { outlookEventId: e.id },
+      {
+        datetime: startTime,
+        propertyId,
+      },
+    ],
+  },
+});
+
+if (existingBooking) {
+  // 🔗 Update existing booking to include Outlook ID and keep it synced
+  await prisma.booking.update({
+    where: { id: existingBooking.id },
+    data: {
+      outlookEventId: e.id,
+      status: "confirmed",
+      notes: e.subject || "Showing synced from Outlook",
+      source: "Outlook",
+    },
+  });
+  console.log(`🔄 Updated existing booking ${existingBooking.id} with Outlook ID ${e.id}`);
+} else {
+  // 🆕 Otherwise create a new booking record
+  await prisma.booking.create({
+    data: {
+      propertyId,
+      datetime: startTime,
+      status: "confirmed",
+      notes: e.subject || "Showing synced from Outlook",
+      outlookEventId: e.id,
+      source: "Outlook",
+    },
+  });
+  console.log(`🆕 Created new booking from Outlook event: ${e.subject}`);
+}
+
+// ✅ Maintain availability table (for global hours display)
+await prisma.availability.upsert({
+  where: {
+    // Combine property + start time as a pseudo-unique key
+    propertyId_startTime: {
+      propertyId,
+      startTime,
+    },
+  },
+  update: {
+    endTime,
+    isBlocked: true,
+    notes: e.subject || "Busy",
+  },
+  create: {
+    propertyId,
+    startTime,
+    endTime,
+    isBlocked: true,
+    notes: e.subject || "Busy",
+  },
+});
+
 
       count++;
     }
