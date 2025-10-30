@@ -14,6 +14,8 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import { generateAvaResponse } from "./utils/generateAvaResponse.js";
 import { getAvailabilityContext } from "./utils/getAvailabilityContext.js";
+import { ensureValidOutlookToken } from "./routes/outlook-sync.js";
+
 
 // Routers
 import bookingsRouter from "./routes/bookings.js";
@@ -1034,7 +1036,111 @@ console.log("🧩 Using property for", from, "→", property?.slug || "none");
     // - parse and link here (omitted for V7 minimalism)
 
     const intent = await detectIntent(incomingText);
-        console.log("🧠 Detected intent:", intent);
+console.log("🧠 Detected intent:", intent);
+
+// =======================================================
+// 🔄 RESCHEDULE FLOW — if renter asks to move existing booking
+// =======================================================
+const wantsReschedule = /\b(reschedule|move|change|later|earlier|push|bump|different time|another time|can we do)\b/i.test(incomingText);
+
+if (wantsReschedule) {
+  const existingBooking = await prisma.booking.findFirst({
+    where: {
+      leadId: lead.id,
+      datetime: { gte: new Date() },
+      status: "confirmed",
+    },
+    orderBy: { datetime: "asc" },
+    include: { property: true },
+  });
+
+  if (existingBooking) {
+    console.log("🔄 Renter wants to reschedule:", existingBooking.id);
+
+    const parsed = incomingText.match(/\b(\d{1,2})(?::?(\d{2}))?\s*(am|pm)?\b/i);
+    if (!parsed) {
+      await sendSms(from, "Sure — what new time were you thinking?");
+      return res.status(200).end();
+    }
+
+    let hour = parseInt(parsed[1], 10);
+    const minute = parseInt(parsed[2] || "0", 10);
+    let meridian = (parsed[3] || "").toLowerCase();
+    if (!meridian && hour >= 1 && hour <= 6) meridian = "pm";
+    if (meridian === "pm" && hour < 12) hour += 12;
+    if (meridian === "am" && hour === 12) hour = 0;
+
+    const { DateTime } = await import("luxon");
+    const tz = "America/Edmonton";
+    const newStart = DateTime.now().setZone(tz).plus({ days: 1 }).set({ hour, minute }).toJSDate();
+    const newEnd = new Date(newStart.getTime() + 30 * 60 * 1000);
+
+    // ✅ Check availability
+    const availabilityContext = await getAvailabilityContext(existingBooking.propertyId);
+    const isBlocked = availabilityContext.blockedSlots.some((b) => {
+      const start = DateTime.fromISO(b.start, { zone: tz });
+      const end = DateTime.fromISO(b.end, { zone: tz });
+      return DateTime.fromJSDate(newStart) >= start && DateTime.fromJSDate(newStart) < end;
+    });
+
+    if (isBlocked) {
+      const nextSlots = await findNextAvailableSlots(existingBooking.propertyId, newStart, 2);
+      await sendSms(from, await generateAvaResponse("slot_taken", { nextSlots }));
+      return res.status(200).end();
+    }
+
+    // 🗑️ Delete old Outlook event if exists
+    if (existingBooking.outlookEventId) {
+      try {
+        const token = await ensureValidOutlookToken(); // imported from outlook-sync
+        await fetch(`https://graph.microsoft.com/v1.0/me/events/${existingBooking.outlookEventId}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        console.log(`🗑️ Deleted old Outlook event ${existingBooking.outlookEventId}`);
+      } catch (err) {
+        console.warn("⚠️ Failed to delete old Outlook event:", err.message);
+      }
+    }
+
+    // 🆕 Create new Outlook event
+    try {
+      const reschedulePayload = {
+        subject: `Showing — ${existingBooking.property?.facts?.buildingName || existingBooking.property?.address}`,
+        startTime: DateTime.fromJSDate(newStart).toISO(),
+        endTime: DateTime.fromJSDate(newEnd).toISO(),
+        location: existingBooking.property?.address || "TBD",
+        leadEmail: "renter@example.com",
+      };
+      const url = `${process.env.NEXT_PUBLIC_AI_BACKEND_URL}/api/outlook-sync/create-event`;
+      const createRes = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(reschedulePayload),
+      });
+      const data = await createRes.json();
+
+      await prisma.booking.update({
+        where: { id: existingBooking.id },
+        data: {
+          datetime: newStart,
+          outlookEventId: data.event?.id || null,
+          notes: "Rescheduled via SMS",
+        },
+      });
+
+      const newTimeStr = DateTime.fromJSDate(newStart).toFormat("ccc, LLL d 'at' h:mm a");
+      await sendSms(from, `Got it — I’ve moved your showing to ${newTimeStr}. See you then!`);
+      console.log(`🔁 Booking ${existingBooking.id} moved to ${newTimeStr}`);
+      return res.status(200).end();
+    } catch (err) {
+      console.error("❌ Reschedule failed:", err);
+      await sendSms(from, "Sorry — I couldn’t update your showing just now. Can you try again?");
+      return res.status(200).end();
+    }
+  }
+}
+
 
 
     // =======================================================
@@ -1048,21 +1154,49 @@ if (
   const tz = "America/Edmonton"; // default; can be refined later per property
   const now = DateTime.now().setZone(tz);
 
-  // 🧠 Step 1: Try to detect a date/time from the message
-  const match = incomingText.match(
-    /\b(?:(mon|tue|wed|thu|fri|sat|sun)\w*)?\s*(\d{1,2})(?::?(\d{2}))?\s*(am|pm)?\b/i
-  );
-  if (!match) {
-    await sendSms(from, "What day and time works best for you?");
-    return res.status(200).end();
-  }
+// 🗣️ Handle casual phrases like “evening” or “after dinner”
+if (/evening/i.test(incomingText)) incomingText += " 7pm";
+else if (/afternoon/i.test(incomingText)) incomingText += " 2pm";
+else if (/morning/i.test(incomingText)) incomingText += " 10am";
+else if (/lunch/i.test(incomingText)) incomingText += " 12pm";
+else if (/dinner/i.test(incomingText)) incomingText += " 6pm";
 
-  const weekday = match[1]?.toLowerCase();
-  let hour = parseInt(match[2], 10);
-  const minute = parseInt(match[3] || "0", 10);
-  const meridian = (match[4] || "").toLowerCase();
-  if (meridian === "pm" && hour < 12) hour += 12;
-  if (meridian === "am" && hour === 12) hour = 0;
+// 🧠 If renter says “same time” or “that works”, reuse last booking time
+const lastBooking = await prisma.booking.findFirst({
+  where: { leadId: lead.id },
+  orderBy: { createdAt: "desc" },
+});
+if (/same time|that works|let's do it/i.test(incomingText) && lastBooking) {
+  incomingText += " " + DateTime.fromJSDate(lastBooking.datetime).toFormat("h:mma");
+}
+
+
+// 🧠 Smart time parser with common-sense defaults
+const match = incomingText.match(
+  /\b(?:(mon|tue|wed|thu|fri|sat|sun)\w*)?\s*(\d{1,2})(?::?(\d{2}))?\s*(am|pm)?\b/i
+);
+
+if (!match) {
+  await sendSms(from, "What day and time works best for you?");
+  return res.status(200).end();
+}
+
+const weekday = match[1]?.toLowerCase();
+let hour = parseInt(match[2], 10);
+const minute = parseInt(match[3] || "0", 10);
+let meridian = (match[4] || "").toLowerCase();
+
+// 🧩 If no AM/PM, guess based on realistic showing hours
+if (!meridian) {
+  if (hour >= 7 && hour <= 11) meridian = "am";     // 7–11 → morning
+  else if (hour >= 12 && hour <= 23) meridian = "pm"; // 12–11pm → afternoon/evening
+  else meridian = "pm"; // safe default (no one views at 2am)
+}
+
+// 🕑 Convert to 24h time
+if (meridian === "pm" && hour < 12) hour += 12;
+if (meridian === "am" && hour === 12) hour = 0;
+
 
   let date = now;
   if (weekday) {

@@ -432,3 +432,5 @@ if (process.env.NODE_ENV === "production") {
     }
   }, 5 * 60 * 1000); // every 5 minutes
 }
+
+export { ensureValidOutlookToken };
