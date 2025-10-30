@@ -290,33 +290,6 @@ if (existingBooking) {
 }
 
 
-if (existingBooking) {
-  // 🔗 Update existing booking to include Outlook ID and keep it synced
-  await prisma.booking.update({
-    where: { id: existingBooking.id },
-    data: {
-      outlookEventId: e.id,
-      status: "confirmed",
-      notes: e.subject || "Showing synced from Outlook",
-      source: "Outlook",
-    },
-  });
-  console.log(`🔄 Updated existing booking ${existingBooking.id} with Outlook ID ${e.id}`);
-} else {
-  // 🆕 Otherwise create a new booking record
-  await prisma.booking.create({
-    data: {
-      propertyId,
-      datetime: startTime,
-      status: "confirmed",
-      notes: e.subject || "Showing synced from Outlook",
-      outlookEventId: e.id,
-      source: "Outlook",
-    },
-  });
-  console.log(`🆕 Created new booking from Outlook event: ${e.subject}`);
-}
-
 // ✅ Maintain availability table (for global hours display)
 await prisma.availability.upsert({
   where: {
