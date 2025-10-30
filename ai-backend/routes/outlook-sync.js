@@ -259,6 +259,7 @@ for (const b of existingBookings) {
       }
 
       // 🧠 Try to match by Outlook Event ID or start time
+// 🧠 Smarter duplicate check — avoids creating a duplicate booking
 const existingBooking = await prisma.booking.findFirst({
   where: {
     OR: [
@@ -266,10 +267,28 @@ const existingBooking = await prisma.booking.findFirst({
       {
         datetime: startTime,
         propertyId,
+        // ✅ only treat as duplicate if it's confirmed (not cancelled)
+        status: { in: ["confirmed", "pending"] },
       },
     ],
   },
 });
+
+// 🪄 If already booked, just update the Outlook ID
+if (existingBooking) {
+  await prisma.booking.update({
+    where: { id: existingBooking.id },
+    data: {
+      outlookEventId: e.id,
+      status: "confirmed",
+      notes: e.subject || "Showing synced from Outlook",
+      source: "Outlook",
+    },
+  });
+  console.log(`🔗 Linked Outlook event ${e.id} → booking ${existingBooking.id}`);
+  continue; // ✅ skip creating a new record
+}
+
 
 if (existingBooking) {
   // 🔗 Update existing booking to include Outlook ID and keep it synced
