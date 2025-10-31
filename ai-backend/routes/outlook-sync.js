@@ -264,6 +264,20 @@ for (const e of json.value) {
         console.warn("⚠️ Could not match property:", err.message);
       }
 
+// 🧠 Skip events that were just created by Ava in the last 2 minutes
+const recentBooking = await prisma.booking.findFirst({
+  where: {
+    datetime: new Date(e.start.dateTime),
+    createdAt: {
+      gt: new Date(Date.now() - 2 * 60 * 1000), // last 2 minutes
+    },
+  },
+});
+if (recentBooking) {
+  console.log(`⏩ Skipping duplicate poll for recent booking ${recentBooking.id}`);
+  continue;
+}
+
 // 🧠 Smarter sync — check if this Outlook event already exists
 let booking = await prisma.booking.findUnique({
   where: { outlookEventId: e.id },
