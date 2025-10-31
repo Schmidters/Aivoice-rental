@@ -62,17 +62,12 @@ export default function CalendarPage() {
       }));
 
       // ✅ Normalize and merge everything before setting
-      const merged = mergeUniqueEvents(ai, outlook).map((e) => ({
-        ...e,
-        start:
-          typeof e.start === "string"
-            ? e.start
-            : new Date(e.start).toISOString(),
-        end:
-          typeof e.end === "string"
-            ? e.end
-            : new Date(e.end).toISOString(),
-      }));
+const merged = mergeUniqueEvents(ai, outlook).map((e) => ({
+  ...e,
+  start: new Date(e.start).toLocaleString("sv-SE").replace(" ", "T"), // ✅ convert to local ISO-like string
+  end: new Date(e.end).toLocaleString("sv-SE").replace(" ", "T"),
+}));
+
 
       console.log("✅ Normalized events sample:", merged[0]);
       setEvents(merged);
