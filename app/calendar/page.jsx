@@ -64,8 +64,8 @@ export default function CalendarPage() {
       // ✅ Normalize and merge everything before setting
 const merged = mergeUniqueEvents(ai, outlook).map((e) => ({
   ...e,
-  start: new Date(e.start).toLocaleString("sv-SE").replace(" ", "T"), // ✅ convert to local ISO-like string
-  end: new Date(e.end).toLocaleString("sv-SE").replace(" ", "T"),
+  start: new Date(e.start).toISOString().slice(0, 19), // ✅ keep full timestamp without Z
+end: new Date(e.end).toISOString().slice(0, 19),
 }));
 
 
