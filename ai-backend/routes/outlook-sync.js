@@ -210,13 +210,14 @@ router.get("/poll", async (req, res) => {
       where: { endTime: { lt: new Date() } },
     });
 
- // 🧠 Insert only valid busy events
+// 🧠 Insert only valid busy events
 let count = 0;
 
 // 🧹 Sync Outlook event deletions (once)
 const existingBookings = await prisma.booking.findMany({
   where: { outlookEventId: { not: null } },
 });
+
 for (const b of existingBookings) {
   const stillExists = json.value.some((e) => e.id === b.outlookEventId);
   if (!stillExists) {
@@ -227,27 +228,14 @@ for (const b of existingBookings) {
     console.log(`🗑️ Booking ${b.id} marked cancelled — Outlook event removed`);
   }
 }
+
 
 for (const e of json.value) {
 
       // Skip non-busy events
       if (e.showAs && e.showAs.toLowerCase() !== "busy") continue;
 
-      // 🧩 Sync Outlook event deletions (if user removed from calendar)
-const existingBookings = await prisma.booking.findMany({
-  where: { outlookEventId: { not: null } },
-});
 
-for (const b of existingBookings) {
-  const stillExists = json.value.some((e) => e.id === b.outlookEventId);
-  if (!stillExists) {
-    await prisma.booking.update({
-      where: { id: b.id },
-      data: { status: "cancelled" },
-    });
-    console.log(`🗑️ Booking ${b.id} marked cancelled — Outlook event removed`);
-  }
-}
 
       // Skip malformed events
       if (!e.start?.dateTime || !e.end?.dateTime) continue;
@@ -371,7 +359,12 @@ count++;
 router.post("/create-event", async (req, res) => {
   try {
     const accessToken = await ensureValidOutlookToken();
-    let { subject, startTime, endTime, location, leadEmail } = req.body;
+let { subject, startTime, endTime, location, leadEmail } = req.body;
+
+// 🧩 Generate a friendly subject if not provided
+subject =
+  subject ||
+  `${req.body.leadName || "Lead"} — ${req.body.propertyAddress || "Property Showing"}`;
 
     // 🕒 Ensure valid startTime
    if (!startTime) {
@@ -395,7 +388,17 @@ router.post("/create-event", async (req, res) => {
       },
       body: JSON.stringify({
         subject,
-        body: { contentType: "HTML", content: "Showing scheduled via Ava AI" },
+body: {
+  contentType: "HTML",
+  content: `
+    <strong>Showing scheduled via Ava AI</strong><br/>
+    <b>Lead:</b> ${req.body.leadName || "Unknown"}<br/>
+    <b>Phone:</b> ${req.body.leadPhone || ""}<br/>
+    <b>Property:</b> ${req.body.propertyAddress || "Unknown"}<br/>
+    <b>Unit:</b> ${req.body.unitType || "N/A"}<br/>
+    <b>Summary:</b> ${req.body.chatSummary || "No additional notes"}<br/>
+  `,
+},
         start: { dateTime: start.toISOString(), timeZone: "America/Edmonton" },
         end: { dateTime: end.toISOString(), timeZone: "America/Edmonton" },
         location: { displayName: location || "TBD" },
@@ -416,14 +419,29 @@ if (json.id) {
         datetime: new Date(startTime),
         leadId: req.body.leadId,
       },
+      include: { lead: true, property: { include: { facts: true } } },
     });
 
     if (booking) {
+      // 🔁 Immediately link Outlook ID to prevent flicker
       await prisma.booking.update({
-        where: { id: booking.id },
-        data: { outlookEventId: json.id, status: "confirmed" },
-      });
+  where: { id: booking.id },
+  data: {
+    outlookEventId: json.id,
+    status: "confirmed",
+    source: "Outlook",
+    notes: req.body.chatSummary || booking.notes, // 🧠 Save AI summary to dashboard
+  },
+});
+
+console.log(`🧠 AI Summary: ${req.body.chatSummary || "none provided"}`);
+
       console.log(`📎 Linked booking ${booking.id} to Outlook event ${json.id}`);
+
+      // 🧩 Push updated record to dashboard right away
+      if (global?.eventEmitter) {
+        global.eventEmitter.emit("bookingUpdated", booking);
+      }
     } else {
       console.warn("⚠️ No matching booking found to link Outlook event");
     }
