@@ -76,6 +76,8 @@ export default function CalendarPage() {
 
       console.log("✅ Normalized events sample:", merged[0]);
       setEvents(merged);
+      console.log("📅 Final events for FullCalendar:", merged);
+
     } catch (err) {
       console.error("❌ Failed to fetch events:", err);
     }
