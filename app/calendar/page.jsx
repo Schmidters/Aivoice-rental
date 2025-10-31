@@ -39,8 +39,9 @@ export default function CalendarPage() {
       ]);
 
 const ai = (bookingsJson.data || []).map((b) => {
-  const start = new Date(b.datetime);
-  const end = new Date(start.getTime() + 30 * 60 * 1000); // 30-minute duration
+  const start = new Date(b.datetime).toISOString();
+  const end = new Date(new Date(b.datetime).getTime() + 30 * 60 * 1000).toISOString();
+
 
   return {
     id: "AI-" + b.id,
