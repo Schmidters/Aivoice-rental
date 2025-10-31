@@ -38,15 +38,22 @@ export default function CalendarPage() {
         outlookRes.json(),
       ]);
 
-      const ai = (bookingsJson.data || []).map((b) => ({
-  id: "AI-" + b.id,
-  title: b.property?.address || "AI Showing",
-  start: b.datetime,
-  color: "#22c55e",
-  source: "AI",
-  className: "ai",  // 🟢 Add this line
-  phone: b.lead?.phone || "",
-}));
+const ai = (bookingsJson.data || []).map((b) => {
+  const start = new Date(b.datetime);
+  const end = new Date(start.getTime() + 30 * 60 * 1000); // 30-minute duration
+
+  return {
+    id: "AI-" + b.id,
+    title: b.property?.address || "AI Showing",
+    start,
+    end, // 👈 added
+    color: "#22c55e",
+    source: "AI",
+    className: "ai",
+    phone: b.lead?.phone || "",
+  };
+});
+
 
       const outlook = (outlookJson.data || []).map((e) => ({
   id: e.id,
@@ -139,36 +146,39 @@ export default function CalendarPage() {
     right: "dayGridMonth,timeGridWeek,timeGridDay",
   }}
   height="calc(100vh - 240px)"
-  events={events}
   nowIndicator={true}
-
-  // 👇 NEW SETTINGS
-  slotDuration="00:30:00"        // each slot = 30 minutes
-  slotLabelInterval="01:00:00"   // show time labels every hour
-  slotMinTime="08:00:00"         // calendar starts at 8 AM
-  slotMaxTime="19:00:00"         // calendar ends at 7 PM
-  expandRows={true}              // fills height properly
-  allDaySlot={false}             // hides "all day" bar
-
+  allDaySlot={false}
+  slotDuration="00:30:00"
+  slotLabelInterval="01:00:00"
+  slotMinTime="08:00:00"
+  slotMaxTime="19:00:00"
+  expandRows={true}
+  scrollTime={new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} // 👈 Auto-scroll to current time
+  eventTimeFormat={{
+    hour: "numeric",
+    minute: "2-digit",
+    meridiem: "short",
+  }}
   eventClick={(info) => {
     const ev = events.find((e) => e.id === info.event.id);
     setSelected(ev);
     setDrawerOpen(true);
   }}
-
   eventContent={(arg) => (
     <motion.div
-      whileHover={{ scale: 1.05 }}
-      className={`text-white text-xs px-2 py-1 rounded-md shadow-sm ${
+      whileHover={{ scale: 1.04 }}
+      className={`text-white text-xs px-2 py-[2px] rounded-md shadow-sm truncate ${
         arg.event.extendedProps.source === "AI"
           ? "bg-gradient-to-r from-green-400 to-green-600"
           : "bg-gradient-to-r from-blue-400 to-blue-600"
       }`}
     >
+      {arg.timeText && <span className="font-medium">{arg.timeText} </span>}
       {arg.event.title}
     </motion.div>
   )}
 />
+
 
         </div>
       </div>
