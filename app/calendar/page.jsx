@@ -33,44 +33,38 @@ export default function CalendarPage() {
         outlookRes.json(),
       ]);
 
-      const ai = (bookingsJson.data || []).map((b) => {
-        const start = new Date(b.datetime);
-        const end = new Date(start.getTime() + 30 * 60 * 1000);
+const ai = (bookingsJson.data || []).map((b) => {
+  const start = new Date(b.datetime);
+  const end = new Date(start.getTime() + 30 * 60 * 1000);
 
-        return {
-          id: "AI-" + b.id,
-          title: b.property?.address || "AI Showing",
-          start: start.toISOString(),
-          end: end.toISOString(),
-          color: "#22c55e",
-          source: "AI",
-          className: "ai",
-          phone: b.lead?.phone || "",
-        };
-      });
+  return {
+    id: "AI-" + b.id,
+    title: b.property?.address || "AI Showing",
+    start,  // ✅ pass Date object, not string
+    end,
+    color: "#22c55e",
+    source: "AI",
+    className: "ai",
+    phone: b.lead?.phone || "",
+  };
+});
 
-      const outlook = (outlookJson.data || []).map((e) => ({
-        id: e.id,
-        title: e.title || "Outlook Event",
-        start: new Date(e.start).toISOString(),
-        end: new Date(e.end).toISOString(),
-        color: "#3b82f6",
-        source: "Outlook",
-        className: "outlook",
-        location: e.location,
-        webLink: e.webLink,
-      }));
-
-      // ✅ Normalize and merge everything before setting
-const merged = mergeUniqueEvents(ai, outlook).map((e) => ({
-  ...e,
-  start: new Date(e.start).toISOString().slice(0, 19), // ✅ keep full timestamp without Z
-end: new Date(e.end).toISOString().slice(0, 19),
+const outlook = (outlookJson.data || []).map((e) => ({
+  id: e.id,
+  title: e.title || "Outlook Event",
+  start: new Date(e.start), // ✅ Date objects
+  end: new Date(e.end),
+  color: "#3b82f6",
+  source: "Outlook",
+  className: "outlook",
+  location: e.location,
+  webLink: e.webLink,
 }));
 
+const merged = mergeUniqueEvents(ai, outlook);
+setEvents(merged);
 
       console.log("✅ Normalized events sample:", merged[0]);
-      setEvents(merged);
       console.log("📅 Final events for FullCalendar:", merged);
 
     } catch (err) {
@@ -142,51 +136,50 @@ end: new Date(e.end).toISOString().slice(0, 19),
         {/* Calendar */}
         <div className="flex-1 p-6 bg-white rounded-xl shadow-md">
           <FullCalendar
-            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-            initialView="timeGridWeek"
-            headerToolbar={{
-              left: "prev,next today",
-              center: "title",
-              right: "dayGridMonth,timeGridWeek,timeGridDay",
-            }}
-            height="calc(100vh - 240px)"
-            nowIndicator={true}
-            allDaySlot={false}
-            slotDuration="00:30:00"
-            slotLabelInterval="01:00:00"
-            slotMinTime="08:00:00"
-            slotMaxTime="19:00:00"
-            expandRows={true}
-            scrollTime={new Date().toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-            eventTimeFormat={{
-              hour: "numeric",
-              minute: "2-digit",
-              meridiem: "short",
-            }}
-            eventClick={(info) => {
-              const ev = events.find((e) => e.id === info.event.id);
-              setSelected(ev);
-              setDrawerOpen(true);
-            }}
-            eventContent={(arg) => (
-              <motion.div
-                whileHover={{ scale: 1.04 }}
-                className={`text-white text-xs px-2 py-[2px] rounded-md shadow-sm truncate ${
-                  arg.event.extendedProps.source === "AI"
-                    ? "bg-gradient-to-r from-green-400 to-green-600"
-                    : "bg-gradient-to-r from-blue-400 to-blue-600"
-                }`}
-              >
-                {arg.timeText && (
-                  <span className="font-medium">{arg.timeText} </span>
-                )}
-                {arg.event.title}
-              </motion.div>
-            )}
-          />
+  plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+  initialView="timeGridWeek"
+  headerToolbar={{
+    left: "prev,next today",
+    center: "title",
+    right: "dayGridMonth,timeGridWeek,timeGridDay",
+  }}
+  timeZone="local"
+  height="calc(100vh - 240px)"
+  nowIndicator={true}
+  allDaySlot={false}
+  slotDuration="00:30:00"
+  slotLabelInterval="01:00:00"
+  slotMinTime="08:00:00"
+  slotMaxTime="19:00:00"
+  contentHeight="auto"           // allows internal scroll again
+  scrollTime="09:00:00"          // ✅ valid and fixed format
+  events={events}                // ✅ critical line
+  eventDisplay="block"           // helps if styles interfere
+  eventTimeFormat={{
+    hour: "numeric",
+    minute: "2-digit",
+    meridiem: "short",
+  }}
+  eventClick={(info) => {
+    const ev = events.find((e) => e.id === info.event.id);
+    setSelected(ev);
+    setDrawerOpen(true);
+  }}
+  eventContent={(arg) => (
+    <motion.div
+      whileHover={{ scale: 1.04 }}
+      className={`text-white text-xs px-2 py-[2px] rounded-md shadow-sm truncate ${
+        arg.event.extendedProps.source === "AI"
+          ? "bg-gradient-to-r from-green-400 to-green-600"
+          : "bg-gradient-to-r from-blue-400 to-blue-600"
+      }`}
+    >
+      {arg.timeText && <span className="font-medium">{arg.timeText} </span>}
+      {arg.event.title}
+    </motion.div>
+  )}
+/>
+
         </div>
       </div>
 
