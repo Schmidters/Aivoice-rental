@@ -49,7 +49,7 @@ router.get("/", async (req, res) => {
         lead: true,
         property: {
           include: {
-            facts: true, // ✅ pull PropertyFacts (unitType, rent, buildingName, etc.)
+            facts: true, // ✅ include property facts for unitType, rent, etc.
           },
         },
       },
@@ -58,10 +58,11 @@ router.get("/", async (req, res) => {
 
     res.json({ ok: true, data: bookings });
   } catch (err) {
-    console.error("❌ Error loading bookings:", err);
+    console.error(err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
 
 
 // 📅 POST /api/bookings — schedule a showing

@@ -38,19 +38,19 @@ const ai = (bookingsJson.data || []).map((b) => {
   const end = new Date(start.getTime() + 30 * 60 * 1000);
 
   return {
-  id: "AI-" + b.id,
-  title: b.property?.address || "AI Showing",
-  start,
-  end,
-  color: "#22c55e",
-  source: "AI",
-  className: "ai",
-  phone: b.lead?.phone || "",
-  leadName: b.lead?.name || "Unknown lead",       // 👤 new
-  unitType: b.property?.unitType || b.unit || "N/A", // 🏠 new
-};
-
+    id: "AI-" + b.id,
+    title: b.property?.address || "AI Showing",
+    start,
+    end,
+    color: "#22c55e",
+    source: "AI",
+    className: "ai",
+    phone: b.lead?.phone || "",
+    leadName: b.lead?.name || "Unknown lead",
+    unitType: b.property?.facts?.unitType || "N/A", // ✅ updated
+  };
 });
+
 
 const outlook = (outlookJson.data || []).map((e) => ({
   id: e.id,
