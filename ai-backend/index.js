@@ -1125,12 +1125,13 @@ const newEnd = newStart.plus({ minutes: 30 });
 }
 
       const reschedulePayload = {
-        subject: `Showing — ${existingBooking.property?.facts?.buildingName || existingBooking.property?.address}`,
-        startTime: DateTime.fromJSDate(newStart).toISO(),
-        endTime: DateTime.fromJSDate(newEnd).toISO(),
-        location: existingBooking.property?.address || "TBD",
-        leadEmail: "renter@example.com",
-      };
+  subject: `Showing — ${existingBooking.property?.facts?.buildingName || existingBooking.property?.address}`,
+  startTime: newStart.toISO(),  // ✅ fixed
+  endTime: newEnd.toISO(),      // ✅ fixed
+  location: existingBooking.property?.address || "TBD",
+  leadEmail: "renter@example.com",
+};
+
       const url = `${process.env.NEXT_PUBLIC_AI_BACKEND_URL}/api/outlook-sync/create-event`;
       const createRes = await fetch(url, {
         method: "POST",
