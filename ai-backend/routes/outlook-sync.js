@@ -274,26 +274,40 @@ const existingBooking = await prisma.booking.findFirst({
   },
 });
 
-// 🪄 If already booked, just update the Outlook ID
-if (existingBooking) {
-  await prisma.booking.update({
-    where: { id: existingBooking.id },
-    data: {
-      outlookEventId: e.id,
-      status: "confirmed",
-      notes: e.subject || "Showing synced from Outlook",
-      source: "Outlook",
+// 🧠 Smarter sync — upsert Booking & Availability together
+await prisma.booking.upsert({
+  where: {
+    propertyId_datetime: {
+      propertyId,
+      datetime: startTime,
     },
-  });
-  console.log(`🔗 Linked Outlook event ${e.id} → booking ${existingBooking.id}`);
-  continue; // ✅ skip creating a new record
-}
+  },
+  update: {
+    outlookEventId: e.id,
+    status: "confirmed",
+    notes: e.subject || "Showing synced from Outlook",
+    source: "Outlook",
+  },
+  create: {
+    propertyId,
+    datetime: startTime,
+    status: "confirmed",
+    notes: e.subject || "Showing synced from Outlook",
+    outlookEventId: e.id,
+    source: "Outlook",
+    leadId: (
+      await prisma.lead.findFirst({
+        where: { phone: "+10000000000" },
+      }) || (await prisma.lead.create({
+        data: { name: "Outlook Calendar", phone: "+10000000000" },
+      }))
+    ).id,
+  },
+});
 
-
-// ✅ Maintain availability table (for global hours display)
+// ✅ Maintain availability (block busy times)
 await prisma.availability.upsert({
   where: {
-    // Combine property + start time as a pseudo-unique key
     propertyId_startTime: {
       propertyId,
       startTime,
@@ -313,8 +327,9 @@ await prisma.availability.upsert({
   },
 });
 
+console.log(`✅ Synced Outlook event → Booking (${propertyId}, ${startTime.toISOString()})`);
+count++;
 
-      count++;
     }
 
     res.json({ ok: true, synced: count });
