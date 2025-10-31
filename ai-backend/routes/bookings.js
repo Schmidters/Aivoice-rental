@@ -45,15 +45,24 @@ async function isTimeAvailable(propertyId, requestedStart, duration = 30) {
 router.get("/", async (req, res) => {
   try {
     const bookings = await prisma.booking.findMany({
-      include: { lead: true, property: true },
+      include: {
+        lead: true,
+        property: {
+          include: {
+            facts: true, // ✅ pull PropertyFacts (unitType, rent, buildingName, etc.)
+          },
+        },
+      },
       orderBy: { datetime: "asc" },
     });
+
     res.json({ ok: true, data: bookings });
   } catch (err) {
-    console.error(err);
+    console.error("❌ Error loading bookings:", err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
 
 // 📅 POST /api/bookings — schedule a showing
 router.post("/", async (req, res) => {
