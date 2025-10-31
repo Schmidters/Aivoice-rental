@@ -1187,9 +1187,9 @@ const lastBooking = await prisma.booking.findFirst({
   orderBy: { createdAt: "desc" },
 });
 if (/same time|that works|let's do it/i.test(incomingText) && lastBooking) {
-  incomingText += " " + DateTime.fromJSDate(lastBooking.datetime).toFormat("h:mma");
+  const prev = DateTime.fromJSDate(lastBooking.datetime).setZone(tz);
+  incomingText += " " + prev.toFormat("h:mma");
 }
-
 
 // 🧠 Smart time parser with common-sense defaults
 const match = incomingText.match(
@@ -1208,71 +1208,61 @@ let meridian = (match[4] || "").toLowerCase();
 
 // 🧩 If no AM/PM, guess based on realistic showing hours
 if (!meridian) {
-  if (hour >= 7 && hour <= 11) meridian = "am";     // 7–11 → morning
-  else if (hour >= 12 && hour <= 23) meridian = "pm"; // 12–11pm → afternoon/evening
-  else meridian = "pm"; // safe default (no one views at 2am)
+  if (hour >= 7 && hour <= 11) meridian = "am";
+  else meridian = "pm";
 }
 
 // 🕑 Convert to 24h time
 if (meridian === "pm" && hour < 12) hour += 12;
 if (meridian === "am" && hour === 12) hour = 0;
 
+// 📅 Build target date
+let date = now;
+if (weekday) {
+  const target = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"].indexOf(
+    weekday.slice(0, 3)
+  );
+  const diff = (target - date.weekday + 7) % 7 || 7;
+  date = date.plus({ days: diff });
+} else if (incomingText.toLowerCase().includes("tomorrow")) {
+  date = date.plus({ days: 1 });
+}
 
-  let date = now;
-  if (weekday) {
-    const target = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"].indexOf(weekday.slice(0, 3));
-    const diff = (target - date.weekday + 7) % 7 || 7;
-    date = date.plus({ days: diff });
-  } else if (incomingText.toLowerCase().includes("tomorrow")) {
-    date = date.plus({ days: 1 });
-  }
+const requestedStart = date
+  .set({ hour, minute, second: 0, millisecond: 0 })
+  .toJSDate();
 
-  const requestedStart = date.set({ hour, minute, second: 0, millisecond: 0 }).toJSDate();
-
-// 🧠 Step 2: Check if that time slot is available via DB + Outlook
 const availabilityContext = await getAvailabilityContext(property?.id);
-const { availableSlots, blockedSlots } = availabilityContext;
-
-
-// ✅ Normalize requested time to the same timezone
+const { blockedSlots } = availabilityContext;
 const requestedDT = DateTime.fromJSDate(requestedStart).setZone(tz);
 
 // ⛔ Prevent bookings in the past
 if (requestedDT <= DateTime.now().setZone(tz)) {
-await sendSms(from, await generateAvaResponse("past_time"));
+  await sendSms(from, await generateAvaResponse("past_time"));
   return res.status(200).end();
 }
 
-// ✅ Compare against each blocked slot using the same tz
+// 🔍 Check blocked slots
 const isBlocked = blockedSlots.some((b) => {
   const bStart = DateTime.fromISO(b.start, { zone: tz });
   const bEnd = DateTime.fromISO(b.end, { zone: tz });
   return requestedDT >= bStart && requestedDT < bEnd;
 });
 
-// (Optional) Log comparison for debugging
-console.log(
-  "[BOOKING CHECK] requestedDT:",
-  requestedDT.toISO(),
-  "blockedSlots:",
-  blockedSlots.length
-);
+console.log("[BOOKING CHECK]", requestedDT.toISO(), "blockedSlots:", blockedSlots.length);
 
-
-
+// 🧩 Case 1: Slot already blocked
 if (isBlocked) {
   const nextSlots = await findNextAvailableSlots(property.id, requestedStart, 2);
-
   if (nextSlots.length) {
     await sendSms(from, await generateAvaResponse("slot_taken", { nextSlots }));
   } else {
     await sendSms(from, await generateAvaResponse("no_slots"));
   }
-
   return res.status(200).end();
 }
 
-// 🛑 Prevent double booking for same lead/time
+// 🛑 Case 2: Lead already booked same time
 const existing = await prisma.booking.findFirst({
   where: {
     lead: { phone: from },
@@ -1282,9 +1272,20 @@ const existing = await prisma.booking.findFirst({
 
 if (existing) {
   console.log(`⚠️ Skipping duplicate booking for ${from} at ${requestedDT}`);
-  return res.status(200).send('<Response></Response>');
+
+  const existingTime = DateTime.fromJSDate(existing.datetime)
+    .setZone(tz)
+    .toFormat("ccc, LLL d 'at' h:mm a");
+
+  await sendSms(
+    from,
+    await generateAvaResponse("duplicate_booking", { existingTime })
+  );
+
+  return res.status(200).end();
 }
 
+// ✅ Case 3: Create new booking
 let booking;
 try {
   booking = await prisma.booking.create({
@@ -1301,14 +1302,16 @@ try {
       propertyId: property.id,
       datetime: requestedStart,
     });
-    await sendSms(from, "Looks like that time was just booked. Can we find another slot?");
+    await sendSms(
+      from,
+      await generateAvaResponse("slot_taken", { nextSlots: [] })
+    );
     return res.status(200).end();
   }
   throw err;
 }
 
-
-const startFmt = requestedDT.setZone(tz).toFormat("ccc, LLL d 'at' h:mm a");
+const startFmt = requestedDT.toFormat("ccc, LLL d 'at' h:mm a");
 await sendSms(
   from,
   await generateAvaResponse("booking_confirmed", {
@@ -1317,6 +1320,7 @@ await sendSms(
   })
 );
 console.log(`✅ Booking confirmed for ${from} at ${startFmt}`);
+
 
 // 💾 Save message record
 await saveMessage({

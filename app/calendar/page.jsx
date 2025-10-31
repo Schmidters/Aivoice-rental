@@ -131,34 +131,45 @@ export default function CalendarPage() {
         {/* Calendar */}
         <div className="flex-1 p-6 bg-white rounded-xl shadow-md">
           <FullCalendar
-            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-            initialView="timeGridWeek"
-            headerToolbar={{
-              left: "prev,next today",
-              center: "title",
-              right: "dayGridMonth,timeGridWeek,timeGridDay",
-            }}
-            height="calc(100vh - 240px)"
-            events={events}
-            nowIndicator={true}
-            eventClick={(info) => {
-              const ev = events.find((e) => e.id === info.event.id);
-              setSelected(ev);
-              setDrawerOpen(true);
-            }}
-            eventContent={(arg) => (
-              <motion.div
-                whileHover={{ scale: 1.05 }}
-                className={`text-white text-xs px-2 py-1 rounded-md shadow-sm ${
-                  arg.event.extendedProps.source === "AI"
-                    ? "bg-gradient-to-r from-green-400 to-green-600"
-                    : "bg-gradient-to-r from-blue-400 to-blue-600"
-                }`}
-              >
-                {arg.event.title}
-              </motion.div>
-            )}
-          />
+  plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+  initialView="timeGridWeek"
+  headerToolbar={{
+    left: "prev,next today",
+    center: "title",
+    right: "dayGridMonth,timeGridWeek,timeGridDay",
+  }}
+  height="calc(100vh - 240px)"
+  events={events}
+  nowIndicator={true}
+
+  // 👇 NEW SETTINGS
+  slotDuration="00:30:00"        // each slot = 30 minutes
+  slotLabelInterval="01:00:00"   // show time labels every hour
+  slotMinTime="08:00:00"         // calendar starts at 8 AM
+  slotMaxTime="19:00:00"         // calendar ends at 7 PM
+  expandRows={true}              // fills height properly
+  allDaySlot={false}             // hides "all day" bar
+
+  eventClick={(info) => {
+    const ev = events.find((e) => e.id === info.event.id);
+    setSelected(ev);
+    setDrawerOpen(true);
+  }}
+
+  eventContent={(arg) => (
+    <motion.div
+      whileHover={{ scale: 1.05 }}
+      className={`text-white text-xs px-2 py-1 rounded-md shadow-sm ${
+        arg.event.extendedProps.source === "AI"
+          ? "bg-gradient-to-r from-green-400 to-green-600"
+          : "bg-gradient-to-r from-blue-400 to-blue-600"
+      }`}
+    >
+      {arg.event.title}
+    </motion.div>
+  )}
+/>
+
         </div>
       </div>
 

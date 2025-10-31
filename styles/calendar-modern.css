@@ -160,3 +160,57 @@
   box-shadow: 0 2px 6px rgba(99, 102, 241, 0.3);
 }
 
+.fc .fc-timegrid-slot {
+  height: 1.5rem !important; /* makes half-hour cells smaller and tighter */
+}
+
+.fc-event {
+  border-radius: 10px !important;
+  padding: 3px 6px !important;
+  font-size: 0.8rem !important;
+  line-height: 1rem !important;
+}
+
+.fc-event-title {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+/* 🧩 30-Minute Slot & Event Visual Refinement */
+
+/* make 30-minute slots visibly smaller */
+.fc .fc-timegrid-slot {
+  height: 1.25rem !important;  /* controls vertical cell size */
+}
+
+/* show a faint line every 30 minutes for clarity */
+.fc-timegrid-slot.fc-timegrid-slot-lane {
+  border-top: 1px dashed #f1f5f9 !important;
+}
+
+/* give events clear separation when stacked */
+.fc-timegrid-event-harness {
+  margin-bottom: 2px !important;
+}
+
+/* tighten vertical padding so 30-min blocks look natural */
+.fc-event {
+  min-height: 18px !important;
+  padding: 2px 6px !important;
+}
+
+/* differentiate Outlook (blue) and AI (green) blocks even when overlapping */
+.fc-event.ai {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%) !important;
+}
+.fc-event.outlook {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+}
+
+/* smooth hover polish */
+.fc-event:hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+  cursor: pointer;
+}
