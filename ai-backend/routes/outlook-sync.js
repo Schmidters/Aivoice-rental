@@ -279,9 +279,15 @@ if (recentBooking) {
 }
 
 // 🧠 Smarter sync — check if this Outlook event already exists
-let booking = await prisma.booking.findUnique({
-  where: { outlookEventId: e.id },
+let booking = await prisma.booking.findFirst({
+  where: {
+    OR: [
+      { outlookEventId: e.id },
+      { propertyId, datetime: startTime },
+    ],
+  },
 });
+
 
 if (booking) {
   // 🔁 Update existing Outlook-linked booking
