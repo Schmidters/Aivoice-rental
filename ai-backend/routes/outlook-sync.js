@@ -259,52 +259,58 @@ for (const b of existingBookings) {
         console.warn("⚠️ Could not match property:", err.message);
       }
 
-      // 🧠 Try to match by Outlook Event ID or start time
-// 🧠 Smarter duplicate check — avoids creating a duplicate booking
-const existingBooking = await prisma.booking.findFirst({
-  where: {
-    OR: [
-      { outlookEventId: e.id },
-      {
-        datetime: startTime,
-        propertyId,
-        // ✅ only treat as duplicate if it's confirmed (not cancelled)
-        status: { in: ["confirmed", "pending"] },
-      },
-    ],
-  },
+// 🧠 Smarter sync — check if this Outlook event already exists
+let booking = await prisma.booking.findUnique({
+  where: { outlookEventId: e.id },
 });
 
-// 🧠 Smarter sync — upsert Booking & Availability together
-await prisma.booking.upsert({
-  where: {
-    propertyId_datetime: {
+if (booking) {
+  // 🔁 Update existing Outlook-linked booking
+  await prisma.booking.update({
+    where: { id: booking.id },
+    data: {
+      status: "confirmed",
+      datetime: startTime,
+      notes: e.subject || "Showing synced from Outlook",
+      source: "Outlook",
+    },
+  });
+  console.log(`🔗 Updated Outlook event ${e.id} → booking ${booking.id}`);
+} else {
+  // 🆕 Otherwise, create or update based on propertyId+datetime
+  await prisma.booking.upsert({
+    where: {
+      propertyId_datetime: {
+        propertyId,
+        datetime: startTime,
+      },
+    },
+    update: {
+      outlookEventId: e.id,
+      status: "confirmed",
+      notes: e.subject || "Showing synced from Outlook",
+      source: "Outlook",
+    },
+    create: {
       propertyId,
       datetime: startTime,
+      status: "confirmed",
+      notes: e.subject || "Showing synced from Outlook",
+      outlookEventId: e.id,
+      source: "Outlook",
+      leadId: (
+        await prisma.lead.findFirst({
+          where: { phone: "+10000000000" },
+        }) ||
+        (await prisma.lead.create({
+          data: { name: "Outlook Calendar", phone: "+10000000000" },
+        }))
+      ).id,
     },
-  },
-  update: {
-    outlookEventId: e.id,
-    status: "confirmed",
-    notes: e.subject || "Showing synced from Outlook",
-    source: "Outlook",
-  },
-  create: {
-    propertyId,
-    datetime: startTime,
-    status: "confirmed",
-    notes: e.subject || "Showing synced from Outlook",
-    outlookEventId: e.id,
-    source: "Outlook",
-    leadId: (
-      await prisma.lead.findFirst({
-        where: { phone: "+10000000000" },
-      }) || (await prisma.lead.create({
-        data: { name: "Outlook Calendar", phone: "+10000000000" },
-      }))
-    ).id,
-  },
-});
+  });
+  console.log(`✅ Created new booking for Outlook event ${e.id}`);
+}
+
 
 // ✅ Maintain availability (block busy times)
 await prisma.availability.upsert({
