@@ -210,9 +210,26 @@ router.get("/poll", async (req, res) => {
       where: { endTime: { lt: new Date() } },
     });
 
-    // 🧠 Insert only valid busy events
-    let count = 0;
-    for (const e of json.value) {
+ // 🧠 Insert only valid busy events
+let count = 0;
+
+// 🧹 Sync Outlook event deletions (once)
+const existingBookings = await prisma.booking.findMany({
+  where: { outlookEventId: { not: null } },
+});
+for (const b of existingBookings) {
+  const stillExists = json.value.some((e) => e.id === b.outlookEventId);
+  if (!stillExists) {
+    await prisma.booking.update({
+      where: { id: b.id },
+      data: { status: "cancelled" },
+    });
+    console.log(`🗑️ Booking ${b.id} marked cancelled — Outlook event removed`);
+  }
+}
+
+for (const e of json.value) {
+
       // Skip non-busy events
       if (e.showAs && e.showAs.toLowerCase() !== "busy") continue;
 
