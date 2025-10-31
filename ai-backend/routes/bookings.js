@@ -126,4 +126,26 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// DELETE /api/bookings/:id
+router.delete("/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ ok: false, error: "Invalid ID" });
+
+    const booking = await prisma.booking.findUnique({ where: { id } });
+    if (!booking) return res.status(404).json({ ok: false, error: "Booking not found" });
+
+    // 🧹 Soft delete instead of hard delete to avoid breaking sync
+    await prisma.booking.update({
+      where: { id },
+      data: { status: "cancelled", cancelledAt: new Date() },
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("❌ Error deleting booking:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 export default router;

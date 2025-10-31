@@ -245,6 +245,39 @@ export default function CalendarPage() {
                 Open in Outlook
               </a>
             )}
+            {/* 🗑️ Remove Showing button */}
+{selected.source === "AI" && (
+  <button
+    onClick={async () => {
+      if (!confirm("Remove this showing?")) return;
+
+      try {
+        // extract booking ID (strip AI- prefix)
+        const bookingId = selected.id.replace("AI-", "");
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_AI_BACKEND_URL}/api/bookings/${bookingId}`,
+          { method: "DELETE" }
+        );
+
+        const json = await res.json();
+        if (json.ok) {
+          alert("Showing removed");
+          setDrawerOpen(false);
+          fetchAll(); // refresh events list
+        } else {
+          alert("Failed to remove showing");
+        }
+      } catch (err) {
+        console.error("❌ Remove showing failed:", err);
+        alert("Error removing showing");
+      }
+    }}
+    className="mt-4 bg-red-600 hover:bg-red-700 text-white text-sm px-4 py-2 rounded-lg transition"
+  >
+    Remove Showing
+  </button>
+)}
+
           </div>
         )}
       </Drawer>
