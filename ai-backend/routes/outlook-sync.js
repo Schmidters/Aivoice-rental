@@ -335,9 +335,11 @@ router.post("/create-event", async (req, res) => {
     let { subject, startTime, endTime, location, leadEmail } = req.body;
 
     // 🕒 Ensure valid startTime
-    if (!startTime) {
-      throw new Error("Missing startTime for event creation");
-    }
+   if (!startTime) {
+  console.error("⚠️ Missing startTime — event payload:", req.body);
+  return res.status(400).json({ ok: false, error: "Missing startTime", payload: req.body });
+}
+
 
     // ✅ Default to 30 minutes if endTime not provided or invalid
     const start = new Date(startTime);

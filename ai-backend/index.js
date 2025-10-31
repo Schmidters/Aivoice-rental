@@ -1118,6 +1118,12 @@ const newEnd = newStart.plus({ minutes: 30 });
 
     // 🆕 Create new Outlook event
     try {
+      if (!newStart.isValid) {
+  console.error("❌ Invalid newStart DateTime:", newStart.invalidReason);
+  await sendSms(from, "Sorry — that time didn’t parse. Could you rephrase (e.g., '1:00pm')?");
+  return res.status(200).end();
+}
+
       const reschedulePayload = {
         subject: `Showing — ${existingBooking.property?.facts?.buildingName || existingBooking.property?.address}`,
         startTime: DateTime.fromJSDate(newStart).toISO(),
