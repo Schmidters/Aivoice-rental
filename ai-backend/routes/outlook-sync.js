@@ -236,6 +236,7 @@ for (const b of existingBookings) {
       if (!e.start?.dateTime || !e.end?.dateTime) continue;
 
       const startTime = new Date(e.start.dateTime);
+      startTime.setSeconds(0, 0);
       const endTime = new Date(e.end.dateTime);
 
       // Skip long or multi-day events (>12h)

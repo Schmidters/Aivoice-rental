@@ -66,6 +66,7 @@ router.get("/", async (req, res) => {
 
 
 // 📅 POST /api/bookings — schedule a showing
+// 📅 POST /api/bookings — schedule a showing
 router.post("/", async (req, res) => {
   try {
     const { leadPhone, propertySlug, datetime } = req.body;
@@ -78,9 +79,12 @@ router.post("/", async (req, res) => {
     if (!lead || !property)
       return res.status(404).json({ ok: false, error: "Lead or property not found" });
 
+    // 🕒 Normalize start time to exact 30-minute slot to prevent duplicate entries
     const requestedStart = new Date(datetime);
-    const available = await isTimeAvailable(property.id, requestedStart, 30);
+    requestedStart.setSeconds(0, 0);
 
+    // 🧩 Check if the requested time is available
+    const available = await isTimeAvailable(property.id, requestedStart, 30);
     if (!available) {
       return res.json({
         ok: false,
@@ -89,33 +93,16 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // 🧩 Ensure every booking has a valid lead
-let fallbackLead = await prisma.lead.findFirst({
-  where: { phone: "+10000000000" },
-});
-
-if (!fallbackLead) {
-  fallbackLead = await prisma.lead.create({
-    data: {
-      name: "Outlook Calendar",
-      phone: "+10000000000",
-      source: "outlook",
-    },
-  });
-}
-
-await prisma.booking.create({
-  data: {
-    propertyId,
-    datetime: startTime,
-    status: "confirmed",
-    notes: e.subject || "Showing synced from Outlook",
-    outlookEventId: e.id,
-    source: "Outlook",
-    leadId: fallbackLead.id, // ✅ satisfies required field
-  },
-});
-
+    // 🧠 Create the booking record
+    const booking = await prisma.booking.create({
+      data: {
+        propertyId: property.id,
+        leadId: lead.id,
+        datetime: requestedStart,
+        status: "pending",
+        source: "dashboard",
+      },
+    });
 
     res.json({ ok: true, data: booking });
   } catch (err) {
@@ -123,6 +110,7 @@ await prisma.booking.create({
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
 
 // 🔁 PUT /api/bookings/:id — update booking status
 router.put("/:id", async (req, res) => {
