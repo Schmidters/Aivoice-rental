@@ -28,6 +28,18 @@ dotenv.config();
 
 // ---------- CORE SETUP ----------
 const app = express();                      // 👈 must come before app.get
+// ✅ Allow dashboard + local dev to call API (including DELETE)
+app.use(
+  cors({
+    origin: [
+      "https://dashboard.cubbylockers.com", // your live dashboard
+      "http://localhost:3000",              // for local dev
+    ],
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
 app.set("trust proxy", 1);
 const prisma = new PrismaClient();
 
