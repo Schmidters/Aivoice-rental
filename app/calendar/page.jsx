@@ -2,7 +2,6 @@
 
 import "@/styles/calendar-modern.css";
 
-
 import { useEffect, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -13,18 +12,14 @@ import { Calendar, Clock, MapPin } from "lucide-react";
 import { motion } from "framer-motion";
 import { mergeUniqueEvents } from "@/lib/mergeEvents";
 
-
 export default function CalendarPage() {
   const [events, setEvents] = useState([]);
   const [selected, setSelected] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [stats, setStats] = useState(null);
 
   const BACKEND =
     process.env.NEXT_PUBLIC_AI_BACKEND_URL ||
     "https://api.cubbylockers.com";
-
-
 
   // 🧩 Fetch both AI + Outlook events
   async function fetchAll() {
@@ -38,37 +33,49 @@ export default function CalendarPage() {
         outlookRes.json(),
       ]);
 
-const ai = (bookingsJson.data || []).map((b) => {
-  const start = new Date(b.datetime).toISOString();
-  const end = new Date(new Date(b.datetime).getTime() + 30 * 60 * 1000).toISOString();
+      const ai = (bookingsJson.data || []).map((b) => {
+        const start = new Date(b.datetime);
+        const end = new Date(start.getTime() + 30 * 60 * 1000);
 
-
-  return {
-    id: "AI-" + b.id,
-    title: b.property?.address || "AI Showing",
-    start,
-    end, // 👈 added
-    color: "#22c55e",
-    source: "AI",
-    className: "ai",
-    phone: b.lead?.phone || "",
-  };
-});
-
+        return {
+          id: "AI-" + b.id,
+          title: b.property?.address || "AI Showing",
+          start: start.toISOString(),
+          end: end.toISOString(),
+          color: "#22c55e",
+          source: "AI",
+          className: "ai",
+          phone: b.lead?.phone || "",
+        };
+      });
 
       const outlook = (outlookJson.data || []).map((e) => ({
-  id: e.id,
-  title: e.title || "Outlook Event",
-  start: e.start,
-  end: e.end,
-  color: "#3b82f6",
-  source: "Outlook",
-  className: "outlook",  // 🔵 Add this line
-  location: e.location,
-  webLink: e.webLink,
-}));
+        id: e.id,
+        title: e.title || "Outlook Event",
+        start: new Date(e.start).toISOString(),
+        end: new Date(e.end).toISOString(),
+        color: "#3b82f6",
+        source: "Outlook",
+        className: "outlook",
+        location: e.location,
+        webLink: e.webLink,
+      }));
 
-    setEvents(mergeUniqueEvents(ai, outlook));
+      // ✅ Normalize and merge everything before setting
+      const merged = mergeUniqueEvents(ai, outlook).map((e) => ({
+        ...e,
+        start:
+          typeof e.start === "string"
+            ? e.start
+            : new Date(e.start).toISOString(),
+        end:
+          typeof e.end === "string"
+            ? e.end
+            : new Date(e.end).toISOString(),
+      }));
+
+      console.log("✅ Normalized events sample:", merged[0]);
+      setEvents(merged);
     } catch (err) {
       console.error("❌ Failed to fetch events:", err);
     }
@@ -91,7 +98,6 @@ const ai = (bookingsJson.data || []).map((b) => {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col p-6 space-y-8">
-      
       {/* ====================== */}
       {/* CALENDAR + UPCOMING EVENTS */}
       {/* ====================== */}
@@ -139,48 +145,51 @@ const ai = (bookingsJson.data || []).map((b) => {
         {/* Calendar */}
         <div className="flex-1 p-6 bg-white rounded-xl shadow-md">
           <FullCalendar
-  plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-  initialView="timeGridWeek"
-  headerToolbar={{
-    left: "prev,next today",
-    center: "title",
-    right: "dayGridMonth,timeGridWeek,timeGridDay",
-  }}
-  height="calc(100vh - 240px)"
-  nowIndicator={true}
-  allDaySlot={false}
-  slotDuration="00:30:00"
-  slotLabelInterval="01:00:00"
-  slotMinTime="08:00:00"
-  slotMaxTime="19:00:00"
-  expandRows={true}
-  scrollTime={new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} // 👈 Auto-scroll to current time
-  eventTimeFormat={{
-    hour: "numeric",
-    minute: "2-digit",
-    meridiem: "short",
-  }}
-  eventClick={(info) => {
-    const ev = events.find((e) => e.id === info.event.id);
-    setSelected(ev);
-    setDrawerOpen(true);
-  }}
-  eventContent={(arg) => (
-    <motion.div
-      whileHover={{ scale: 1.04 }}
-      className={`text-white text-xs px-2 py-[2px] rounded-md shadow-sm truncate ${
-        arg.event.extendedProps.source === "AI"
-          ? "bg-gradient-to-r from-green-400 to-green-600"
-          : "bg-gradient-to-r from-blue-400 to-blue-600"
-      }`}
-    >
-      {arg.timeText && <span className="font-medium">{arg.timeText} </span>}
-      {arg.event.title}
-    </motion.div>
-  )}
-/>
-
-
+            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+            initialView="timeGridWeek"
+            headerToolbar={{
+              left: "prev,next today",
+              center: "title",
+              right: "dayGridMonth,timeGridWeek,timeGridDay",
+            }}
+            height="calc(100vh - 240px)"
+            nowIndicator={true}
+            allDaySlot={false}
+            slotDuration="00:30:00"
+            slotLabelInterval="01:00:00"
+            slotMinTime="08:00:00"
+            slotMaxTime="19:00:00"
+            expandRows={true}
+            scrollTime={new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+            eventTimeFormat={{
+              hour: "numeric",
+              minute: "2-digit",
+              meridiem: "short",
+            }}
+            eventClick={(info) => {
+              const ev = events.find((e) => e.id === info.event.id);
+              setSelected(ev);
+              setDrawerOpen(true);
+            }}
+            eventContent={(arg) => (
+              <motion.div
+                whileHover={{ scale: 1.04 }}
+                className={`text-white text-xs px-2 py-[2px] rounded-md shadow-sm truncate ${
+                  arg.event.extendedProps.source === "AI"
+                    ? "bg-gradient-to-r from-green-400 to-green-600"
+                    : "bg-gradient-to-r from-blue-400 to-blue-600"
+                }`}
+              >
+                {arg.timeText && (
+                  <span className="font-medium">{arg.timeText} </span>
+                )}
+                {arg.event.title}
+              </motion.div>
+            )}
+          />
         </div>
       </div>
 
