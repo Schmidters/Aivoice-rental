@@ -38,15 +38,18 @@ const ai = (bookingsJson.data || []).map((b) => {
   const end = new Date(start.getTime() + 30 * 60 * 1000);
 
   return {
-    id: "AI-" + b.id,
-    title: b.property?.address || "AI Showing",
-    start,  // ✅ pass Date object, not string
-    end,
-    color: "#22c55e",
-    source: "AI",
-    className: "ai",
-    phone: b.lead?.phone || "",
-  };
+  id: "AI-" + b.id,
+  title: b.property?.address || "AI Showing",
+  start,
+  end,
+  color: "#22c55e",
+  source: "AI",
+  className: "ai",
+  phone: b.lead?.phone || "",
+  leadName: b.lead?.name || "Unknown lead",       // 👤 new
+  unitType: b.property?.unitType || b.unit || "N/A", // 🏠 new
+};
+
 });
 
 const outlook = (outlookJson.data || []).map((e) => ({
@@ -193,15 +196,36 @@ setEvents(merged);
               {new Date(selected.start).toLocaleString()}
             </p>
             {selected.location && (
-              <p className="text-sm text-gray-600 flex items-center gap-2">
-                <MapPin className="h-4 w-4" /> {selected.location}
-              </p>
-            )}
-            {selected.phone && (
-              <p className="text-sm text-gray-600 flex items-center gap-2">
-                📱 {selected.phone}
-              </p>
-            )}
+  <p className="text-sm text-gray-600 flex items-center gap-2">
+    <MapPin className="h-4 w-4" /> {selected.location}
+  </p>
+)}
+
+{/* Lead + Unit Info Section */}
+<div className="flex flex-col gap-2 pt-2">
+  {selected.leadName && (
+    <div className="flex items-center gap-2 text-sm text-gray-700">
+      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-green-100 text-green-600">
+        👤
+      </span>
+      <span className="bg-gray-100 px-2 py-1 rounded-md">
+        {selected.leadName}
+      </span>
+    </div>
+  )}
+
+  {selected.unitType && (
+    <div className="flex items-center gap-2 text-sm text-gray-700">
+      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 text-blue-600">
+        🏠
+      </span>
+      <span className="bg-gray-100 px-2 py-1 rounded-md">
+        {selected.unitType}
+      </span>
+    </div>
+  )}
+</div>
+
             {selected.webLink && (
               <a
                 href={selected.webLink}
