@@ -1,7 +1,6 @@
 "use client";
 
 import "@/styles/calendar-modern.css";
-
 import { useEffect, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -18,8 +17,7 @@ export default function CalendarPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const BACKEND =
-    process.env.NEXT_PUBLIC_AI_BACKEND_URL ||
-    "https://api.cubbylockers.com";
+    process.env.NEXT_PUBLIC_AI_BACKEND_URL || "https://api.cubbylockers.com";
 
   // 🧩 Fetch both AI + Outlook events
   async function fetchAll() {
@@ -33,43 +31,45 @@ export default function CalendarPage() {
         outlookRes.json(),
       ]);
 
-const ai = (bookingsJson.data || []).map((b) => {
-  const start = new Date(b.datetime);
-  const end = new Date(start.getTime() + 30 * 60 * 1000);
+      // 🟢 AI Bookings
+      const ai = (bookingsJson.data || []).map((b) => {
+        const start = new Date(b.datetime);
+        const end = new Date(start.getTime() + 30 * 60 * 1000);
 
-  return {
-    id: "AI-" + b.id,
-    title: b.property?.address || "AI Showing",
-    start,
-    end,
-    color: "#22c55e",
-    source: "AI",
-    className: "ai",
-    phone: b.lead?.phone || "",
-    leadName: b.lead?.name || "Unknown lead",
-    unitType: b.property?.facts?.unitType || "N/A", // ✅ updated
-  };
-});
+        return {
+          id: "AI-" + b.id,
+          title: b.property?.address || "AI Showing",
+          start,
+          end,
+          color: "#22c55e",
+          source: "AI",
+          className: "ai",
+          phone: b.lead?.phone || "",
+          leadName: b.lead?.name || "Unknown lead",
+          unitType: b.property?.facts?.unitType || "N/A",
+          notes: b.notes || "", // 🧠 include AI chat summary / notes
+        };
+      });
 
+      // 🔵 Outlook Events
+      const outlook = (outlookJson.data || []).map((e) => ({
+        id: e.id,
+        title: e.title || "Outlook Event",
+        start: new Date(e.start),
+        end: new Date(e.end),
+        color: "#3b82f6",
+        source: "Outlook",
+        className: "outlook",
+        location: e.location,
+        webLink: e.webLink,
+        notes: e.title || "", // use event title as note fallback
+      }));
 
-const outlook = (outlookJson.data || []).map((e) => ({
-  id: e.id,
-  title: e.title || "Outlook Event",
-  start: new Date(e.start), // ✅ Date objects
-  end: new Date(e.end),
-  color: "#3b82f6",
-  source: "Outlook",
-  className: "outlook",
-  location: e.location,
-  webLink: e.webLink,
-}));
-
-const merged = mergeUniqueEvents(ai, outlook);
-setEvents(merged);
+      const merged = mergeUniqueEvents(ai, outlook);
+      setEvents(merged);
 
       console.log("✅ Normalized events sample:", merged[0]);
       console.log("📅 Final events for FullCalendar:", merged);
-
     } catch (err) {
       console.error("❌ Failed to fetch events:", err);
     }
@@ -92,9 +92,6 @@ setEvents(merged);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col p-6 space-y-8">
-      {/* ====================== */}
-      {/* CALENDAR + UPCOMING EVENTS */}
-      {/* ====================== */}
       <div className="flex flex-1 gap-8">
         {/* Sidebar: Upcoming */}
         <div className="w-80 calendar-glass p-6 space-y-6 border-none shadow-md bg-white rounded-xl">
@@ -139,50 +136,51 @@ setEvents(merged);
         {/* Calendar */}
         <div className="flex-1 p-6 bg-white rounded-xl shadow-md">
           <FullCalendar
-  plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-  initialView="timeGridWeek"
-  headerToolbar={{
-    left: "prev,next today",
-    center: "title",
-    right: "dayGridMonth,timeGridWeek,timeGridDay",
-  }}
-  timeZone="local"
-  height="calc(100vh - 240px)"
-  nowIndicator={true}
-  allDaySlot={false}
-  slotDuration="00:30:00"
-  slotLabelInterval="01:00:00"
-  slotMinTime="08:00:00"
-  slotMaxTime="19:00:00"
-  contentHeight="auto"           // allows internal scroll again
-  scrollTime="09:00:00"          // ✅ valid and fixed format
-  events={events}                // ✅ critical line
-  eventDisplay="block"           // helps if styles interfere
-  eventTimeFormat={{
-    hour: "numeric",
-    minute: "2-digit",
-    meridiem: "short",
-  }}
-  eventClick={(info) => {
-    const ev = events.find((e) => e.id === info.event.id);
-    setSelected(ev);
-    setDrawerOpen(true);
-  }}
-  eventContent={(arg) => (
-    <motion.div
-      whileHover={{ scale: 1.04 }}
-      className={`text-white text-xs px-2 py-[2px] rounded-md shadow-sm truncate ${
-        arg.event.extendedProps.source === "AI"
-          ? "bg-gradient-to-r from-green-400 to-green-600"
-          : "bg-gradient-to-r from-blue-400 to-blue-600"
-      }`}
-    >
-      {arg.timeText && <span className="font-medium">{arg.timeText} </span>}
-      {arg.event.title}
-    </motion.div>
-  )}
-/>
-
+            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+            initialView="timeGridWeek"
+            headerToolbar={{
+              left: "prev,next today",
+              center: "title",
+              right: "dayGridMonth,timeGridWeek,timeGridDay",
+            }}
+            timeZone="local"
+            height="calc(100vh - 240px)"
+            nowIndicator={true}
+            allDaySlot={false}
+            slotDuration="00:30:00"
+            slotLabelInterval="01:00:00"
+            slotMinTime="08:00:00"
+            slotMaxTime="19:00:00"
+            contentHeight="auto"
+            scrollTime="09:00:00"
+            events={events}
+            eventDisplay="block"
+            eventTimeFormat={{
+              hour: "numeric",
+              minute: "2-digit",
+              meridiem: "short",
+            }}
+            eventClick={(info) => {
+              const ev = events.find((e) => e.id === info.event.id);
+              setSelected(ev);
+              setDrawerOpen(true);
+            }}
+            eventContent={(arg) => (
+              <motion.div
+                whileHover={{ scale: 1.04 }}
+                className={`text-white text-xs px-2 py-[2px] rounded-md shadow-sm truncate border-2 ${
+                  arg.event.extendedProps.source === "AI"
+                    ? "bg-gradient-to-r from-green-400 to-green-600 border-green-500"
+                    : "bg-gradient-to-r from-blue-400 to-blue-600 border-blue-500"
+                }`}
+              >
+                {arg.timeText && (
+                  <span className="font-medium">{arg.timeText} </span>
+                )}
+                {arg.event.title}
+              </motion.div>
+            )}
+          />
         </div>
       </div>
 
@@ -195,37 +193,48 @@ setEvents(merged);
               <Calendar className="h-4 w-4" />{" "}
               {new Date(selected.start).toLocaleString()}
             </p>
+
             {selected.location && (
-  <p className="text-sm text-gray-600 flex items-center gap-2">
-    <MapPin className="h-4 w-4" /> {selected.location}
-  </p>
-)}
+              <p className="text-sm text-gray-600 flex items-center gap-2">
+                <MapPin className="h-4 w-4" /> {selected.location}
+              </p>
+            )}
 
-{/* Lead + Unit Info Section */}
-<div className="flex flex-col gap-2 pt-2">
-  {selected.leadName && (
-    <div className="flex items-center gap-2 text-sm text-gray-700">
-      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-green-100 text-green-600">
-        👤
-      </span>
-      <span className="bg-gray-100 px-2 py-1 rounded-md">
-        {selected.leadName}
-      </span>
-    </div>
-  )}
+            {/* Lead + Unit Info Section */}
+            <div className="flex flex-col gap-2 pt-2">
+              {selected.leadName && (
+                <div className="flex items-center gap-2 text-sm text-gray-700">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-green-100 text-green-600">
+                    👤
+                  </span>
+                  <span className="bg-gray-100 px-2 py-1 rounded-md">
+                    {selected.leadName}
+                  </span>
+                </div>
+              )}
 
-  {selected.unitType && (
-    <div className="flex items-center gap-2 text-sm text-gray-700">
-      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 text-blue-600">
-        🏠
-      </span>
-      <span className="bg-gray-100 px-2 py-1 rounded-md">
-        {selected.unitType}
-      </span>
-    </div>
-  )}
-</div>
+              {selected.unitType && (
+                <div className="flex items-center gap-2 text-sm text-gray-700">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 text-blue-600">
+                    🏠
+                  </span>
+                  <span className="bg-gray-100 px-2 py-1 rounded-md">
+                    {selected.unitType}
+                  </span>
+                </div>
+              )}
+            </div>
 
+            {/* 🧠 AI Summary / Notes */}
+            {selected.notes && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mt-2">
+                <p className="text-sm text-gray-600 whitespace-pre-line">
+                  🧠 {selected.notes}
+                </p>
+              </div>
+            )}
+
+            {/* Outlook link */}
             {selected.webLink && (
               <a
                 href={selected.webLink}
