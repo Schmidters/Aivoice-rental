@@ -16,7 +16,6 @@ import { generateAvaResponse } from "./utils/generateAvaResponse.js";
 import { getAvailabilityContext } from "./utils/getAvailabilityContext.js";
 import { ensureValidOutlookToken } from "./routes/outlook-sync.js";
 
-
 // Routers
 import bookingsRouter from "./routes/bookings.js";
 import availabilityRouter from "./routes/availability.js";
@@ -27,23 +26,22 @@ import outlookSyncRouter from "./routes/outlook-sync.js";  // webhook + sync
 dotenv.config();
 
 // ---------- CORE SETUP ----------
-const app = express();                      // 👈 must come before app.get
-// ✅ Allow dashboard + local dev to call API (including DELETE)
-app.use(
-  cors({
-    origin: [
-      "https://dashboard.cubbylockers.com", // your live dashboard
-      "http://localhost:3000",              // for local dev
-    ],
-    methods: ["GET", "POST", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
-
+const app = express();
 app.set("trust proxy", 1);
 const prisma = new PrismaClient();
 
-
+// 🔒 CORS setup — required for dashboard <-> backend DELETE, etc.
+app.use(
+  cors({
+    origin: [
+      "https://dashboard.cubbylockers.com", // live dashboard
+      "http://localhost:3000",              // local dev
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+);
 
 // ====================================================
 // 🧠 SECURITY + CORS SETUP (goes right after app + prisma)
